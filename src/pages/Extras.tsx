@@ -15,8 +15,10 @@ const NODE_VERSIONS = ["18", "20", "22", "24"];
 
 interface Tool {
   id: string; name: string; icon: string; description: string;
-  installed: boolean; version: string | null; latestVersion?: string | null;
-  updateAvailable?: boolean; running?: boolean; canSelectVersion?: boolean;
+  installed: boolean; version: string | null; path?: string | null;
+  latestVersion?: string | null; updateAvailable?: boolean;
+  running?: boolean; canSelectVersion?: boolean;
+  category?: 'runtime' | 'server' | 'tool';
 }
 
 interface User {
@@ -73,18 +75,25 @@ function ToolCard({
         </div>
       </div>
 
-      {/* Versions */}
+      {/* Version + path */}
       {tool.installed && (
-        <div className="flex items-center gap-2 flex-wrap">
-          {tool.version && <VersionChip version={tool.version} label="current " />}
-          {tool.latestVersion && tool.latestVersion !== tool.version && (
-            <VersionChip version={tool.latestVersion} label="latest " />
-          )}
-          {tool.updateAvailable && (
-            <span className="text-[10px] text-amber-400 font-medium">• update available</span>
-          )}
-          {tool.installed && !tool.updateAvailable && tool.latestVersion && (
-            <span className="text-[10px] text-green-400 font-medium">• up to date</span>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            {tool.version && <VersionChip version={tool.version} label="v" />}
+            {tool.latestVersion && tool.latestVersion !== tool.version && (
+              <VersionChip version={tool.latestVersion} label="latest " />
+            )}
+            {tool.updateAvailable && (
+              <span className="text-[10px] text-amber-400 font-medium">• update available</span>
+            )}
+            {!tool.updateAvailable && tool.latestVersion && (
+              <span className="text-[10px] text-green-400 font-medium">• up to date</span>
+            )}
+          </div>
+          {tool.path && (
+            <div className="text-[10px] font-mono text-[var(--muted)] truncate" title={tool.path}>
+              {tool.path}
+            </div>
           )}
         </div>
       )}
@@ -312,7 +321,7 @@ export default function ExtrasPage() {
         </div>
         {isLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from({ length: 8 }).map((_, i) => (
+            {Array.from({ length: 12 }).map((_, i) => (
               <div key={i} className="glass-card p-5 h-36 animate-pulse">
                 <div className="flex gap-3">
                   <div className="w-8 h-8 rounded-xl bg-[var(--line)]" />
@@ -324,19 +333,57 @@ export default function ExtrasPage() {
               </div>
             ))}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {tools.map(tool => (
-              <ToolCard
-                key={tool.id}
-                tool={tool}
-                loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
-                onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
-                onUpdate={() => handleUpdate(tool)}
-              />
-            ))}
-          </div>
-        )}
+        ) : (() => {
+          const groups: { label: string; ids: string[] }[] = [
+            { label: "Runtimes & Package Managers", ids: ["nodejs","npm","bun","deno","pm2","pnpm","yarn","python","go","rust"] },
+            { label: "Servers & SSL", ids: ["nginx","apache","certbot"] },
+            { label: "Dev Tools", ids: ["git","curl","wget","rsync","vim","nvim"] },
+            { label: "System Tools", ids: ["htop","tmux","screen","ufw","fail2ban-client","jq","unzip"] },
+          ];
+          return (
+            <div className="space-y-6">
+              {groups.map(g => {
+                const groupTools = tools.filter(t => g.ids.includes(t.id));
+                if (groupTools.length === 0) return null;
+                return (
+                  <div key={g.label}>
+                    <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mb-3">{g.label}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {groupTools.map(tool => (
+                        <ToolCard
+                          key={tool.id}
+                          tool={tool}
+                          loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
+                          onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
+                          onUpdate={() => handleUpdate(tool)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {/* Any tools not in groups (future additions) */}
+              {(() => {
+                const knownIds = ["nodejs","npm","bun","deno","pm2","pnpm","yarn","python","go","rust","nginx","apache","certbot","git","curl","wget","rsync","vim","nvim","htop","tmux","screen","ufw","fail2ban-client","jq","unzip"];
+                const extra = tools.filter(t => !knownIds.includes(t.id));
+                if (!extra.length) return null;
+                return (
+                  <div>
+                    <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mb-3">Other</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {extra.map(tool => (
+                        <ToolCard key={tool.id} tool={tool}
+                          loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
+                          onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
+                          onUpdate={() => handleUpdate(tool)} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
       </div>
 
       {/* User Management */}

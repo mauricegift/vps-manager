@@ -361,10 +361,10 @@ export default function DatabasesPage() {
         size="xl"
       >
         {browserDb && (
-          <div className="flex flex-col md:flex-row gap-3 min-h-0 h-full">
+          <div className="flex flex-col md:flex-row gap-3" style={{ minHeight: 0 }}>
 
-            {/* Table/Collection/Key list — vertical sidebar on desktop, horizontal chips on mobile */}
-            <div className="md:w-44 shrink-0 md:border-r border-[var(--line)] md:pr-3">
+            {/* Table/Collection/Key list — horizontal scroll on mobile, vertical sidebar on desktop */}
+            <div className="md:w-44 shrink-0 md:border-r border-[var(--line)] md:pr-3 flex flex-col">
               <p className="text-[10px] text-[var(--muted)] uppercase font-semibold mb-2 tracking-wider">
                 {browserDb.type === "mongodb" ? "Collections" : browserDb.type === "redis" ? "Keys" : "Tables"}
               </p>
@@ -379,21 +379,39 @@ export default function DatabasesPage() {
                   {browserDb.type === "mongodb" ? "No collections" : browserDb.type === "redis" ? "No keys" : "No tables found"}
                 </p>
               ) : (
-                <div className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-x-visible md:overflow-y-auto pb-1 md:pb-0 md:max-h-[52vh] hide-scrollbar md:space-y-0">
+                <div className="flex gap-1.5 overflow-x-auto pb-2 hide-scrollbar md:hidden">
                   {tableList.map((t) => (
                     <button
                       key={t.name}
                       onClick={() => loadTable(t.name, 0)}
-                      className={`shrink-0 md:shrink md:w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-mono text-left transition-colors whitespace-nowrap md:whitespace-normal ${
+                      className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-mono transition-colors whitespace-nowrap ${
                         selectedTable === t.name
                           ? "bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30"
-                          : "bg-[var(--foreground)] md:bg-transparent border border-[var(--line)] md:border-transparent hover:bg-[var(--foreground)] text-[var(--muted)] hover:text-[var(--main)]"
+                          : "bg-[var(--foreground)] border border-[var(--line)] text-[var(--muted)]"
                       }`}
                     >
-                      <ChevronRight size={10} className="hidden md:block shrink-0" />
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Desktop vertical list */}
+              {tableList.length > 0 && !loadingTables && (
+                <div className="hidden md:flex flex-col gap-0.5 overflow-y-auto" style={{ maxHeight: '52vh' }}>
+                  {tableList.map((t) => (
+                    <button
+                      key={t.name}
+                      onClick={() => loadTable(t.name, 0)}
+                      className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-mono text-left transition-colors ${
+                        selectedTable === t.name
+                          ? "bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30"
+                          : "border border-transparent hover:bg-[var(--foreground)] text-[var(--muted)] hover:text-[var(--main)]"
+                      }`}
+                    >
+                      <ChevronRight size={10} className="shrink-0" />
                       <span className="truncate">{t.name}</span>
                       {t.rows !== undefined && (
-                        <span className="text-[9px] text-[var(--muted)] ml-auto shrink-0 hidden md:block">{t.rows}</span>
+                        <span className="text-[9px] text-[var(--muted)] ml-auto shrink-0">{t.rows}</span>
                       )}
                     </button>
                   ))}
@@ -402,7 +420,7 @@ export default function DatabasesPage() {
             </div>
 
             {/* Main content */}
-            <div className="flex-1 min-w-0 space-y-3">
+            <div className="flex-1 min-w-0 space-y-3 overflow-y-auto" style={{ maxHeight: '65vh' }}>
               <div className="space-y-2">
                 <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider">
                   {browserDb.type === "mongodb" ? "MongoDB Expression" : browserDb.type === "redis" ? "Redis Command" : "SQL Query"}

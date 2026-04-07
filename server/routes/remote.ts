@@ -504,45 +504,117 @@ router.get('/:id/extras', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
 
+    // Comprehensive detection: check PATH, nvm, npm-global, ~/.bun, ~/.deno, ~/.cargo
     const script = `
-which node 2>/dev/null && node --version 2>/dev/null || echo "NODE_MISSING"
-which bun 2>/dev/null && bun --version 2>/dev/null || echo "BUN_MISSING"
-which pm2 2>/dev/null && pm2 --version 2>/dev/null || echo "PM2_MISSING"
-which python3 2>/dev/null && python3 --version 2>/dev/null || echo "PYTHON_MISSING"
-python3 -m venv --help 2>/dev/null | head -1 || echo "VENV_MISSING"
-which certbot 2>/dev/null && certbot --version 2>/dev/null || echo "CERTBOT_MISSING"
-which nginx 2>/dev/null && nginx -v 2>&1 || echo "NGINX_MISSING"
-which apache2 2>/dev/null && apache2 -v 2>&1 | head -1 || which httpd 2>/dev/null && httpd -v 2>&1 | head -1 || echo "APACHE_MISSING"
-npm view pm2 version 2>/dev/null || echo "PM2_LATEST_UNKNOWN"
-npm view bun version 2>/dev/null || echo "BUN_LATEST_UNKNOWN"
-systemctl is-active nginx 2>/dev/null || echo "nginx_inactive"
-systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "apache_inactive"
+NPM_PREFIX=$(npm config get prefix 2>/dev/null)
+NPM_BIN="${'${NPM_PREFIX}'}/bin"
+NVM_ACTIVE=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1)
+
+# find binary: returns path or empty
+find_bin() {
+  local name=$1
+  for p in $(which "$name" 2>/dev/null) "$NPM_BIN/$name" "$HOME/.local/bin/$name" "$HOME/.bun/bin/$name" "$HOME/.deno/bin/$name" "$HOME/.cargo/bin/$name" "$HOME/go/bin/$name" /usr/local/go/bin/$name /usr/local/bin/$name /usr/bin/$name /bin/$name; do
+    [ -x "$p" ] && echo "$p" && return
+  done
+}
+
+emit() {
+  local id="$1" bpath="$2" ver_arg="$3"
+  if [ -z "$ver_arg" ]; then ver_arg="--version"; fi
+  if [ -z "$bpath" ]; then echo "MISSING:$id"; return; fi
+  local v
+  v=$("$bpath" $ver_arg 2>&1 | grep -oE '[0-9]+[.][0-9]+[.0-9]*' | head -1)
+  if [ -z "$v" ]; then v="?"; fi
+  echo "TOOL:$id:$bpath:$v"
+}
+
+# Node.js: prefer nvm newest, then PATH
+if [ -n "$NVM_ACTIVE" ] && [ -x "$HOME/.nvm/versions/node/$NVM_ACTIVE/bin/node" ]; then
+  NODE_P="$HOME/.nvm/versions/node/$NVM_ACTIVE/bin/node"
+else
+  NODE_P=$(find_bin node)
+fi
+emit nodejs "$NODE_P"
+
+emit npm "$(find_bin npm)"
+emit bun "$(find_bin bun)"
+emit deno "$(find_bin deno)"
+emit pm2 "$(find_bin pm2)"
+emit pnpm "$(find_bin pnpm)"
+emit yarn "$(find_bin yarn)"
+emit python3 "$(find_bin python3)"
+emit go "$(find_bin go)" "version"
+emit cargo "$(find_bin cargo)"
+emit nginx "$(find_bin nginx)" "-v"
+emit apache "$(find_bin apache2)" "-v"
+emit certbot "$(find_bin certbot)"
+emit git "$(find_bin git)"
+emit curl "$(find_bin curl)"
+emit wget "$(find_bin wget)"
+emit rsync "$(find_bin rsync)"
+emit vim "$(find_bin vim)"
+emit nvim "$(find_bin nvim)"
+emit htop "$(find_bin htop)"
+emit tmux "$(find_bin tmux)"
+emit screen "$(find_bin screen)"
+emit ufw "$(find_bin ufw)"
+emit fail2ban-client "$(find_bin fail2ban-client)"
+emit jq "$(find_bin jq)"
+emit unzip "$(find_bin unzip)"
+
+systemctl is-active nginx 2>/dev/null || echo "svc_nginx_inactive"
+systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "svc_apache_inactive"
 `.trim();
+
     const raw = await runSSHScript(conn, script);
     const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
 
-    const extract = (missing: string, searchStr: string): { installed: boolean; version: string | null } => {
-      const missingLine = lines.find(l => l === missing);
-      if (missingLine) return { installed: false, version: null };
-      const line = lines.find(l => l.toLowerCase().includes(searchStr.toLowerCase()) && !l.includes('MISSING'));
-      const m = line?.match(/(\d+\.\d+[\.\d]*)/);
-      return { installed: true, version: m?.[1] || line?.trim() || null };
-    };
+    const toolMap: Record<string, { installed: boolean; version: string | null; path: string | null }> = {};
+    for (const line of lines) {
+      if (line.startsWith('TOOL:')) {
+        const parts = line.split(':');
+        const id = parts[1];
+        const binPath = parts[2] || null;
+        const version = parts[3] === 'unknown' ? null : (parts[3] || null);
+        toolMap[id] = { installed: true, version, path: binPath };
+      } else if (line.startsWith('MISSING:')) {
+        const id = line.replace('MISSING:', '');
+        toolMap[id] = { installed: false, version: null, path: null };
+      }
+    }
 
-    const getLine = (idx: number) => lines[idx] || '';
-    const pm2Latest = lines.find(l => /^\d+\.\d+/.test(l) && !lines.slice(0, 8).includes(l)) || null;
-    const nginxActive = raw.includes('\nactive') || raw.includes('\nactive\n');
-    const apacheActive = raw.split('\n').filter(l => l.trim() === 'active').length > 0;
+    const nginxRunning = !lines.some(l => l === 'svc_nginx_inactive');
+    const apacheRunning = !lines.some(l => l === 'svc_apache_inactive');
+
+    const t = (id: string) => toolMap[id] || { installed: false, version: null, path: null };
 
     const tools = [
-      { id: 'nodejs', name: 'Node.js', icon: '🟢', description: 'JavaScript runtime', ...extract('NODE_MISSING', 'v'), canSelectVersion: true },
-      { id: 'bun', name: 'Bun', icon: '🍞', description: 'Fast JS runtime', ...extract('BUN_MISSING', 'bun') },
-      { id: 'pm2', name: 'PM2', icon: '⚙️', description: 'Process manager', ...extract('PM2_MISSING', 'pm2') },
-      { id: 'python', name: 'Python', icon: '🐍', description: 'Programming language', ...extract('PYTHON_MISSING', 'python') },
-      { id: 'python-venv', name: 'Python Venv', icon: '🌐', description: 'Virtual environments', installed: !raw.includes('VENV_MISSING'), version: null },
-      { id: 'certbot', name: 'Certbot', icon: '🔒', description: "Let's Encrypt SSL", ...extract('CERTBOT_MISSING', 'certbot') },
-      { id: 'nginx', name: 'Nginx', icon: '🌿', description: 'HTTP server & reverse proxy', ...extract('NGINX_MISSING', 'nginx'), running: nginxActive },
-      { id: 'apache', name: 'Apache', icon: '🪶', description: 'Apache HTTP server', ...extract('APACHE_MISSING', 'apache'), running: apacheActive },
+      { id: 'nodejs', name: 'Node.js', icon: '🟢', category: 'runtime', description: 'JavaScript runtime built on Chrome V8', canSelectVersion: true, ...t('nodejs') },
+      { id: 'npm', name: 'npm', icon: '📦', category: 'runtime', description: 'Node package manager', ...t('npm') },
+      { id: 'bun', name: 'Bun', icon: '🍞', category: 'runtime', description: 'Fast all-in-one JS runtime', ...t('bun') },
+      { id: 'deno', name: 'Deno', icon: '🦕', category: 'runtime', description: 'Secure JS/TS runtime', ...t('deno') },
+      { id: 'pm2', name: 'PM2', icon: '⚙️', category: 'runtime', description: 'Production process manager for Node.js', ...t('pm2') },
+      { id: 'pnpm', name: 'pnpm', icon: '📦', category: 'runtime', description: 'Efficient disk-saving package manager', ...t('pnpm') },
+      { id: 'yarn', name: 'Yarn', icon: '🧶', category: 'runtime', description: 'Fast, reliable Node package manager', ...t('yarn') },
+      { id: 'python', name: 'Python', icon: '🐍', category: 'runtime', description: 'High-level programming language', ...t('python3') },
+      { id: 'go', name: 'Go', icon: '🐹', category: 'runtime', description: 'Google Go programming language', ...t('go') },
+      { id: 'rust', name: 'Rust / Cargo', icon: '🦀', category: 'runtime', description: 'Systems language with cargo', ...t('cargo') },
+      { id: 'nginx', name: 'Nginx', icon: '🌿', category: 'server', description: 'HTTP server & reverse proxy', running: nginxRunning, ...t('nginx') },
+      { id: 'apache', name: 'Apache', icon: '🪶', category: 'server', description: 'Apache HTTP server', running: apacheRunning, ...t('apache') },
+      { id: 'certbot', name: 'Certbot', icon: '🔒', category: 'server', description: "Let's Encrypt SSL certificate client", ...t('certbot') },
+      { id: 'git', name: 'Git', icon: '📁', category: 'tool', description: 'Distributed version control', ...t('git') },
+      { id: 'curl', name: 'curl', icon: '🌐', category: 'tool', description: 'HTTP client & transfer tool', ...t('curl') },
+      { id: 'wget', name: 'wget', icon: '⬇️', category: 'tool', description: 'Non-interactive download utility', ...t('wget') },
+      { id: 'rsync', name: 'rsync', icon: '🔄', category: 'tool', description: 'Fast incremental file transfer', ...t('rsync') },
+      { id: 'vim', name: 'Vim', icon: '📝', category: 'tool', description: 'Modal text editor', ...t('vim') },
+      { id: 'nvim', name: 'Neovim', icon: '✨', category: 'tool', description: 'Hyperextensible Vim-based editor', ...t('nvim') },
+      { id: 'htop', name: 'htop', icon: '📊', category: 'tool', description: 'Interactive process viewer', ...t('htop') },
+      { id: 'tmux', name: 'tmux', icon: '🖥️', category: 'tool', description: 'Terminal multiplexer', ...t('tmux') },
+      { id: 'screen', name: 'screen', icon: '🪟', category: 'tool', description: 'Terminal session manager', ...t('screen') },
+      { id: 'ufw', name: 'ufw', icon: '🛡️', category: 'tool', description: 'Uncomplicated firewall', ...t('ufw') },
+      { id: 'fail2ban-client', name: 'fail2ban', icon: '🔐', category: 'tool', description: 'Intrusion prevention system', ...t('fail2ban-client') },
+      { id: 'jq', name: 'jq', icon: '🔍', category: 'tool', description: 'Lightweight JSON processor', ...t('jq') },
+      { id: 'unzip', name: 'unzip', icon: '📂', category: 'tool', description: 'ZIP extraction utility', ...t('unzip') },
     ];
     res.json({ success: true, data: tools });
   } catch (e: any) {
@@ -552,28 +624,62 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
 
 // ── Remote Extras: install/update ─────────────────────────────────────────────
 const REMOTE_INSTALL: Record<string, (opts: any) => string> = {
-  nodejs: (o) => {
-    const major = o?.nodeVersion || '20';
-    return `curl -fsSL https://deb.nodesource.com/setup_${major}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs 2>&1`;
-  },
-  bun: () => `curl -fsSL https://bun.sh/install | bash 2>&1`,
-  pm2: () => `npm install -g pm2 2>&1`,
-  python: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip 2>&1`,
-  'python-venv': () => `DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv 2>&1`,
-  certbot: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y certbot 2>&1`,
-  nginx: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 && systemctl enable nginx && systemctl start nginx 2>&1`,
-  apache: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y apache2 2>&1 && systemctl enable apache2 && systemctl start apache2 2>&1`,
+  nodejs: (o) => { const v = o?.nodeVersion || '20'; return `curl -fsSL https://deb.nodesource.com/setup_${v}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs`; },
+  npm:    () => `npm install -g npm@latest`,
+  bun:    () => `curl -fsSL https://bun.sh/install | bash 2>&1 || npm install -g bun`,
+  deno:   () => `curl -fsSL https://deno.land/install.sh | sh`,
+  pm2:    () => `npm install -g pm2`,
+  pnpm:   () => `npm install -g pnpm`,
+  yarn:   () => `npm install -g yarn`,
+  python: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip`,
+  'python-venv': () => `DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv`,
+  go:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y golang-go`,
+  rust:   () => `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y`,
+  nginx:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y nginx && systemctl enable nginx && systemctl start nginx`,
+  apache: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2`,
+  certbot:() => `DEBIAN_FRONTEND=noninteractive apt-get install -y certbot`,
+  git:    () => `DEBIAN_FRONTEND=noninteractive apt-get install -y git`,
+  curl:   () => `DEBIAN_FRONTEND=noninteractive apt-get install -y curl`,
+  wget:   () => `DEBIAN_FRONTEND=noninteractive apt-get install -y wget`,
+  rsync:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y rsync`,
+  vim:    () => `DEBIAN_FRONTEND=noninteractive apt-get install -y vim`,
+  nvim:   () => `DEBIAN_FRONTEND=noninteractive apt-get install -y neovim`,
+  htop:   () => `DEBIAN_FRONTEND=noninteractive apt-get install -y htop`,
+  tmux:   () => `DEBIAN_FRONTEND=noninteractive apt-get install -y tmux`,
+  screen: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y screen`,
+  ufw:    () => `DEBIAN_FRONTEND=noninteractive apt-get install -y ufw`,
+  'fail2ban-client': () => `DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban`,
+  jq:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y jq`,
+  unzip:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y unzip`,
 };
 
 const REMOTE_UPDATE: Record<string, string> = {
-  nodejs: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade nodejs 2>&1',
-  bun: 'bun upgrade 2>&1',
-  pm2: 'npm install -g pm2@latest 2>&1',
-  python: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade python3 2>&1',
-  'python-venv': 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade python3-venv 2>&1',
-  certbot: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade certbot 2>&1',
-  nginx: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade nginx 2>&1',
-  apache: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade apache2 2>&1',
+  nodejs: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade nodejs',
+  npm:    'npm install -g npm@latest',
+  bun:    'bun upgrade 2>&1 || npm install -g bun@latest',
+  deno:   'deno upgrade',
+  pm2:    'npm install -g pm2@latest',
+  pnpm:   'npm install -g pnpm@latest',
+  yarn:   'npm install -g yarn@latest',
+  python: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade python3',
+  'python-venv': 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade python3-venv',
+  go:     'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade golang-go',
+  nginx:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade nginx',
+  apache: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade apache2',
+  certbot:'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade certbot',
+  git:    'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade git',
+  curl:   'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade curl',
+  wget:   'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade wget',
+  rsync:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade rsync',
+  vim:    'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade vim',
+  nvim:   'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade neovim',
+  htop:   'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade htop',
+  tmux:   'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade tmux',
+  screen: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade screen',
+  ufw:    'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade ufw',
+  'fail2ban-client': 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade fail2ban',
+  jq:     'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade jq',
+  unzip:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade unzip',
 };
 
 router.post('/:id/extras/:tool/install', async (req, res) => {

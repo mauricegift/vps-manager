@@ -281,8 +281,8 @@ export default function TerminalPage() {
           <button
             onClick={send}
             disabled={!connected || !input.trim()}
-            className="shrink-0 p-1.5 rounded-lg transition-colors disabled:opacity-30"
-            style={{ background: MONOKAI.prompt, opacity: (!connected || !input.trim()) ? 0.3 : 1 }}
+            className="shrink-0 p-1.5 rounded-lg transition-opacity disabled:opacity-30"
+            style={{ background: MONOKAI.prompt }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#272822" strokeWidth="2.5" strokeLinecap="round">
               <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
