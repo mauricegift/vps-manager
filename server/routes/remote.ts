@@ -561,6 +561,11 @@ emit ufw "$(find_bin ufw)"
 emit fail2ban-client "$(find_bin fail2ban-client)"
 emit jq "$(find_bin jq)"
 emit unzip "$(find_bin unzip)"
+CHROME_P=$(find_bin google-chrome)
+if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin google-chrome-stable); fi
+if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium-browser); fi
+if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium); fi
+emit chrome "$CHROME_P" "--version"
 
 systemctl is-active nginx 2>/dev/null || echo "svc_nginx_inactive"
 systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "svc_apache_inactive"
@@ -615,6 +620,7 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
       { id: 'fail2ban-client', name: 'fail2ban', icon: '🔐', category: 'tool', description: 'Intrusion prevention system', ...t('fail2ban-client') },
       { id: 'jq', name: 'jq', icon: '🔍', category: 'tool', description: 'Lightweight JSON processor', ...t('jq') },
       { id: 'unzip', name: 'unzip', icon: '📂', category: 'tool', description: 'ZIP extraction utility', ...t('unzip') },
+      { id: 'chrome', name: 'Google Chrome', icon: '🌐', category: 'browser', description: 'Google Chrome web browser with headless support', ...t('chrome') },
     ];
     res.json({ success: true, data: tools });
   } catch (e: any) {
@@ -651,6 +657,7 @@ const REMOTE_INSTALL: Record<string, (opts: any) => string> = {
   'fail2ban-client': () => `DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban`,
   jq:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y jq`,
   unzip:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y unzip`,
+  chrome: () => `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable && DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb`,
 };
 
 const REMOTE_UPDATE: Record<string, string> = {
@@ -680,7 +687,23 @@ const REMOTE_UPDATE: Record<string, string> = {
   'fail2ban-client': 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade fail2ban',
   jq:     'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade jq',
   unzip:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade unzip',
+  chrome: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade google-chrome-stable',
 };
+
+router.post('/:id/extras/system-update', async (req, res) => {
+  const { action } = req.body as { action?: string };
+  const cmd = action === 'upgrade'
+    ? 'DEBIAN_FRONTEND=noninteractive apt-get upgrade -y 2>&1'
+    : 'apt-get update 2>&1';
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn, cmd);
+    res.json({ success: true, output: stdout + stderr });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 router.post('/:id/extras/:tool/install', async (req, res) => {
   const { tool } = req.params;

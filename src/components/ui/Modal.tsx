@@ -27,13 +27,13 @@ export default function Modal({ isOpen, onClose, title, children, size = "md" }:
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div
-        className={`relative w-full ${sizes[size]} glass-card shadow-2xl rounded-t-2xl sm:rounded-2xl mx-0 sm:mx-4 flex flex-col`}
-        style={{ animation: "modalIn 0.18s ease-out", maxHeight: "92vh" }}
+        className={`relative w-full ${sizes[size]} glass-card shadow-2xl rounded-2xl flex flex-col`}
+        style={{ animation: "modalIn 0.18s ease-out", maxHeight: "90vh" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-4 border-b border-[var(--line)] shrink-0">

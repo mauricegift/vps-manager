@@ -296,6 +296,12 @@ emit ufw "$(find_bin ufw)"
 emit fail2ban-client "$(find_bin fail2ban-client)"
 emit jq "$(find_bin jq)"
 emit unzip "$(find_bin unzip)"
+# Chrome: try google-chrome, google-chrome-stable, chromium-browser, chromium
+CHROME_P=$(find_bin google-chrome)
+if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin google-chrome-stable); fi
+if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium-browser); fi
+if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium); fi
+emit chrome "$CHROME_P" "--version"
 systemctl is-active nginx 2>/dev/null || echo "svc_nginx_inactive"
 systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "svc_apache_inactive"
 `;
@@ -349,6 +355,7 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
       { id: 'fail2ban-client', name: 'fail2ban', icon: '🔐', category: 'tool', description: 'Intrusion prevention system', latestVersion: null, updateAvailable: false, ...t('fail2ban-client') },
       { id: 'jq', name: 'jq', icon: '🔍', category: 'tool', description: 'Lightweight JSON processor', latestVersion: null, updateAvailable: false, ...t('jq') },
       { id: 'unzip', name: 'unzip', icon: '📂', category: 'tool', description: 'ZIP extraction utility', latestVersion: null, updateAvailable: false, ...t('unzip') },
+      { id: 'chrome', name: 'Google Chrome', icon: '🌐', category: 'browser', description: 'Google Chrome web browser with headless support', latestVersion: null, updateAvailable: false, ...t('chrome') },
     ];
     res.json({ success: true, data });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
@@ -383,6 +390,7 @@ const INSTALL_CMDS: Record<string, (opts: any) => string> = {
   'fail2ban-client': () => `DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban`,
   jq:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y jq`,
   unzip:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y unzip`,
+  chrome: () => `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable && DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb`,
 };
 
 const UPDATE_CMDS: Record<string, string> = {
@@ -412,6 +420,7 @@ const UPDATE_CMDS: Record<string, string> = {
   'fail2ban-client': 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade fail2ban',
   jq:     'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade jq',
   unzip:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade unzip',
+  chrome: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade google-chrome-stable',
 };
 
 router.post('/:tool/install', async (req, res) => {
@@ -432,6 +441,21 @@ router.post('/:tool/update', async (req, res) => {
   if (!cmd) return res.status(400).json({ success: false, error: 'Unknown tool' });
   try {
     const output = await run(cmd, 180000);
+    res.json({ success: true, output });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── System Update ─────────────────────────────────────────────────────────────
+router.post('/system-update', async (req, res) => {
+  const { action } = req.body as { action?: string };
+  let cmd: string;
+  if (action === 'upgrade') {
+    cmd = 'DEBIAN_FRONTEND=noninteractive apt-get upgrade -y 2>&1';
+  } else {
+    cmd = 'apt-get update 2>&1';
+  }
+  try {
+    const output = await run(cmd, 300000);
     res.json({ success: true, output });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });

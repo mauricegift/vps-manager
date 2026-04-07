@@ -3,7 +3,8 @@ import AOS from "aos";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Download, RefreshCw, ArrowUpCircle, CheckCircle2, XCircle,
-  UserPlus, Edit3, Trash2, Eye, EyeOff, Users, Package, ShieldAlert, Save
+  UserPlus, Edit3, Trash2, Eye, EyeOff, Users, Package, ShieldAlert, Save,
+  RefreshCcw, Layers
 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -18,7 +19,7 @@ interface Tool {
   installed: boolean; version: string | null; path?: string | null;
   latestVersion?: string | null; updateAvailable?: boolean;
   running?: boolean; canSelectVersion?: boolean;
-  category?: 'runtime' | 'server' | 'tool';
+  category?: 'runtime' | 'server' | 'tool' | 'browser';
 }
 
 interface User {
@@ -169,6 +170,49 @@ function ToolCard({
   );
 }
 
+function SysUpdateCard({
+  onRun, loading
+}: {
+  onRun: (action: 'update' | 'upgrade') => void;
+  loading: string | null;
+}) {
+  return (
+    <div className="glass-card p-5 flex flex-col gap-3 border-l-4 border-[var(--accent)]">
+      <div className="flex items-start gap-3">
+        <div className="text-2xl">🔄</div>
+        <div>
+          <div className="font-semibold text-sm">Update System</div>
+          <div className="text-[11px] text-[var(--muted)] mt-0.5">
+            Fetch latest package list and upgrade installed packages
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onRun('update')}
+          disabled={!!loading}
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
+        >
+          {loading === 'update'
+            ? <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+            : <RefreshCcw size={12} />}
+          {loading === 'update' ? 'Running...' : 'apt update'}
+        </button>
+        <button
+          onClick={() => onRun('upgrade')}
+          disabled={!!loading}
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+        >
+          {loading === 'upgrade'
+            ? <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+            : <Layers size={12} />}
+          {loading === 'upgrade' ? 'Running...' : 'apt upgrade'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const inp = "w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] transition-colors";
 
 export default function ExtrasPage() {
@@ -177,6 +221,7 @@ export default function ExtrasPage() {
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
 
   const [opLoading, setOpLoading] = useState<string | null>(null);
+  const [sysUpdLoading, setSysUpdLoading] = useState<string | null>(null);
   const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
 
   // User management state
@@ -225,6 +270,21 @@ export default function ExtrasPage() {
       toast.error(e.response?.data?.error || `Failed to install ${tool.name}`);
     }
     setOpLoading(null);
+  };
+
+  const handleSystemUpdate = async (action: 'update' | 'upgrade') => {
+    setSysUpdLoading(action);
+    try {
+      const url = activeServer
+        ? `/remote/${activeServer.id}/extras/system-update`
+        : `/extras/system-update`;
+      const { data } = await api.post(url, { action });
+      toast.success(action === 'update' ? 'Package list updated' : 'System upgraded');
+      if (data.output) setOutputModal({ title: action === 'update' ? 'apt update' : 'apt upgrade', output: data.output });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || `Failed to run apt ${action}`);
+    }
+    setSysUpdLoading(null);
   };
 
   const handleUpdate = async (tool: Tool) => {
@@ -313,6 +373,17 @@ export default function ExtrasPage() {
         </button>
       </div>
 
+      {/* System Update */}
+      <div data-aos="fade-up">
+        <div className="flex items-center gap-2 mb-4">
+          <RefreshCcw size={16} className="text-[var(--accent)]" />
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-[var(--muted)]">System</h2>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
+        </div>
+      </div>
+
       {/* Software section */}
       <div>
         <div className="flex items-center gap-2 mb-4">
@@ -339,6 +410,7 @@ export default function ExtrasPage() {
             { label: "Servers & SSL", ids: ["nginx","apache","certbot"] },
             { label: "Dev Tools", ids: ["git","curl","wget","rsync","vim","nvim"] },
             { label: "System Tools", ids: ["htop","tmux","screen","ufw","fail2ban-client","jq","unzip"] },
+            { label: "Browsers", ids: ["chrome"] },
           ];
           return (
             <div className="space-y-6">
@@ -364,7 +436,7 @@ export default function ExtrasPage() {
               })}
               {/* Any tools not in groups (future additions) */}
               {(() => {
-                const knownIds = ["nodejs","npm","bun","deno","pm2","pnpm","yarn","python","go","rust","nginx","apache","certbot","git","curl","wget","rsync","vim","nvim","htop","tmux","screen","ufw","fail2ban-client","jq","unzip"];
+                const knownIds = ["nodejs","npm","bun","deno","pm2","pnpm","yarn","python","go","rust","nginx","apache","certbot","git","curl","wget","rsync","vim","nvim","htop","tmux","screen","ufw","fail2ban-client","jq","unzip","chrome"];
                 const extra = tools.filter(t => !knownIds.includes(t.id));
                 if (!extra.length) return null;
                 return (
