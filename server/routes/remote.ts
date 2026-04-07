@@ -291,28 +291,32 @@ router.get('/:id/databases/:type/:dbName/tables', async (req, res) => {
     let tables: { name: string; rows?: number }[] = [];
 
     if (type === 'postgresql') {
+      // Simple query — works even without ANALYZE/statistics collected
       const { stdout } = await runSSHCommand(conn,
-        pgTry(`-tAc "SELECT tablename, n_live_tup FROM pg_tables t JOIN pg_stat_user_tables s ON s.relname=t.tablename WHERE schemaname='public' ORDER BY tablename"`, db)
+        pgTry(`-tAc "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"`, db)
       );
-      tables = stdout.trim().split('\n').filter(l => l && !l.startsWith('psql:') && !l.startsWith('ERROR')).map(l => {
-        const parts = l.split('|');
-        return { name: parts[0]?.trim(), rows: parseInt(parts[1]) || 0 };
-      }).filter(t => t.name);
-    } else if (type === 'mysql') {
+      tables = stdout.trim().split('\n')
+        .filter(l => l && !l.startsWith('psql:') && !l.startsWith('ERROR') && !l.match(/^FATAL|^WARNING/))
+        .map(l => ({ name: l.trim() }))
+        .filter(t => t.name);
+    } else if (type === 'mysql' || type === 'mariadb') {
       const { stdout } = await runSSHCommand(conn,
-        mysqlTry(`"SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db}' ORDER BY TABLE_NAME"`)
+        mysqlTry(`"SELECT TABLE_NAME, IFNULL(TABLE_ROWS,0) FROM information_schema.TABLES WHERE TABLE_SCHEMA='${db}' ORDER BY TABLE_NAME"`)
       );
-      tables = stdout.trim().split('\n').filter(l => l && !l.startsWith('ERROR') && !l.startsWith('mysql:')).map(l => {
+      tables = stdout.trim().split('\n').filter(l => l && !l.startsWith('ERROR') && !l.startsWith('mysql:') && !l.startsWith('Warning')).map(l => {
         const parts = l.split('\t');
         return { name: parts[0]?.trim(), rows: parseInt(parts[1]) || 0 };
       }).filter(t => t.name);
     } else if (type === 'mongodb') {
       const { stdout } = await runSSHCommand(conn,
-        `mongosh --quiet ${JSON.stringify(db)} --eval "db.getCollectionNames().join('\\n')" 2>&1`
+        `mongosh --quiet ${JSON.stringify(db)} --eval "db.getCollectionNames().join('\\n')" 2>/dev/null`
       );
-      tables = stdout.trim().split('\n').filter(l => l.trim() && !l.includes('Error')).map(name => ({ name: name.trim() }));
+      tables = stdout.trim().split('\n')
+        .filter(l => l.trim() && !l.startsWith('MongoNetwork') && !l.includes('DeprecationWarning') && !/^[A-Z].*Error/.test(l))
+        .map(name => ({ name: name.trim() }))
+        .filter(t => t.name);
     } else if (type === 'redis') {
-      const { stdout } = await runSSHCommand(conn, `redis-cli KEYS "*" 2>&1`);
+      const { stdout } = await runSSHCommand(conn, `redis-cli --scan --count 1000 2>/dev/null | head -200`);
       tables = stdout.trim().split('\n').filter(Boolean).map(name => ({ name: name.trim() }));
     } else if (type === 'sqlite') {
       const { stdout } = await runSSHCommand(conn,

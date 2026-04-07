@@ -363,9 +363,11 @@ export default function DatabasesPage() {
         {browserDb && (
           <div className="flex flex-col md:flex-row gap-3 min-h-0 h-full">
 
-            {/* Table list — vertical sidebar on desktop, horizontal chips on mobile */}
+            {/* Table/Collection/Key list — vertical sidebar on desktop, horizontal chips on mobile */}
             <div className="md:w-44 shrink-0 md:border-r border-[var(--line)] md:pr-3">
-              <p className="text-[10px] text-[var(--muted)] uppercase font-semibold mb-2 tracking-wider">Tables</p>
+              <p className="text-[10px] text-[var(--muted)] uppercase font-semibold mb-2 tracking-wider">
+                {browserDb.type === "mongodb" ? "Collections" : browserDb.type === "redis" ? "Keys" : "Tables"}
+              </p>
               {loadingTables ? (
                 <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-x-visible pb-1 md:pb-0 hide-scrollbar">
                   {Array.from({ length: 5 }).map((_, i) => (
@@ -373,7 +375,9 @@ export default function DatabasesPage() {
                   ))}
                 </div>
               ) : tableList.length === 0 ? (
-                <p className="text-[11px] text-[var(--muted)] italic">No tables found</p>
+                <p className="text-[11px] text-[var(--muted)] italic">
+                  {browserDb.type === "mongodb" ? "No collections" : browserDb.type === "redis" ? "No keys" : "No tables found"}
+                </p>
               ) : (
                 <div className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-x-visible md:overflow-y-auto pb-1 md:pb-0 md:max-h-[52vh] hide-scrollbar md:space-y-0">
                   {tableList.map((t) => (
@@ -400,13 +404,21 @@ export default function DatabasesPage() {
             {/* Main content */}
             <div className="flex-1 min-w-0 space-y-3">
               <div className="space-y-2">
-                <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider">SQL Query</p>
+                <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider">
+                  {browserDb.type === "mongodb" ? "MongoDB Expression" : browserDb.type === "redis" ? "Redis Command" : "SQL Query"}
+                </p>
                 <div className="flex gap-2">
                   <textarea
                     rows={2}
                     value={queryText}
                     onChange={e => setQueryText(e.target.value)}
-                    placeholder={`SELECT * FROM ${selectedTable || "table_name"} LIMIT 50;`}
+                    placeholder={
+                      browserDb.type === "mongodb"
+                        ? `db.${selectedTable || "collection"}.find().limit(10)`
+                        : browserDb.type === "redis"
+                        ? `KEYS *`
+                        : `SELECT * FROM ${selectedTable || "table_name"} LIMIT 50;`
+                    }
                     className="flex-1 px-3 py-2 text-xs font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] focus:border-[var(--accent)] transition-colors resize-none"
                     onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runQuery(); }}
                   />
@@ -455,8 +467,20 @@ export default function DatabasesPage() {
               {!queryResult && !selectedTable && !loadingTables && (
                 <div className="flex flex-col items-center justify-center py-12 text-[var(--muted)]">
                   <Table2 size={28} className="mb-3 opacity-30" />
-                  <p className="text-sm">Select a table to browse its data</p>
-                  <p className="text-xs mt-1">Or run a SQL query above</p>
+                  <p className="text-sm">
+                    {browserDb.type === "mongodb"
+                      ? "Select a collection to browse documents"
+                      : browserDb.type === "redis"
+                      ? "Select a key to inspect its value"
+                      : "Select a table to browse its data"}
+                  </p>
+                  <p className="text-xs mt-1">
+                    {browserDb.type === "mongodb"
+                      ? "Or run a MongoDB expression above"
+                      : browserDb.type === "redis"
+                      ? "Or run a Redis command above"
+                      : "Or run a SQL query above"}
+                  </p>
                 </div>
               )}
             </div>
@@ -525,6 +549,21 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
           </div>
         )}
       </div>
+
+      {/* Redis: direct browse button (no database concept) */}
+      {db.running && db.type === "redis" && (
+        <div className="mb-3">
+          <button
+            onClick={() => onBrowse(db, "default")}
+            className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-[var(--foreground)] border border-[var(--line)] hover:border-[var(--accent)]/40 transition-colors group"
+          >
+            <span className="text-[11px] font-mono truncate">Browse All Keys</span>
+            <span className="flex items-center gap-1 text-[10px] text-[var(--muted)] group-hover:text-[var(--accent)] transition-colors shrink-0 ml-2">
+              <Table2 size={10} /> Browse
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Database list (expandable) */}
       {showDbs && db.databases && db.databases.length > 0 && (
