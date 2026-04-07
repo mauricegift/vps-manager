@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none">
+  <rect width="1200" height="630" fill="#0f0f13"/>
+  <rect width="1200" height="630" fill="url(#grad)" opacity="0.4"/>
+  <defs>
+    <radialGradient id="grad" cx="30%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#0f0f13" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- Server racks illustration -->
+  <rect x="820" y="120" width="300" height="80" rx="8" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
+  <rect x="820" y="220" width="300" height="80" rx="8" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
+  <rect x="820" y="320" width="300" height="80" rx="8" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
+  <rect x="820" y="420" width="300" height="80" rx="8" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
+  <circle cx="850" cy="160" r="8" fill="#4ade80"/>
+  <circle cx="850" cy="260" r="8" fill="#4ade80"/>
+  <circle cx="850" cy="360" r="8" fill="#4ade80"/>
+  <circle cx="850" cy="460" r="8" fill="#fbbf24"/>
+  <rect x="870" y="152" width="80" height="6" rx="3" fill="#313244"/>
+  <rect x="870" y="163" width="50" height="4" rx="2" fill="#313244"/>
+  <rect x="870" y="252" width="80" height="6" rx="3" fill="#313244"/>
+  <rect x="870" y="263" width="50" height="4" rx="2" fill="#313244"/>
+  <rect x="870" y="352" width="80" height="6" rx="3" fill="#313244"/>
+  <rect x="870" y="363" width="50" height="4" rx="2" fill="#313244"/>
+  <rect x="870" y="452" width="80" height="6" rx="3" fill="#313244"/>
+  <rect x="870" y="463" width="50" height="4" rx="2" fill="#313244"/>
+  <!-- Logo icon -->
+  <rect x="80" y="120" width="80" height="80" rx="18" fill="#6366f1"/>
+  <rect x="96" y="137" width="48" height="12" rx="3" fill="white" opacity="0.9"/>
+  <rect x="96" y="154" width="48" height="12" rx="3" fill="white" opacity="0.7"/>
+  <rect x="96" y="171" width="48" height="12" rx="3" fill="white" opacity="0.5"/>
+  <circle cx="135" cy="143" r="3" fill="#4ade80"/>
+  <circle cx="135" cy="160" r="3" fill="#4ade80"/>
+  <circle cx="135" cy="177" r="3" fill="#fbbf24"/>
+  <!-- Title -->
+  <text x="80" y="270" font-family="system-ui, sans-serif" font-weight="800" font-size="72" fill="white">VPS Manager</text>
+  <text x="80" y="340" font-family="system-ui, sans-serif" font-weight="400" font-size="32" fill="#6c7086">Professional server control panel</text>
+  <!-- Author -->
+  <text x="80" y="530" font-family="system-ui, sans-serif" font-weight="600" font-size="24" fill="#6366f1">by Gifted Tech</text>
+  <text x="80" y="568" font-family="system-ui, sans-serif" font-weight="400" font-size="20" fill="#45475a">me.giftedtech.co.ke · github.com/mauricegift</text>
+</svg>
