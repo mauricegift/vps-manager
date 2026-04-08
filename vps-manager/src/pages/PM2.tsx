@@ -360,16 +360,23 @@ export default function PM2Page() {
     setGhCloning(true);
     setGhCloneOutput("");
     try {
-      const { data } = await api.post("/github/clone", {
-        repoUrl: ghRepoUrl,
-        token: ghToken || undefined,
-        dir: ghCloneDir,
-        runInstall: ghRunInstall,
-      });
-      if (data.success) {
-        setGhCloneOutput(data.data.output || "Cloned successfully");
-        const entryFile = ghSelectedSuggestion?.file || "";
-        const isCmd = entryFile.startsWith("npm") || entryFile.startsWith("bun") || entryFile.startsWith("python");
+      const entryFile = ghSelectedSuggestion?.file || "";
+      const isCmd = entryFile.startsWith("npm") || entryFile.startsWith("bun") || entryFile.startsWith("python");
+
+      if (activeServer) {
+        // Clone on the remote VPS via SSH exec
+        const cloneUrl = ghToken
+          ? `https://${ghToken}@github.com/${ghRepoInfo.owner}/${ghRepoInfo.repo}.git`
+          : `https://github.com/${ghRepoInfo.owner}/${ghRepoInfo.repo}.git`;
+        const installCmd = ghRunInstall
+          ? (ghRepoInfo.hasPackageJson ? " && npm install 2>&1" : ghRepoInfo.hasRequirementsTxt ? " && pip install -r requirements.txt 2>&1" : "")
+          : "";
+        const cmd = `mkdir -p "$(dirname "${ghCloneDir}")" && git clone "${cloneUrl}" "${ghCloneDir}" 2>&1${installCmd}`;
+        const { data } = await api.post(`/remote/${activeServer.id}/exec`, { command: cmd });
+        const execOut = typeof data.data === "string"
+          ? data.data
+          : ((data.data?.stdout || "") + (data.data?.stderr || "")) || "Cloned successfully";
+        setGhCloneOutput(execOut);
         setStartForm(s => ({
           ...s,
           script: isCmd ? entryFile : `${ghCloneDir}/${entryFile}`,
@@ -377,8 +384,26 @@ export default function PM2Page() {
         }));
         setScriptCheck(null);
         setEnvCheck(null);
-        toast.success(`Cloned ${ghRepoInfo.owner}/${ghRepoInfo.repo}`);
-      } else { toast.error(data.error || "Clone failed"); }
+        toast.success(`Cloned ${ghRepoInfo.owner}/${ghRepoInfo.repo} on remote`);
+      } else {
+        const { data } = await api.post("/github/clone", {
+          repoUrl: ghRepoUrl,
+          token: ghToken || undefined,
+          dir: ghCloneDir,
+          runInstall: ghRunInstall,
+        });
+        if (data.success) {
+          setGhCloneOutput(data.data.output || "Cloned successfully");
+          setStartForm(s => ({
+            ...s,
+            script: isCmd ? entryFile : `${ghCloneDir}/${entryFile}`,
+            cwd: ghCloneDir,
+          }));
+          setScriptCheck(null);
+          setEnvCheck(null);
+          toast.success(`Cloned ${ghRepoInfo.owner}/${ghRepoInfo.repo}`);
+        } else { toast.error(data.error || "Clone failed"); }
+      }
     } catch (e: any) { toast.error(e.response?.data?.error || "Clone failed"); }
     setGhCloning(false);
   };
