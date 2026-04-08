@@ -150,15 +150,42 @@ export default function CodeView({ code, filename, className = "" }: Props) {
     }
   }, [code, filename, theme]);
 
+  const lineCount = code.split("\n").length;
+  const gutterBg = dark ? "#181825" : "#f1f5f9";
+  const gutterColor = dark ? "#4a4a6a" : "#94a3b8";
+  const gutterBorder = dark ? "#2a2a3e" : "#e2e8f0";
+  const gutterWidth = String(lineCount).length * 8 + 24;
+
   return (
     <div
-      className={`rounded-xl overflow-auto text-[11px] leading-relaxed border border-[var(--line)] ${className}`}
-      style={{ background: bg, fontFamily: "monospace" }}
+      className={`rounded-xl overflow-hidden border border-[var(--line)] ${className}`}
+      style={{ background: bg, fontFamily: "monospace", fontSize: "11px" }}
     >
       <style>{dark ? darkStyles : lightStyles}</style>
-      <pre className="m-0 p-4 overflow-auto" style={{ color: textColor }}>
-        <code ref={ref}>{code}</code>
-      </pre>
+      <div className="overflow-auto" style={{ maxHeight: "55vh" }}>
+        <div className="flex min-h-full">
+          <div
+            className="select-none shrink-0 py-4 text-right leading-relaxed"
+            style={{
+              width: gutterWidth,
+              paddingLeft: 8,
+              paddingRight: 12,
+              background: gutterBg,
+              borderRight: `1px solid ${gutterBorder}`,
+              color: gutterColor,
+              fontFamily: "monospace",
+              fontSize: "11px",
+            }}
+          >
+            {Array.from({ length: lineCount }, (_, i) => (
+              <div key={i + 1}>{i + 1}</div>
+            ))}
+          </div>
+          <pre className="flex-1 m-0 py-4 px-4 overflow-visible" style={{ color: textColor }}>
+            <code ref={ref}>{code}</code>
+          </pre>
+        </div>
+      </div>
     </div>
   );
 }
