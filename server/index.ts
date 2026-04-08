@@ -146,18 +146,23 @@ io.on('connection', async (socket) => {
       setTimeout(startShell, 1000);
     });
 
-    // Bootstrap color helpers — use functions (work in non-interactive bash, unlike aliases)
+    // Write color helpers immediately — stdin is pipe-buffered so these land
+    // before any user input even if bash's login scripts haven't finished yet.
+    shellProc.stdin?.write(
+      'ls()   { command ls   --color=always "$@"; }; export -f ls\n'   +
+      'll()   { command ls -la --color=always "$@"; }; export -f ll\n'  +
+      'grep() { command grep --color=always "$@"; }; export -f grep\n'  +
+      'diff() { command diff --color=always "$@"; }; export -f diff\n'  +
+      'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
+    );
+
+    // Emit a visible ANSI color test so the user can confirm rendering works.
     setTimeout(() => {
-      if (shellProc?.stdin?.writable) {
-        shellProc.stdin.write(
-          'ls() { command ls --color=always "$@"; }; export -f ls\n' +
-          'll() { command ls -la --color=always "$@"; }; export -f ll\n' +
-          'grep() { command grep --color=always "$@"; }; export -f grep\n' +
-          'diff() { command diff --color=always "$@"; }; export -f diff\n' +
-          'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
-        );
-      }
-    }, 600);
+      socket.emit('output',
+        '\x1b[32m✓\x1b[0m Colors ready — ' +
+        '\x1b[34mls\x1b[0m · \x1b[33mgrep\x1b[0m · \x1b[35mdiff\x1b[0m · \x1b[36mll\x1b[0m are colorized\n'
+      );
+    }, 200);
   };
 
   socket.on('command', (cmd: string) => {
