@@ -58,6 +58,7 @@ export default function FileManagerPage() {
   const [newFileName, setNewFileName] = useState("");
   const [newFileContent, setNewFileContent] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [folderDlLoading, setFolderDlLoading] = useState<string | null>(null);
 
   // Bulk selection
   const [selectMode, setSelectMode] = useState(false);
@@ -162,7 +163,7 @@ export default function FileManagerPage() {
       form.append("path", path);
       await api.post("/files/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
       toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded`);
-      qc.invalidateQueries({ queryKey: ["files"] });
+      await refetch();
     } catch { toast.error("Upload failed"); }
     setUploading(false);
   };
@@ -229,6 +230,41 @@ export default function FileManagerPage() {
     document.body.removeChild(link);
   };
 
+  const downloadFolder = async (item: FileItem) => {
+    if (folderDlLoading) return;
+    setFolderDlLoading(item.path);
+    try {
+      if (activeServer) {
+        // Remote: use dedicated zip-download endpoint (zips on remote, streams back)
+        const url = `/api/remote/${activeServer.id}/files/zip-download?path=${encodeURIComponent(item.path)}`;
+        const res = await fetch(url);
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || "Zip failed"); }
+        const blob = await res.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${item.name}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+      } else {
+        // Local: use existing /files/zip endpoint
+        const { data } = await api.post("/files/zip", { paths: [item.path] });
+        const zipPath = data.data.path;
+        const link = document.createElement("a");
+        link.href = `/api/files/download?path=${encodeURIComponent(zipPath)}`;
+        link.download = `${item.name}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      toast.success(`Downloading ${item.name}.zip`);
+    } catch (e: any) {
+      toast.error(e.message || "Download failed");
+    }
+    setFolderDlLoading(null);
+  };
+
   // ── GitHub import helpers ─────────────────────────────────────────────────
   useEffect(() => {
     if (ghModal) {
@@ -266,19 +302,28 @@ export default function FileManagerPage() {
     setGhCloneOutput("");
     try {
       if (ghSaveToken && ghToken) persistGhToken(ghTokenLabel, ghToken);
+      const repoSlug = ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "");
+      const cloneUrl = ghToken
+        ? `https://${ghToken}@github.com/${repoSlug}.git`
+        : `https://github.com/${repoSlug}.git`;
+
       if (activeServer) {
-        // For remote: use exec endpoint to run git clone
-        const cloneUrl = ghToken
-          ? `https://${ghToken}@github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`
-          : `https://github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`;
+        const parentDir = ghTargetDir.split("/").slice(0, -1).join("/") || "/";
         const { data } = await api.post(`/remote/${activeServer.id}/exec`, {
-          command: `mkdir -p "$(dirname "${ghTargetDir}")" && git clone "${cloneUrl}" "${ghTargetDir}" 2>&1`,
+          command: `mkdir -p ${JSON.stringify(parentDir)} && git clone ${JSON.stringify(cloneUrl)} ${JSON.stringify(ghTargetDir)} 2>&1`,
         });
         const execOut = typeof data.data === "string"
           ? data.data
-          : ((data.data?.stdout || "") + (data.data?.stderr || "")) || "Cloned successfully";
-        setGhCloneOutput(execOut);
-        toast.success("Repository cloned");
+          : ((data.data?.stdout || "") + (data.data?.stderr || ""));
+        setGhCloneOutput(execOut || "Cloned successfully");
+        const failed = /error:|fatal:|not found|denied|could not/i.test(execOut);
+        if (failed) {
+          toast.error("Clone failed — check output above");
+        } else {
+          toast.success("Repository cloned");
+          setPath(ghTargetDir);
+          await refetch();
+        }
       } else {
         const { data } = await api.post("/github/clone", {
           repoUrl: ghRepoUrl,
@@ -289,13 +334,17 @@ export default function FileManagerPage() {
         if (data.success) {
           setGhCloneOutput(data.data.output || "Cloned successfully");
           toast.success(`Repository cloned to ${ghTargetDir}`);
+          setPath(ghTargetDir);
+          await refetch();
         } else {
+          setGhCloneOutput(data.error || "Clone failed");
           toast.error(data.error || "Clone failed");
         }
       }
-      qc.invalidateQueries({ queryKey: ["files"] });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Clone failed");
+      const msg = e.response?.data?.error || "Clone failed";
+      setGhCloneOutput(msg);
+      toast.error(msg);
     }
     setGhCloning(false);
   };
@@ -519,6 +568,18 @@ export default function FileManagerPage() {
                                   <button onClick={() => downloadFile(item.path, item.name)} className="p-1.5 rounded-lg hover:bg-purple-500/10 text-purple-400 transition-colors" title="Download zip"><Download size={13} /></button>
                                 )}
                               </>
+                            )}
+                            {item.type === "directory" && (
+                              <button
+                                onClick={() => downloadFolder(item)}
+                                disabled={folderDlLoading === item.path}
+                                className="p-1.5 rounded-lg hover:bg-purple-500/10 text-purple-400 transition-colors disabled:opacity-40"
+                                title="Download as zip"
+                              >
+                                {folderDlLoading === item.path
+                                  ? <Loader2 size={13} className="animate-spin" />
+                                  : <Download size={13} />}
+                              </button>
                             )}
                             <button onClick={() => setClipboard({ item, op: "cut" })} className="p-1.5 rounded-lg hover:bg-amber-500/10 text-amber-400 transition-colors" title="Cut"><Scissors size={13} /></button>
                             <button onClick={() => setClipboard({ item, op: "copy" })} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Copy"><Copy size={13} /></button>
