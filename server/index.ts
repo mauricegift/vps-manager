@@ -134,6 +134,7 @@ io.on('connection', async (socket) => {
         FORCE_COLOR: '3',
         CLICOLOR_FORCE: '1',
         CLICOLOR: '1',
+        LS_COLORS: 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32',
       },
       cwd,
     });
@@ -144,6 +145,19 @@ io.on('connection', async (socket) => {
       socket.emit('system', 'Shell session ended. Reconnecting...');
       setTimeout(startShell, 1000);
     });
+
+    // Bootstrap color aliases — runs silently, no output
+    setTimeout(() => {
+      if (shellProc?.stdin?.writable) {
+        shellProc.stdin.write(
+          'alias ls="ls --color=always"\n' +
+          'alias ll="ls -la --color=always"\n' +
+          'alias grep="grep --color=always"\n' +
+          'alias diff="diff --color=always"\n' +
+          'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
+        );
+      }
+    }, 400);
   };
 
   socket.on('command', (cmd: string) => {
