@@ -84,7 +84,7 @@ export default function MobileSidebar({ open, onClose }: Props) {
           </nav>
 
           <div className="p-4 border-t border-[var(--line)]">
-            <div className="text-[10px] text-[var(--muted)] text-center">VPS Manager v1.0 · Port 5756</div>
+            <div className="text-[10px] text-[var(--muted)] text-center">VPS Manager v1.0</div>
           </div>
         </div>
       </aside>
