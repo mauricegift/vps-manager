@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Folder, File, ChevronRight, Home, RefreshCw,
@@ -15,6 +15,30 @@ import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 import { useTheme } from "@/context/ThemeContext";
+
+async function collectFolderEntries(entry: FileSystemEntry, prefix: string): Promise<{ file: File; relativePath: string }[]> {
+  if (entry.isFile) {
+    return new Promise((resolve) => {
+      (entry as FileSystemFileEntry).file(f => resolve([{ file: f, relativePath: prefix + f.name }]));
+    });
+  }
+  if (entry.isDirectory) {
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    const allEntries: FileSystemEntry[] = [];
+    const readBatch = (): Promise<void> =>
+      new Promise((resolve, reject) => {
+        reader.readEntries(batch => {
+          if (!batch.length) return resolve();
+          allEntries.push(...batch);
+          readBatch().then(resolve).catch(reject);
+        }, reject);
+      });
+    await readBatch();
+    const nested = await Promise.all(allEntries.map(e => collectFolderEntries(e, prefix + entry.name + "/")));
+    return nested.flat();
+  }
+  return [];
+}
 
 function fmtSize(b: number) {
   if (!b) return "—";
@@ -34,6 +58,9 @@ const inp = "w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-
 export default function FileManagerPage() {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorLineNumRef = useRef<HTMLDivElement>(null);
   const { activeServer } = useRemoteServer();
   const { theme } = useTheme();
   const dark = theme === "dark";
@@ -60,6 +87,7 @@ export default function FileManagerPage() {
   const [uploading, setUploading] = useState(false);
   const [folderDlLoading, setFolderDlLoading] = useState<string | null>(null);
   const [fileOpLoading, setFileOpLoading] = useState<string | null>(null);
+  const [itemActionLoading, setItemActionLoading] = useState<string | null>(null);
 
   // Bulk selection
   const [selectMode, setSelectMode] = useState(false);
@@ -172,19 +200,66 @@ export default function FileManagerPage() {
     }
   };
 
-  const handleUpload = async (files: FileList) => {
+  const handleUpload = async (files: FileList | File[], relativePaths?: string[]) => {
     if (!files.length) return;
     setUploading(true);
     try {
       const form = new FormData();
-      Array.from(files).forEach(f => form.append("files", f));
+      const filesArr = Array.from(files);
+      filesArr.forEach(f => form.append("files", f));
       form.append("path", path);
+      if (relativePaths && relativePaths.length) {
+        form.append("relativePaths", JSON.stringify(relativePaths));
+      }
       await api.post("/files/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
-      toast.success(`${files.length} file${files.length > 1 ? "s" : ""} uploaded`);
+      toast.success(`${filesArr.length} file${filesArr.length > 1 ? "s" : ""} uploaded`);
       await refetch();
     } catch { toast.error("Upload failed"); }
     setUploading(false);
   };
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    const items = Array.from(e.dataTransfer.items || []);
+    const hasDir = items.some(i => {
+      const entry = i.webkitGetAsEntry?.();
+      return entry?.isDirectory;
+    });
+    if (hasDir) {
+      setUploading(true);
+      try {
+        const allFiles: File[] = [];
+        const allPaths: string[] = [];
+        for (const item of items) {
+          const entry = item.webkitGetAsEntry?.();
+          if (!entry) continue;
+          const collected = await collectFolderEntries(entry, "");
+          collected.forEach(({ file, relativePath }) => {
+            allFiles.push(file);
+            allPaths.push(relativePath);
+          });
+        }
+        if (allFiles.length) await handleUpload(allFiles, allPaths);
+        else setUploading(false);
+      } catch { toast.error("Folder upload failed"); setUploading(false); }
+    } else if (e.dataTransfer.files?.length) {
+      await handleUpload(e.dataTransfer.files);
+    }
+  }, [path]);
+
+  const handleFolderInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !files.length) return;
+    const relativePaths = Array.from(files).map(f => (f as any).webkitRelativePath || f.name);
+    await handleUpload(files, relativePaths);
+    e.target.value = "";
+  };
+
+  const syncEditorScroll = useCallback(() => {
+    if (editorTextareaRef.current && editorLineNumRef.current) {
+      editorLineNumRef.current.scrollTop = editorTextareaRef.current.scrollTop;
+    }
+  }, []);
 
   const toggleBulkItem = (itemPath: string) => {
     setBulkSelected(prev => {
@@ -406,13 +481,24 @@ export default function FileManagerPage() {
             className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
           >
             <Upload size={14} className={uploading ? "animate-pulse" : ""} />
-            {uploading ? "Uploading..." : "Upload"}
+            {uploading ? "Uploading..." : "Upload Files"}
+          </button>
+          <button
+            onClick={() => folderInputRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors disabled:opacity-50"
+          >
+            <FolderPlus size={14} className={uploading ? "animate-pulse" : ""} />
+            {uploading ? "Uploading..." : "Upload Folder"}
           </button>
           <button onClick={() => refetch()} disabled={isFetching} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors disabled:opacity-50">
             <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} /> Refresh
           </button>
           <input ref={fileInputRef} type="file" multiple className="hidden"
             onChange={e => e.target.files && handleUpload(e.target.files)} />
+          <input ref={folderInputRef} type="file" className="hidden"
+            {...({ webkitdirectory: "", multiple: "" } as any)}
+            onChange={handleFolderInputChange} />
         </div>
       </div>
 
@@ -421,11 +507,11 @@ export default function FileManagerPage() {
         data-aos="fade-up"
         className="glass-card border-2 border-dashed border-[var(--line)] hover:border-[var(--accent)]/40 transition-colors cursor-pointer text-center py-4 text-sm text-[var(--muted)]"
         onDragOver={e => e.preventDefault()}
-        onDrop={e => { e.preventDefault(); e.dataTransfer.files && handleUpload(e.dataTransfer.files); }}
+        onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
       >
         <Upload size={16} className="mx-auto mb-1 opacity-50" />
-        Drop files here or click to upload to <span className="font-mono text-[var(--accent)]">{path}</span>
+        Drop files or folders here, or click to upload to <span className="font-mono text-[var(--accent)]">{path}</span>
       </div>
 
       {/* Breadcrumb */}
@@ -620,9 +706,18 @@ export default function FileManagerPage() {
                                   : <Download size={13} />}
                               </button>
                             )}
-                            <button onClick={() => setClipboard({ item, op: "cut" })} className="p-1.5 rounded-lg hover:bg-amber-500/10 text-amber-400 transition-colors" title="Cut"><Scissors size={13} /></button>
-                            <button onClick={() => setClipboard({ item, op: "copy" })} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Copy"><Copy size={13} /></button>
-                            <button onClick={() => setDeleteConfirm(item)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete"><Trash2 size={13} /></button>
+                            <button
+                              onClick={() => { setItemActionLoading(`${item.path}:cut`); setClipboard({ item, op: "cut" }); setTimeout(() => setItemActionLoading(null), 400); }}
+                              className="p-1.5 rounded-lg hover:bg-amber-500/10 text-amber-400 transition-colors" title="Cut"
+                            >{itemActionLoading === `${item.path}:cut` ? <Loader2 size={13} className="animate-spin" /> : <Scissors size={13} />}</button>
+                            <button
+                              onClick={() => { setItemActionLoading(`${item.path}:copy`); setClipboard({ item, op: "copy" }); setTimeout(() => setItemActionLoading(null), 400); }}
+                              className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Copy"
+                            >{itemActionLoading === `${item.path}:copy` ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}</button>
+                            <button
+                              onClick={() => { setItemActionLoading(`${item.path}:del`); setDeleteConfirm(item); setTimeout(() => setItemActionLoading(null), 400); }}
+                              className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete"
+                            >{itemActionLoading === `${item.path}:del` ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}</button>
                           </div>
                         </td>
                       </tr>
@@ -697,28 +792,50 @@ export default function FileManagerPage() {
           {isEditing ? (
             <>
               {/* Code language badge */}
-              {viewContent?.name && getLang(viewContent.name) && (
-                <div className="flex items-center gap-1.5">
-                  <Code size={12} className="text-[var(--accent)]" />
+              <div className="flex items-center gap-1.5">
+                <Code size={12} className="text-[var(--accent)]" />
+                {viewContent?.name && getLang(viewContent.name) ? (
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--foreground)] border border-[var(--line)] text-[var(--muted)] capitalize">
                     {getLang(viewContent.name)}
                   </span>
-                  <span className="text-[10px] text-[var(--muted)]">syntax highlighting active</span>
-                </div>
-              )}
-              {/* Code-styled editor */}
+                ) : (
+                  <span className="text-[10px] text-[var(--muted)]">plain text</span>
+                )}
+                <span className="text-[10px] text-[var(--muted)] ml-1">
+                  {editContent.split("\n").length} lines
+                </span>
+              </div>
+              {/* Line-numbered editor */}
               <div
-                className="relative rounded-xl overflow-hidden border border-[var(--line)]"
-                style={{ background: dark ? "#1e1e2e" : "#f8fafc" }}
+                className="rounded-xl overflow-hidden border border-[var(--line)] flex"
+                style={{ background: dark ? "#1e1e2e" : "#f8fafc", minHeight: "300px", maxHeight: "55vh" }}
               >
+                {/* Gutter */}
+                <div
+                  ref={editorLineNumRef}
+                  className="select-none shrink-0 py-4 text-right font-mono text-[11px] leading-relaxed overflow-hidden"
+                  style={{
+                    minWidth: `${String(editContent.split("\n").length).length * 8 + 24}px`,
+                    paddingLeft: 8,
+                    paddingRight: 12,
+                    background: dark ? "#181825" : "#f1f5f9",
+                    borderRight: `1px solid ${dark ? "#2a2a3e" : "#e2e8f0"}`,
+                    color: dark ? "#4a4a6a" : "#94a3b8",
+                  }}
+                >
+                  {editContent.split("\n").map((_, i) => (
+                    <div key={i}>{i + 1}</div>
+                  ))}
+                </div>
+                {/* Textarea */}
                 <textarea
+                  ref={editorTextareaRef}
                   value={editContent}
                   onChange={e => setEditContent(e.target.value)}
+                  onScroll={syncEditorScroll}
                   spellCheck={false}
-                  className="w-full font-mono text-[11px] resize-none focus:outline-none bg-transparent p-4 leading-relaxed"
+                  className="flex-1 font-mono text-[11px] resize-none focus:outline-none bg-transparent py-4 px-3 leading-relaxed"
                   style={{
-                    minHeight: "300px",
-                    maxHeight: "55vh",
                     color: dark ? "#cdd6f4" : "#1e293b",
                     caretColor: dark ? "#cdd6f4" : "#1e293b",
                     overflowY: "auto",
