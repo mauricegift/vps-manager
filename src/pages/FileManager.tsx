@@ -95,6 +95,9 @@ export default function FileManagerPage() {
   const [bulkZipping, setBulkZipping] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
 
+  // Hidden files
+  const [showHidden, setShowHidden] = useState(false);
+
   // GitHub import
   const [ghModal, setGhModal] = useState(false);
   const [ghRepoUrl, setGhRepoUrl] = useState("");
@@ -270,11 +273,14 @@ export default function FileManagerPage() {
     });
   };
 
+  const visibleFiles = files.filter(f => showHidden || !f.name.startsWith("."));
+  const hiddenCount = files.length - visibleFiles.length;
+
   const toggleSelectAll = () => {
-    if (bulkSelected.size === files.length) {
+    if (bulkSelected.size === visibleFiles.length) {
       setBulkSelected(new Set());
     } else {
-      setBulkSelected(new Set(files.map(f => f.path)));
+      setBulkSelected(new Set(visibleFiles.map(f => f.path)));
     }
   };
 
@@ -619,15 +625,28 @@ export default function FileManagerPage() {
                   {selectMode && (
                     <th className="w-8">
                       <button onClick={toggleSelectAll} className="p-0.5 rounded hover:bg-[var(--foreground)] transition-colors">
-                        {bulkSelected.size === files.length && files.length > 0 ? <CheckSquare size={13} className="text-[var(--accent)]" /> : <SquareIcon size={13} />}
+                        {bulkSelected.size === visibleFiles.length && visibleFiles.length > 0 ? <CheckSquare size={13} className="text-[var(--accent)]" /> : <SquareIcon size={13} />}
                       </button>
                     </th>
                   )}
-                  <th>Name</th><th>Size</th><th>Modified</th><th>Permissions</th><th>Actions</th>
+                  <th>Name</th><th>Size</th><th>Modified</th><th>Permissions</th>
+                  <th>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Actions</span>
+                      <button
+                        onClick={() => setShowHidden(h => !h)}
+                        title={showHidden ? "Hide hidden files" : "Show hidden files"}
+                        className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-lg border transition-colors ${showHidden ? "bg-[var(--accent)]/10 border-[var(--accent)]/30 text-[var(--accent)]" : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)]"}`}
+                      >
+                        {showHidden ? <EyeIcon size={10} /> : <EyeOff size={10} />}
+                        {showHidden ? "Hide dotfiles" : `Dotfiles${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
+                      </button>
+                    </div>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {files
+                {visibleFiles
                   .sort((a, b) => {
                     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
                     return a.name.localeCompare(b.name);
