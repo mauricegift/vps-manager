@@ -28,18 +28,97 @@ function isEnabled(name: string): boolean {
   try { return fs.existsSync(p); } catch { return false; }
 }
 
-// ─── Nginx Status ───────────────────────────────────────────────────────────
+// ─── Nginx Status ────────────────────────────────────────────────────────────
 
 router.get('/status', async (_req, res) => {
-  const version = await run('nginx -v 2>&1');
+  const [version, running, certbotVer, aptCache] = await Promise.all([
+    run('nginx -v 2>&1'),
+    run('systemctl is-active nginx 2>&1'),
+    run('certbot --version 2>&1'),
+    run('apt-cache policy nginx 2>/dev/null | head -5'),
+  ]);
+
   const installed = version.toLowerCase().includes('nginx');
-  const test = await run('nginx -t 2>&1');
-  const configOk = test.includes('syntax is ok');
-  const running = await run('systemctl is-active nginx 2>&1');
-  res.json({ installed, configOk, running: running.trim() === 'active', version, testOutput: test });
+  const test      = installed ? await run('nginx -t 2>&1') : '';
+  const configOk  = test.includes('syntax is ok');
+
+  // Detect if an nginx update is available
+  let nginxUpdateAvailable = false;
+  if (installed) {
+    const installedMatch  = aptCache.match(/Installed:\s*(.+)/);
+    const candidateMatch  = aptCache.match(/Candidate:\s*(.+)/);
+    const installedVer    = installedMatch?.[1]?.trim() ?? '';
+    const candidateVer    = candidateMatch?.[1]?.trim() ?? '';
+    nginxUpdateAvailable  = !!installedVer && !!candidateVer && installedVer !== candidateVer;
+  }
+
+  const certbotInstalled = certbotVer.toLowerCase().includes('certbot');
+  let certbotUpdateAvailable = false;
+  if (certbotInstalled) {
+    const cbCache = await run('apt-cache policy certbot 2>/dev/null | head -5');
+    const cbInstalled  = cbCache.match(/Installed:\s*(.+)/)?.[1]?.trim() ?? '';
+    const cbCandidate  = cbCache.match(/Candidate:\s*(.+)/)?.[1]?.trim() ?? '';
+    certbotUpdateAvailable = !!cbInstalled && !!cbCandidate && cbInstalled !== cbCandidate;
+  }
+
+  res.json({
+    installed,
+    configOk,
+    running: running.trim() === 'active',
+    version,
+    testOutput: test,
+    nginxUpdateAvailable,
+    certbotInstalled,
+    certbotVersion: certbotVer,
+    certbotUpdateAvailable,
+  });
 });
 
-// ─── Nginx Configs ──────────────────────────────────────────────────────────
+// ─── Install / Update Nginx ──────────────────────────────────────────────────
+
+router.post('/install', async (_req, res) => {
+  const out = await run(
+    'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+    'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 && ' +
+    'systemctl enable nginx 2>&1 && systemctl start nginx 2>&1',
+    180000
+  );
+  const ok = out.toLowerCase().includes('setting up nginx') || !(out.toLowerCase().includes('error'));
+  res.json({ ok, output: out });
+});
+
+router.post('/update', async (_req, res) => {
+  const out = await run(
+    'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+    'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y nginx 2>&1',
+    180000
+  );
+  res.json({ ok: !out.toLowerCase().includes('error'), output: out });
+});
+
+// ─── Install / Update Certbot ────────────────────────────────────────────────
+
+router.post('/certbot/install', async (_req, res) => {
+  const out = await run(
+    'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+    'DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx 2>&1 && ' +
+    'systemctl enable certbot.timer 2>/dev/null || true 2>&1',
+    180000
+  );
+  const ok = out.toLowerCase().includes('setting up certbot') || !out.toLowerCase().includes('error');
+  res.json({ ok, output: out });
+});
+
+router.post('/certbot/update', async (_req, res) => {
+  const out = await run(
+    'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+    'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y certbot python3-certbot-nginx 2>&1',
+    180000
+  );
+  res.json({ ok: !out.toLowerCase().includes('error'), output: out });
+});
+
+// ─── Nginx Configs ───────────────────────────────────────────────────────────
 
 router.get('/configs', (_req, res) => {
   const available = dirFiles(SITES_AVAILABLE);
@@ -106,11 +185,12 @@ router.post('/reload', async (_req, res) => {
 });
 
 router.post('/restart', async (_req, res) => {
-  const out = await run('systemctl restart nginx 2>&1');
+  // Auto-enable nginx on startup when restarting
+  const out = await run('systemctl enable nginx 2>&1 && systemctl restart nginx 2>&1');
   res.json({ output: out, ok: !out.toLowerCase().includes('failed') });
 });
 
-// ─── Certbot Certs ──────────────────────────────────────────────────────────
+// ─── Certbot Certs ───────────────────────────────────────────────────────────
 
 router.get('/certs', async (_req, res) => {
   const out = await run('certbot certificates 2>&1', 20000);
