@@ -944,19 +944,33 @@ router.get('/:id/extras/pm2-version', async (req, res) => {
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
     const script = `
 PM2_VER=""
+NVM_ACTIVE=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1)
+NVM_PM2="$HOME/.nvm/versions/node/$NVM_ACTIVE/bin/pm2"
+NVM_NPM="$HOME/.nvm/versions/node/$NVM_ACTIVE/bin/npm"
 if command -v pm2 >/dev/null 2>&1; then
   PM2_VER=$(pm2 --version 2>/dev/null | head -1 | tr -d '\\r')
 fi
+if [ -z "$PM2_VER" ] && [ -n "$NVM_ACTIVE" ] && [ -x "$NVM_PM2" ]; then
+  PM2_VER=$("$NVM_PM2" --version 2>/dev/null | head -1 | tr -d '\\r')
+fi
 if [ -z "$PM2_VER" ]; then
-  NPM_BIN=$(npm config get prefix 2>/dev/null)/bin/pm2
-  if [ -x "$NPM_BIN" ]; then PM2_VER=$("$NPM_BIN" --version 2>/dev/null | head -1 | tr -d '\\r'); fi
+  if [ -n "$NVM_ACTIVE" ] && [ -x "$NVM_NPM" ]; then
+    NPM_PREFIX=$("$NVM_NPM" config get prefix 2>/dev/null)
+  else
+    NPM_PREFIX=$(npm config get prefix 2>/dev/null)
+  fi
+  if [ -x "$NPM_PREFIX/bin/pm2" ]; then PM2_VER=$("$NPM_PREFIX/bin/pm2" --version 2>/dev/null | head -1 | tr -d '\\r'); fi
 fi
 if [ -z "$PM2_VER" ]; then
   for BIN in /usr/local/bin/pm2 /usr/bin/pm2 "$HOME/.npm-global/bin/pm2" "$HOME/.local/bin/pm2"; do
     if [ -x "$BIN" ]; then PM2_VER=$("$BIN" --version 2>/dev/null | head -1 | tr -d '\\r'); break; fi
   done
 fi
-LATEST=$(npm view pm2 version 2>/dev/null | tr -d '\\r' || true)
+if [ -n "$NVM_ACTIVE" ] && [ -x "$NVM_NPM" ]; then
+  LATEST=$("$NVM_NPM" view pm2 version 2>/dev/null | tr -d '\\r' || true)
+else
+  LATEST=$(npm view pm2 version 2>/dev/null | tr -d '\\r' || true)
+fi
 echo "INSTALLED:$PM2_VER"
 echo "LATEST:$LATEST"
 `;
