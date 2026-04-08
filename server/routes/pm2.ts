@@ -27,20 +27,26 @@ async function listProcesses() {
 router.get('/', async (_req, res) => {
   try {
     const processes = await listProcesses();
-    const data = processes.map((p: any) => ({
-      pid: p.pid,
-      name: p.name,
-      pm_id: p.pm_id,
-      status: p.pm2_env?.status || 'unknown',
-      cpu: p.monit?.cpu || 0,
-      memory: p.monit?.memory || 0,
-      uptime: p.pm2_env?.pm_uptime ? Date.now() - p.pm2_env.pm_uptime : 0,
-      restarts: p.pm2_env?.restart_time || 0,
-      pm_exec_path: p.pm2_env?.pm_exec_path,
-      pm_cwd: p.pm2_env?.pm_cwd,
-      mode: p.pm2_env?.exec_mode,
-      watching: p.pm2_env?.watch,
-    }));
+    const data = processes.map((p: any) => {
+      // Detect port: from --env PORT=xxx, or env object, or pm2_env.PORT
+      const envObj = p.pm2_env?.env || {};
+      const port = envObj.PORT || p.pm2_env?.PORT || null;
+      return {
+        pid: p.pid,
+        name: p.name,
+        pm_id: p.pm_id,
+        status: p.pm2_env?.status || 'unknown',
+        cpu: p.monit?.cpu || 0,
+        memory: p.monit?.memory || 0,
+        uptime: p.pm2_env?.pm_uptime ? Date.now() - p.pm2_env.pm_uptime : 0,
+        restarts: p.pm2_env?.restart_time || 0,
+        pm_exec_path: p.pm2_env?.pm_exec_path,
+        pm_cwd: p.pm2_env?.pm_cwd,
+        mode: p.pm2_env?.exec_mode,
+        watching: p.pm2_env?.watch,
+        port: port ? String(port) : null,
+      };
+    });
     res.json({ success: true, data });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
