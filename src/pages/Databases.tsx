@@ -48,6 +48,8 @@ export default function DatabasesPage() {
   const [newDbName, setNewDbName] = useState("");
   const [createDbModal, setCreateDbModal] = useState(false);
   const [dropTableModal, setDropTableModal] = useState<string | null>(null);
+  const [deleteDbModal, setDeleteDbModal] = useState<{ type: string; name: string } | null>(null);
+  const [deletingDb, setDeletingDb] = useState(false);
   const [managingDb, setManagingDb] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState<DB | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -258,6 +260,24 @@ export default function DatabasesPage() {
     if (selectedTable === table) { setSelectedTable(null); setTableData(null); }
   };
 
+  const deleteDatabase = async () => {
+    if (!deleteDbModal) return;
+    const { type, name } = deleteDbModal;
+    setDeletingDb(true);
+    try {
+      const endpoint = activeServer
+        ? `/remote/${activeServer.id}/databases/${type}/${encodeURIComponent(name)}`
+        : `/databases/${type}/${encodeURIComponent(name)}`;
+      await api.delete(endpoint);
+      toast.success(`Database "${name}" deleted`);
+      setDeleteDbModal(null);
+      qc.invalidateQueries({ queryKey: ["databases"] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to delete database");
+    }
+    setDeletingDb(false);
+  };
+
   // Split databases into installed vs not-installed
   const installed = dbs.filter((d: any) => d.installed !== false);
   const notInstalled = dbs.filter((d: any) => d.installed === false);
@@ -299,6 +319,7 @@ export default function DatabasesPage() {
                     actionMutation={actionMutation}
                     onBrowse={openBrowser}
                     onUninstall={() => setConfirmUninstall(db)}
+                    onDeleteDb={(name) => setDeleteDbModal({ type: db.type, name })}
                   />
                 ))}
               </div>
@@ -721,6 +742,29 @@ export default function DatabasesPage() {
         </Modal>
       )}
 
+      {/* Delete Database Modal */}
+      {deleteDbModal && (
+        <Modal isOpen onClose={() => !deletingDb && setDeleteDbModal(null)} title="Delete Database" size="sm">
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
+              <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-red-400">Permanently delete this database?</p>
+                <p className="text-xs text-[var(--muted)] mt-0.5">
+                  All data in <strong className="font-mono">{deleteDbModal.name}</strong> will be lost. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDeleteDbModal(null)} disabled={deletingDb} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors disabled:opacity-50">Cancel</button>
+              <button onClick={deleteDatabase} disabled={deletingDb} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50">
+                {deletingDb ? <><div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin" /> Deleting...</> : <><Trash size={13} /> Delete Database</>}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* Drop Table Modal */}
       {dropTableModal && (
         <Modal isOpen onClose={() => setDropTableModal(null)} title="Drop Table" size="sm">
@@ -746,12 +790,13 @@ export default function DatabasesPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall }: {
+function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb }: {
   db: any;
   actionLoading: string | null;
   actionMutation: any;
   onBrowse: (db: any, name: string) => void;
   onUninstall: () => void;
+  onDeleteDb: (name: string) => void;
 }) {
   const [showDbs, setShowDbs] = useState(false);
   const busy = actionLoading === `install-${db.type}` || actionLoading === `uninstall-${db.type}` || actionMutation.isPending;
@@ -822,16 +867,24 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
       {showDbs && db.databases && db.databases.length > 0 && (
         <div className="mb-3 max-h-28 overflow-y-auto space-y-1">
           {db.databases.map((d: string) => (
-            <button
-              key={d}
-              onClick={() => onBrowse(db, d)}
-              className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-[var(--foreground)] border border-[var(--line)] hover:border-[var(--accent)]/40 transition-colors group"
-            >
-              <span className="text-[11px] font-mono truncate">{d}</span>
-              <span className="flex items-center gap-1 text-[10px] text-[var(--muted)] group-hover:text-[var(--accent)] transition-colors shrink-0 ml-2">
-                <Table2 size={10} /> Browse
-              </span>
-            </button>
+            <div key={d} className="flex items-center gap-1 group/row">
+              <button
+                onClick={() => onBrowse(db, d)}
+                className="flex-1 flex items-center justify-between px-2 py-1.5 rounded-lg bg-[var(--foreground)] border border-[var(--line)] hover:border-[var(--accent)]/40 transition-colors group min-w-0"
+              >
+                <span className="text-[11px] font-mono truncate">{d}</span>
+                <span className="flex items-center gap-1 text-[10px] text-[var(--muted)] group-hover:text-[var(--accent)] transition-colors shrink-0 ml-2">
+                  <Table2 size={10} /> Browse
+                </span>
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); onDeleteDb(d); }}
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover/row:opacity-100 transition-opacity text-red-400 hover:bg-red-500/10"
+                title={`Delete database "${d}"`}
+              >
+                <Trash size={11} />
+              </button>
+            </div>
           ))}
         </div>
       )}
