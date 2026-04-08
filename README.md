@@ -149,25 +149,24 @@ chmod +x install.sh
 ```
 
 The installer will:
-1. Install Node.js 20 LTS (if missing or outdated)
+1. Install Node.js **24** via NVM (installs/upgrades NVM automatically)
 2. Install PM2 globally (if missing) and configure startup on reboot
-3. Install `nginx` and `sshpass` system packages
-4. Clone / pull the latest repo
-5. Install npm dependencies
-6. Generate a `.env` with a random `SESSION_SECRET`
-7. Set UFW firewall rules (SSH, 80, 443, 5756, 5000)
-8. Start the app via PM2 using `npm run dev` (backend on **5756**, Vite on **5000**)
-9. **Auto-configure Nginx** as a reverse proxy on port 80:
-   - `/api/` → Express backend
-   - `/socket.io/` → WebSocket terminal (with upgrade headers)
-   - everything else → Vite frontend
-10. Optionally issue a **free SSL certificate** via `certbot --nginx` with zero downtime
-11. Add a daily **auto-renewal cron job** (`certbot renew` at 03:00)
+3. Install `nginx`, `sshpass`, `python3`, `pip`, `ffmpeg` system packages
+4. Create a `~/bin/python` symlink so `python` resolves to `python3`
+5. Clone / pull the latest repo
+6. Install npm dependencies
+7. Generate a `.env` with a random `SESSION_SECRET`
+8. Set UFW firewall rules (SSH, 80, 443, 5756)
+9. Start the app via PM2 using `npm run dev`
+10. **Auto-configure Nginx** as a reverse proxy on port 80:
+    - `/api/` → Express backend (port 5756)
+    - `/socket.io/` → WebSocket terminal (with upgrade headers)
+    - everything else → Vite frontend (port 5000)
+11. Optionally issue a **free SSL certificate** via `certbot --nginx` with zero downtime
+12. Add a daily **auto-renewal cron job** (`certbot renew` at 03:00)
 
 After install, access the dashboard at:
-- `http://<your-server-ip>` — via Nginx on port 80
-- `http://<your-server-ip>:5000` — Vite frontend direct
-- `http://<your-server-ip>:5756` — API backend direct
+- `http://<your-server-ip>` — main entry point via Nginx on port 80 (recommended)
 
 ---
 
@@ -180,8 +179,7 @@ npm install
 npm run dev
 ```
 
-- Backend: **http://localhost:5756**
-- Frontend (Vite dev server): **http://localhost:5000**
+This is a monorepo — `npm run dev` starts both the Express API (port **5756**) and the Vite frontend (port **5000**) concurrently. In production both are unified behind **Nginx on port 80**, so users only see one URL.
 
 ---
 
