@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Folder, File, ChevronRight, Home, RefreshCw,
   Scissors, Copy, Trash2, Eye, ArrowUp, FolderOpen,
-  Plus, Upload, FilePlus, FolderPlus, Edit3, Save, X, ClipboardCopy, Code
+  Plus, Upload, FilePlus, FolderPlus, Edit3, Save, X, ClipboardCopy, Code,
+  CheckSquare, Square as SquareIcon, ArchiveIcon, Download, Loader2,
+  Github, Key, Eye as EyeIcon, EyeOff, XCircle, PackageOpen
 } from "lucide-react";
 import api from "@/lib/api";
 import type { FileItem } from "@/types";
@@ -56,6 +58,25 @@ export default function FileManagerPage() {
   const [newFileName, setNewFileName] = useState("");
   const [newFileContent, setNewFileContent] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // Bulk selection
+  const [selectMode, setSelectMode] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkZipping, setBulkZipping] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // GitHub import
+  const [ghModal, setGhModal] = useState(false);
+  const [ghRepoUrl, setGhRepoUrl] = useState("");
+  const [ghToken, setGhToken] = useState("");
+  const [ghShowToken, setGhShowToken] = useState(false);
+  const [ghSaveToken, setGhSaveToken] = useState(false);
+  const [ghTokenLabel, setGhTokenLabel] = useState("");
+  const [ghSavedTokens, setGhSavedTokens] = useState<{ label: string; token: string }[]>([]);
+  const [ghTargetDir, setGhTargetDir] = useState("");
+  const [ghRunInstall, setGhRunInstall] = useState(true);
+  const [ghCloning, setGhCloning] = useState(false);
+  const [ghCloneOutput, setGhCloneOutput] = useState("");
 
   // Reset path when active server changes
   useEffect(() => {
@@ -146,8 +167,141 @@ export default function FileManagerPage() {
     setUploading(false);
   };
 
+  const toggleBulkItem = (itemPath: string) => {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(itemPath)) next.delete(itemPath);
+      else next.add(itemPath);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (bulkSelected.size === files.length) {
+      setBulkSelected(new Set());
+    } else {
+      setBulkSelected(new Set(files.map(f => f.path)));
+    }
+  };
+
+  const bulkDelete = async () => {
+    if (!bulkSelected.size) return;
+    if (!window.confirm(`Delete ${bulkSelected.size} item(s)? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      const paths = Array.from(bulkSelected);
+      if (activeServer) {
+        await api.post(`/remote/${activeServer.id}/exec`, { command: paths.map(p => `rm -rf ${JSON.stringify(p)}`).join(" && ") });
+      } else {
+        await api.post("/files/bulk-delete", { paths });
+      }
+      toast.success(`Deleted ${bulkSelected.size} item(s)`);
+      setBulkSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["files"] });
+    } catch { toast.error("Bulk delete failed"); }
+    setBulkDeleting(false);
+  };
+
+  const bulkZip = async () => {
+    if (!bulkSelected.size) return;
+    setBulkZipping(true);
+    try {
+      const paths = Array.from(bulkSelected);
+      const { data } = await api.post("/files/zip", { paths });
+      const zipPath = data.data.path;
+      const link = document.createElement("a");
+      link.href = `/api/files/download?path=${encodeURIComponent(zipPath)}`;
+      link.download = "archive.zip";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success("Archive created — download started");
+    } catch { toast.error("Zip failed"); }
+    setBulkZipping(false);
+  };
+
+  const downloadFile = (filePath: string, fileName: string) => {
+    const link = document.createElement("a");
+    link.href = `/api/files/download?path=${encodeURIComponent(filePath)}`;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // ── GitHub import helpers ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (ghModal) {
+      try {
+        const saved = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]");
+        setGhSavedTokens(saved);
+      } catch { /* ignore */ }
+      setGhTargetDir(path);
+      setGhCloneOutput("");
+    }
+  }, [ghModal, path]);
+
+  const persistGhToken = (label: string, token: string) => {
+    const existing: { label: string; token: string }[] = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]");
+    if (!existing.find((t) => t.token === token)) {
+      const updated = [...existing, { label: label || `Token ${existing.length + 1}`, token }];
+      localStorage.setItem("vps_gh_tokens", JSON.stringify(updated));
+      setGhSavedTokens(updated);
+    }
+  };
+
+  const deleteGhToken = (token: string) => {
+    const updated: { label: string; token: string }[] = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]").filter((t: any) => t.token !== token);
+    localStorage.setItem("vps_gh_tokens", JSON.stringify(updated));
+    setGhSavedTokens(updated);
+    if (ghToken === token) setGhToken("");
+  };
+
+  const importFromGitHub = async () => {
+    if (!ghRepoUrl.trim() || !ghTargetDir.trim()) {
+      toast.error("Repo URL and target directory are required");
+      return;
+    }
+    setGhCloning(true);
+    setGhCloneOutput("");
+    try {
+      if (ghSaveToken && ghToken) persistGhToken(ghTokenLabel, ghToken);
+      if (activeServer) {
+        // For remote: use exec endpoint to run git clone
+        const cloneUrl = ghToken
+          ? `https://${ghToken}@github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`
+          : `https://github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`;
+        const { data } = await api.post(`/remote/${activeServer.id}/exec`, {
+          command: `mkdir -p "$(dirname "${ghTargetDir}")" && git clone "${cloneUrl}" "${ghTargetDir}" 2>&1`,
+        });
+        const execOut = typeof data.data === "string"
+          ? data.data
+          : ((data.data?.stdout || "") + (data.data?.stderr || "")) || "Cloned successfully";
+        setGhCloneOutput(execOut);
+        toast.success("Repository cloned");
+      } else {
+        const { data } = await api.post("/github/clone", {
+          repoUrl: ghRepoUrl,
+          token: ghToken || undefined,
+          dir: ghTargetDir,
+          runInstall: ghRunInstall,
+        });
+        if (data.success) {
+          setGhCloneOutput(data.data.output || "Cloned successfully");
+          toast.success(`Repository cloned to ${ghTargetDir}`);
+        } else {
+          toast.error(data.error || "Clone failed");
+        }
+      }
+      qc.invalidateQueries({ queryKey: ["files"] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Clone failed");
+    }
+    setGhCloning(false);
+  };
+
   const breadcrumbs = ["", ...path.split("/").filter(Boolean)];
-  const navigate = (parts: string[]) => { setPath(parts.join("/") || "/"); setSelected(null); };
+  const navigate = (parts: string[]) => { setPath(parts.join("/") || "/"); setSelected(null); setBulkSelected(new Set()); };
 
   return (
     <section className="main space-y-6">
@@ -166,6 +320,18 @@ export default function FileManagerPage() {
           </button>
           <button onClick={() => setNewFolderModal(true)} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors">
             <FolderPlus size={14} /> New Folder
+          </button>
+          <button
+            onClick={() => { setSelectMode(s => !s); setBulkSelected(new Set()); }}
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm transition-colors ${selectMode ? "bg-[var(--accent)]/10 border-[var(--accent)]/50 text-[var(--accent)]" : "border-[var(--line)] hover:bg-[var(--foreground)]"}`}
+          >
+            {selectMode ? <CheckSquare size={14} /> : <SquareIcon size={14} />} Select
+          </button>
+          <button
+            onClick={() => setGhModal(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors"
+          >
+            <Github size={14} /> From GitHub
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -230,6 +396,30 @@ export default function FileManagerPage() {
         )}
       </div>
 
+      {/* Bulk action bar */}
+      {selectMode && bulkSelected.size > 0 && (
+        <div className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/5 text-sm">
+          <span className="text-[var(--muted)]">
+            <span className="text-[var(--accent)] font-semibold">{bulkSelected.size}</span> item{bulkSelected.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex gap-2">
+            <button onClick={bulkZip} disabled={bulkZipping}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors disabled:opacity-50">
+              {bulkZipping ? <Loader2 size={11} className="animate-spin" /> : <ArchiveIcon size={11} />}
+              Zip & Download
+            </button>
+            <button onClick={bulkDelete} disabled={bulkDeleting}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition-colors disabled:opacity-50">
+              {bulkDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              Delete
+            </button>
+            <button onClick={() => setBulkSelected(new Set())} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Clipboard banner */}
       {clipboard && (
         <div className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/5 text-sm">
@@ -272,7 +462,16 @@ export default function FileManagerPage() {
           <div className="overflow-x-auto">
             <table className="vps-table">
               <thead>
-                <tr><th>Name</th><th>Size</th><th>Modified</th><th>Permissions</th><th>Actions</th></tr>
+                <tr>
+                  {selectMode && (
+                    <th className="w-8">
+                      <button onClick={toggleSelectAll} className="p-0.5 rounded hover:bg-[var(--foreground)] transition-colors">
+                        {bulkSelected.size === files.length && files.length > 0 ? <CheckSquare size={13} className="text-[var(--accent)]" /> : <SquareIcon size={13} />}
+                      </button>
+                    </th>
+                  )}
+                  <th>Name</th><th>Size</th><th>Modified</th><th>Permissions</th><th>Actions</th>
+                </tr>
               </thead>
               <tbody>
                 {files
@@ -280,43 +479,55 @@ export default function FileManagerPage() {
                     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
                     return a.name.localeCompare(b.name);
                   })
-                  .map((item) => (
-                    <tr
-                      key={item.path}
-                      className={selected?.path === item.path ? "bg-[var(--accent)]/5" : ""}
-                      onClick={() => setSelected(s => s?.path === item.path ? null : item)}
-                    >
-                      <td>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); if (item.type === "directory") setPath(item.path); }}
-                          className="flex items-center gap-2 text-left group"
-                        >
-                          {item.type === "directory"
-                            ? <Folder size={15} className="text-amber-400 shrink-0" />
-                            : <File size={15} className="text-[var(--muted)] shrink-0" />}
-                          <span className={`text-sm ${item.type === "directory" ? "font-medium group-hover:text-[var(--accent)] transition-colors" : ""}`}>
-                            {item.name}
-                          </span>
-                        </button>
-                      </td>
-                      <td className="text-xs text-[var(--muted)] font-mono">{fmtSize(item.size)}</td>
-                      <td className="text-xs text-[var(--muted)]">{new Date(item.modified).toLocaleDateString()}</td>
-                      <td className="text-xs font-mono text-[var(--muted)]">{item.permissions}</td>
-                      <td onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center gap-1">
-                          {item.type === "file" && (
-                            <>
-                              <button onClick={() => viewFile(item)} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="View"><Eye size={13} /></button>
-                              <button onClick={async () => { await viewFile(item); setIsEditing(true); }} className="p-1.5 rounded-lg hover:bg-green-500/10 text-green-400 transition-colors" title="Edit"><Edit3 size={13} /></button>
-                            </>
-                          )}
-                          <button onClick={() => setClipboard({ item, op: "cut" })} className="p-1.5 rounded-lg hover:bg-amber-500/10 text-amber-400 transition-colors" title="Cut"><Scissors size={13} /></button>
-                          <button onClick={() => setClipboard({ item, op: "copy" })} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Copy"><Copy size={13} /></button>
-                          <button onClick={() => setDeleteConfirm(item)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete"><Trash2 size={13} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  .map((item) => {
+                    const isZip = item.type === "file" && item.name.endsWith(".zip");
+                    return (
+                      <tr
+                        key={item.path}
+                        className={bulkSelected.has(item.path) ? "bg-[var(--accent)]/5" : selected?.path === item.path ? "bg-[var(--accent)]/5" : ""}
+                        onClick={() => selectMode ? toggleBulkItem(item.path) : setSelected(s => s?.path === item.path ? null : item)}
+                      >
+                        {selectMode && (
+                          <td onClick={e => e.stopPropagation()} className="w-8">
+                            <input type="checkbox" checked={bulkSelected.has(item.path)} onChange={() => toggleBulkItem(item.path)}
+                              className="rounded cursor-pointer accent-[var(--accent)]" />
+                          </td>
+                        )}
+                        <td>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); if (item.type === "directory") setPath(item.path); }}
+                            className="flex items-center gap-2 text-left group"
+                          >
+                            {item.type === "directory"
+                              ? <Folder size={15} className="text-amber-400 shrink-0" />
+                              : <File size={15} className="text-[var(--muted)] shrink-0" />}
+                            <span className={`text-sm ${item.type === "directory" ? "font-medium group-hover:text-[var(--accent)] transition-colors" : ""}`}>
+                              {item.name}
+                            </span>
+                          </button>
+                        </td>
+                        <td className="text-xs text-[var(--muted)] font-mono">{fmtSize(item.size)}</td>
+                        <td className="text-xs text-[var(--muted)]">{new Date(item.modified).toLocaleDateString()}</td>
+                        <td className="text-xs font-mono text-[var(--muted)]">{item.permissions}</td>
+                        <td onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            {item.type === "file" && (
+                              <>
+                                <button onClick={() => viewFile(item)} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="View"><Eye size={13} /></button>
+                                <button onClick={async () => { await viewFile(item); setIsEditing(true); }} className="p-1.5 rounded-lg hover:bg-green-500/10 text-green-400 transition-colors" title="Edit"><Edit3 size={13} /></button>
+                                {isZip && (
+                                  <button onClick={() => downloadFile(item.path, item.name)} className="p-1.5 rounded-lg hover:bg-purple-500/10 text-purple-400 transition-colors" title="Download zip"><Download size={13} /></button>
+                                )}
+                              </>
+                            )}
+                            <button onClick={() => setClipboard({ item, op: "cut" })} className="p-1.5 rounded-lg hover:bg-amber-500/10 text-amber-400 transition-colors" title="Cut"><Scissors size={13} /></button>
+                            <button onClick={() => setClipboard({ item, op: "copy" })} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Copy"><Copy size={13} /></button>
+                            <button onClick={() => setDeleteConfirm(item)} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete"><Trash2 size={13} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
@@ -450,6 +661,130 @@ export default function FileManagerPage() {
                 </button>
               </div>
             </>
+          )}
+        </div>
+      </Modal>
+
+      {/* GitHub Import Modal */}
+      <Modal isOpen={ghModal} onClose={() => { setGhModal(false); setGhCloneOutput(""); setGhRepoUrl(""); setGhToken(""); }}
+        title="Import from GitHub" size="lg">
+        <div className="space-y-4">
+          {!ghCloneOutput ? (
+            <>
+              {/* Repo URL */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5">Repository URL or <span className="font-mono">owner/repo</span></label>
+                <input value={ghRepoUrl} onChange={e => setGhRepoUrl(e.target.value)}
+                  placeholder="github.com/user/my-app  or  user/my-app"
+                  className={`w-full ${inp} font-mono text-xs`} />
+              </div>
+
+              {/* Saved tokens */}
+              {ghSavedTokens.length > 0 && (
+                <div>
+                  <label className="block text-xs text-[var(--muted)] mb-1.5">Saved Tokens</label>
+                  <div className="flex flex-wrap gap-2">
+                    {ghSavedTokens.map((t, i) => (
+                      <div key={i}
+                        className={`flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-lg border text-xs cursor-pointer transition-colors ${ghToken === t.token ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--line)] hover:bg-[var(--foreground)]"}`}
+                        onClick={() => setGhToken(t.token)}>
+                        <Key size={10} /> {t.label}
+                        <button onClick={e => { e.stopPropagation(); deleteGhToken(t.token); }}
+                          className="ml-1 p-0.5 rounded hover:text-red-400 transition-colors" title="Remove">
+                          <XCircle size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Token input */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5">
+                  <Key size={10} className="inline mr-1" />
+                  GitHub Token <span className="opacity-60">(leave empty for public repos)</span>
+                </label>
+                <div className="relative">
+                  <input value={ghToken} onChange={e => setGhToken(e.target.value)}
+                    type={ghShowToken ? "text" : "password"}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    className={`w-full ${inp} font-mono text-xs pr-9`} />
+                  <button type="button" onClick={() => setGhShowToken(s => !s)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--main)] transition-colors">
+                    {ghShowToken ? <EyeOff size={13} /> : <EyeIcon size={13} />}
+                  </button>
+                </div>
+                {ghToken && (
+                  <div className="flex items-center gap-3 mt-2">
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                      <input type="checkbox" checked={ghSaveToken} onChange={e => setGhSaveToken(e.target.checked)} className="rounded accent-[var(--accent)]" />
+                      Save this token
+                    </label>
+                    {ghSaveToken && (
+                      <input value={ghTokenLabel} onChange={e => setGhTokenLabel(e.target.value)}
+                        placeholder="Label (e.g. personal, work)"
+                        className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none transition-colors" />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Target directory */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5">Clone into directory</label>
+                <input value={ghTargetDir} onChange={e => setGhTargetDir(e.target.value)}
+                  placeholder="/root/apps/my-repo"
+                  className={`w-full ${inp} font-mono text-xs`} />
+                <p className="text-[10px] text-[var(--muted)] mt-1">Current location: <span className="font-mono text-[var(--accent)]">{path}</span></p>
+              </div>
+
+              {/* Auto install */}
+              {!activeServer && (
+                <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                  <input type="checkbox" checked={ghRunInstall} onChange={e => setGhRunInstall(e.target.checked)} className="rounded accent-[var(--accent)]" />
+                  <PackageOpen size={12} className="text-[var(--muted)]" />
+                  Auto-install dependencies (npm install / pip install / install.sh)
+                </label>
+              )}
+
+              <div className="flex gap-2 justify-end pt-1">
+                <button onClick={() => setGhModal(false)}
+                  className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
+                  Cancel
+                </button>
+                <button onClick={importFromGitHub} disabled={ghCloning || !ghRepoUrl.trim() || !ghTargetDir.trim()}
+                  className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50">
+                  {ghCloning
+                    ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Cloning...</>
+                    : <><Github size={14} /> Clone Repository</>}
+                </button>
+              </div>
+            </>
+          ) : (
+            /* Clone complete */
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 rounded-xl border border-green-500/30 bg-green-500/5">
+                <Github size={16} className="text-green-400 shrink-0" />
+                <div>
+                  <div className="text-sm font-medium text-green-400">Repository cloned!</div>
+                  <div className="text-xs text-[var(--muted)] mt-0.5 font-mono">{ghTargetDir}</div>
+                </div>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--foreground)] p-3 max-h-40 overflow-y-auto">
+                <pre className="text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap">{ghCloneOutput}</pre>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => { setGhCloneOutput(""); setGhRepoUrl(""); setGhToken(""); }}
+                  className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
+                  Clone Another
+                </button>
+                <button onClick={() => { setGhModal(false); setGhCloneOutput(""); setPath(ghTargetDir); }}
+                  className="px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">
+                  Navigate There
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </Modal>
