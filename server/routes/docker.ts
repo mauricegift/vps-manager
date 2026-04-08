@@ -165,13 +165,33 @@ router.get('/compose', async (_req, res) => {
       const name = path.basename(dir);
       let services: string[] = [];
       let status = 'unknown';
+      let ports: string[] = [];
       try {
         const { stdout } = await execAsync(`docker compose -f "${file}" ps --format json 2>&1`);
         const items = stdout.trim().split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
         services = [...new Set(items.map((i: any) => i.Service))];
         status = items.some((i: any) => i.State === 'running') ? 'running' : items.length > 0 ? 'stopped' : 'unknown';
-      } catch {}
-      return { name, path: file, services, status };
+        // Extract ports from running containers
+        const allPorts: string[] = [];
+        items.forEach((i: any) => {
+          if (i.Publishers) {
+            i.Publishers.forEach((p: any) => {
+              if (p.PublishedPort) allPorts.push(`${p.PublishedPort}:${p.TargetPort}`);
+            });
+          }
+        });
+        ports = [...new Set(allPorts)];
+      } catch {
+        // Try to parse ports from YAML as fallback
+        try {
+          const { readFile } = await import('fs/promises');
+          const yaml = await readFile(file, 'utf-8');
+          const portMatches = yaml.matchAll(/^\s*-\s*["']?(\d+:\d+)["']?/gm);
+          for (const m of portMatches) ports.push(m[1]);
+          ports = [...new Set(ports)];
+        } catch {}
+      }
+      return { name, path: file, services, status, ports };
     }));
 
     res.json({ success: true, data: results });
