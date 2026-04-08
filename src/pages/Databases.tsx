@@ -77,8 +77,13 @@ export default function DatabasesPage() {
   const [changePwdVal, setChangePwdVal] = useState("");
   const [changePwdLoading, setChangePwdLoading] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
-  // Track dedicated per-database users created via Change Password
-  const [dbUsers, setDbUsers] = useState<Record<string, string>>({});
+  // Track dedicated per-database users created via Change Password (persisted)
+  const [dbUsers, setDbUsers] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem("vpsm_db_users") || "{}"); } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("vpsm_db_users", JSON.stringify(dbUsers)); } catch {}
+  }, [dbUsers]);
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
