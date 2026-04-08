@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
 import {
   Shield, RefreshCw, CheckCircle, XCircle, Play, RotateCcw,
   Plus, Edit3, Trash2, Power, PowerOff, Lock, AlertTriangle,
-  Copy, Check, Terminal, Server
+  Copy, Check, Terminal, Server, Globe, PlusCircle
 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -15,7 +17,11 @@ type Tab = "configs" | "certs";
 
 interface NginxConfig { name: string; enabled: boolean; }
 interface NginxCert { name: string; domains: string[]; expiry?: string; valid: boolean; certPath?: string; keyPath?: string; }
-interface NginxStatus { installed: boolean; configOk: boolean; running: boolean; version: string; testOutput: string; }
+interface NginxStatus {
+  installed: boolean; configOk: boolean; running: boolean; version: string; testOutput: string;
+  nginxUpdateAvailable: boolean;
+  certbotInstalled: boolean; certbotVersion: string; certbotUpdateAvailable: boolean;
+}
 
 const inp = "px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none transition-colors w-full";
 
@@ -35,6 +41,7 @@ const DEFAULT_CONFIG = (name: string) =>
 }`;
 
 export default function NginxPage() {
+  const qc = useQueryClient();
   const { theme } = useTheme();
   const { activeServer } = useRemoteServer();
   const dark = theme === "dark";
@@ -43,7 +50,10 @@ export default function NginxPage() {
   const base = activeServer ? `/remote/${activeServer.id}/nginx` : "/nginx";
   const serverId = activeServer?.id ?? "local";
 
-  const [tab, setTab] = useState<Tab>("configs");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get("tab") as Tab) || "configs";
+  const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
+
   const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
 
   // Config state
@@ -59,6 +69,9 @@ export default function NginxPage() {
   const [issueForm, setIssueForm] = useState({ domains: "", email: "", method: "webroot", webrootPath: "/var/www/html" });
   const [deleteCert, setDeleteCert] = useState<string | null>(null);
   const [renewingCert, setRenewingCert] = useState<string | null>(null);
+  const [editCertModal, setEditCertModal] = useState<NginxCert | null>(null);
+  const [addDomainInput, setAddDomainInput] = useState("");
+  const [expandingCert, setExpandingCert] = useState(false);
 
   // Status — refetches when active server changes
   const { data: status, refetch: refetchStatus } = useQuery<NginxStatus>({
@@ -68,19 +81,61 @@ export default function NginxPage() {
   });
 
   // Configs
-  const { data: configs = [], refetch: refetchConfigs, isLoading: loadingConfigs } = useQuery<NginxConfig[]>({
+  const { data: configs = [], refetch: refetchConfigs, isLoading: loadingConfigs, isFetching: fetchingConfigs } = useQuery<NginxConfig[]>({
     queryKey: ["nginx-configs", serverId],
     queryFn: () => api.get(`${base}/configs`).then(r => r.data.data),
     enabled: tab === "configs",
   });
 
   // Certs
-  const { data: certsData, refetch: refetchCerts, isLoading: loadingCerts } = useQuery<{ data: NginxCert[]; raw: string }>({
+  const { data: certsData, refetch: refetchCerts, isLoading: loadingCerts, isFetching: fetchingCerts } = useQuery<{ data: NginxCert[]; raw: string }>({
     queryKey: ["nginx-certs", serverId],
     queryFn: () => api.get(`${base}/certs`).then(r => r.data),
     enabled: tab === "certs",
   });
   const certs = certsData?.data ?? [];
+
+  const installNginxMutation = useMutation({
+    mutationFn: () => api.post(`${base}/install`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Install Nginx", output: r.data.output });
+      if (r.data.ok) toast.success("Nginx installed and enabled!");
+      else toast.warning("Check output for details");
+      refetchStatus();
+    },
+    onError: () => toast.error("Install failed"),
+  });
+
+  const updateNginxMutation = useMutation({
+    mutationFn: () => api.post(`${base}/update`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Update Nginx", output: r.data.output });
+      toast.success("Nginx updated");
+      refetchStatus();
+    },
+    onError: () => toast.error("Update failed"),
+  });
+
+  const installCertbotMutation = useMutation({
+    mutationFn: () => api.post(`${base}/certbot/install`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Install Certbot", output: r.data.output });
+      if (r.data.ok) toast.success("Certbot installed!");
+      else toast.warning("Check output for details");
+      refetchStatus();
+    },
+    onError: () => toast.error("Certbot install failed"),
+  });
+
+  const updateCertbotMutation = useMutation({
+    mutationFn: () => api.post(`${base}/certbot/update`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Update Certbot", output: r.data.output });
+      toast.success("Certbot updated");
+      refetchStatus();
+    },
+    onError: () => toast.error("Certbot update failed"),
+  });
 
   const testMutation = useMutation({
     mutationFn: () => api.post(`${base}/test`),
@@ -206,6 +261,26 @@ export default function NginxPage() {
     finally { setRenewingCert(null); }
   }
 
+  async function expandCert(name: string, newDomain: string) {
+    if (!newDomain.trim()) return;
+    setExpandingCert(true);
+    try {
+      const existingDomains = editCertModal?.domains ?? [name];
+      const allDomains = [...existingDomains, newDomain.trim()];
+      const r = await api.post(`${base}/certs/issue`, {
+        domains: allDomains,
+        email: issueForm.email,
+        method: issueForm.method,
+        webrootPath: issueForm.webrootPath,
+        expand: true,
+      });
+      setOutputModal({ title: `Expand Cert: ${name}`, output: r.data.output });
+      if (r.data.ok) { toast.success("Domain added to certificate!"); setAddDomainInput(""); refetchCerts(); }
+      else toast.warning("Check output for details");
+    } catch { toast.error("Failed to expand certificate"); }
+    setExpandingCert(false);
+  }
+
   const termBg     = dark ? "#111"    : "#f5f5f5";
   const termFg     = dark ? "#4ec994" : "#16803c";
   const termBorder = dark ? "#222"    : "#d1d5db";
@@ -230,10 +305,16 @@ export default function NginxPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => { refetchStatus(); refetchConfigs(); refetchCerts(); }}
-            className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5"
+            onClick={async () => {
+              qc.invalidateQueries({ queryKey: ["nginx-status", serverId] });
+              if (tab === "configs") await refetchConfigs();
+              if (tab === "certs") await refetchCerts();
+              toast.success("Nginx data refreshed");
+            }}
+            disabled={fetchingConfigs || fetchingCerts}
+            className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5 disabled:opacity-60"
           >
-            <RefreshCw size={13} /> Refresh
+            <RefreshCw size={13} className={fetchingConfigs || fetchingCerts ? "animate-spin" : ""} /> Refresh
           </button>
           <button
             onClick={() => testMutation.mutate()}
@@ -261,36 +342,105 @@ export default function NginxPage() {
 
       {/* Status Bar */}
       {status && (
-        <div className="card p-4 flex flex-wrap gap-4">
-          <div className="flex items-center gap-2">
-            {status.installed
-              ? <CheckCircle size={15} className="text-green-500" />
-              : <XCircle size={15} className="text-red-500" />}
-            <span className="text-sm font-medium">
-              {status.installed ? "Nginx installed" : "Nginx not installed"}
-            </span>
-            {status.version && (
-              <span className="text-xs text-[var(--muted)] font-mono">
-                {status.version.match(/[\d]+\.[\d.]+/)?.[0]}
+        <div className="card p-4 space-y-3">
+          {/* Nginx row */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              {status.installed
+                ? <CheckCircle size={15} className="text-green-500" />
+                : <XCircle size={15} className="text-red-500" />}
+              <span className="text-sm font-medium">
+                {status.installed ? "Nginx installed" : "Nginx not installed"}
               </span>
+              {status.version && (
+                <span className="text-xs text-[var(--muted)] font-mono">
+                  {status.version.match(/[\d]+\.[\d.]+/)?.[0]}
+                </span>
+              )}
+            </div>
+            {status.installed && (
+              <>
+                <div className="flex items-center gap-2">
+                  {status.running
+                    ? <CheckCircle size={15} className="text-green-500" />
+                    : <XCircle size={15} className="text-red-500" />}
+                  <span className="text-sm font-medium">{status.running ? "Running" : "Stopped"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {status.configOk
+                    ? <CheckCircle size={15} className="text-green-500" />
+                    : <AlertTriangle size={15} className="text-amber-500" />}
+                  <span className="text-sm font-medium">{status.configOk ? "Config OK" : "Config error"}</span>
+                  {!status.configOk && status.testOutput && (
+                    <button
+                      onClick={() => setOutputModal({ title: "Config Error Details", output: status.testOutput })}
+                      className="text-xs text-[var(--accent)] hover:underline"
+                    >view</button>
+                  )}
+                </div>
+              </>
+            )}
+            {/* Install button if nginx not present */}
+            {!status.installed && (
+              <button
+                onClick={() => installNginxMutation.mutate()}
+                disabled={installNginxMutation.isPending}
+                className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5 ml-auto"
+              >
+                <Plus size={12} />
+                {installNginxMutation.isPending ? "Installing…" : "Install Nginx"}
+              </button>
+            )}
+            {/* Update button if update available */}
+            {status.installed && status.nginxUpdateAvailable && (
+              <button
+                onClick={() => updateNginxMutation.mutate()}
+                disabled={updateNginxMutation.isPending}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ml-auto"
+              >
+                <RefreshCw size={11} />
+                {updateNginxMutation.isPending ? "Updating…" : "Update Available"}
+              </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {status.running
-              ? <CheckCircle size={15} className="text-green-500" />
-              : <XCircle size={15} className="text-red-500" />}
-            <span className="text-sm font-medium">{status.running ? "Running" : "Stopped"}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {status.configOk
-              ? <CheckCircle size={15} className="text-green-500" />
-              : <AlertTriangle size={15} className="text-amber-500" />}
-            <span className="text-sm font-medium">{status.configOk ? "Config OK" : "Config error"}</span>
-            {!status.configOk && status.testOutput && (
+
+          {/* Certbot row */}
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-[var(--line)]">
+            <div className="flex items-center gap-2">
+              {status.certbotInstalled
+                ? <CheckCircle size={15} className="text-green-500" />
+                : <XCircle size={15} className="text-[var(--muted)]" />}
+              <span className="text-sm font-medium">
+                {status.certbotInstalled ? "Certbot installed" : "Certbot not installed"}
+              </span>
+              {status.certbotInstalled && status.certbotVersion && (
+                <span className="text-xs text-[var(--muted)] font-mono">
+                  {status.certbotVersion.match(/[\d]+\.[\d.]+/)?.[0]}
+                </span>
+              )}
+              {!status.certbotInstalled && (
+                <span className="text-xs text-[var(--muted)]">— needed for free SSL certificates</span>
+              )}
+            </div>
+            {!status.certbotInstalled && (
               <button
-                onClick={() => setOutputModal({ title: "Config Error Details", output: status.testOutput })}
-                className="text-xs text-[var(--accent)] hover:underline"
-              >view</button>
+                onClick={() => installCertbotMutation.mutate()}
+                disabled={installCertbotMutation.isPending}
+                className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5 ml-auto"
+              >
+                <Lock size={12} />
+                {installCertbotMutation.isPending ? "Installing…" : "Install Certbot"}
+              </button>
+            )}
+            {status.certbotInstalled && status.certbotUpdateAvailable && (
+              <button
+                onClick={() => updateCertbotMutation.mutate()}
+                disabled={updateCertbotMutation.isPending}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ml-auto"
+              >
+                <RefreshCw size={11} />
+                {updateCertbotMutation.isPending ? "Updating…" : "Update Certbot"}
+              </button>
             )}
           </div>
         </div>
@@ -437,8 +587,8 @@ export default function NginxPage() {
                       {cert.valid ? <CheckCircle size={16} /> : <XCircle size={16} />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm">{cert.name}</span>
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <span className="font-semibold text-sm font-mono">{cert.name}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
                           cert.valid
                             ? "bg-green-500/10 text-green-600 dark:text-green-400"
@@ -446,24 +596,36 @@ export default function NginxPage() {
                         }`}>
                           {cert.valid ? "VALID" : "EXPIRED"}
                         </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {cert.domains.map(d => (
-                          <span key={d} className="text-[11px] px-2 py-0.5 bg-[var(--foreground)] border border-[var(--line)] rounded-full font-mono text-[var(--muted)]">
-                            {d}
+                        {cert.expiry && (
+                          <span className={`text-[10px] ${cert.valid ? "text-[var(--muted)]" : "text-red-500 font-medium"}`}>
+                            Expires {cert.expiry}
                           </span>
+                        )}
+                      </div>
+                      {/* Individual domain rows */}
+                      <div className="space-y-1">
+                        {cert.domains.map(d => (
+                          <div key={d} className="flex items-center gap-2 text-xs py-1 px-2 rounded-lg bg-[var(--foreground)] border border-[var(--line)]">
+                            <Globe size={11} className="text-[var(--accent)] shrink-0" />
+                            <span className="font-mono text-[var(--main)] flex-1 truncate">{d}</span>
+                            {d !== cert.name && (
+                              <span className="text-[9px] text-[var(--muted)] shrink-0">SAN</span>
+                            )}
+                          </div>
                         ))}
                       </div>
-                      {cert.expiry && (
-                        <p className="text-xs text-[var(--muted)] mt-1.5">
-                          Expires: <span className={cert.valid ? "" : "text-red-500 font-medium"}>{cert.expiry}</span>
-                        </p>
-                      )}
                       {cert.certPath && (
-                        <p className="text-[10px] text-[var(--muted)] font-mono mt-0.5 truncate">{cert.certPath}</p>
+                        <p className="text-[10px] text-[var(--muted)] font-mono mt-1.5 truncate">{cert.certPath}</p>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      <button
+                        onClick={() => { setEditCertModal(cert); setAddDomainInput(""); }}
+                        className="text-xs px-2.5 py-1.5 rounded-lg bg-[var(--foreground)] border border-[var(--line)] hover:border-[var(--accent)]/40 text-[var(--muted)] hover:text-[var(--main)] transition-colors flex items-center gap-1 font-medium"
+                        title="Edit certificate"
+                      >
+                        <Edit3 size={11} /> Edit
+                      </button>
                       <button
                         onClick={() => renewCert(cert.name)}
                         disabled={!!renewingCert}
@@ -656,6 +818,100 @@ export default function NginxPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* ── Edit Cert Modal ── */}
+      <Modal isOpen={!!editCertModal} onClose={() => { setEditCertModal(null); setAddDomainInput(""); }} title={`SSL Certificate: ${editCertModal?.name ?? ""}`} size="lg">
+        {editCertModal && (
+          <div className="space-y-4">
+            {/* Status + expiry */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {editCertModal.valid
+                ? <CheckCircle size={15} className="text-green-500" />
+                : <XCircle size={15} className="text-red-500" />}
+              <span className={`text-sm font-medium ${editCertModal.valid ? "text-green-500" : "text-red-500"}`}>
+                {editCertModal.valid ? "Valid" : "Expired"}
+              </span>
+              {editCertModal.expiry && (
+                <span className="text-sm text-[var(--muted)]">· Expires {editCertModal.expiry}</span>
+              )}
+            </div>
+            {/* Domains */}
+            <div>
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">Covered Domains</p>
+              <div className="space-y-1.5">
+                {editCertModal.domains.map(d => (
+                  <div key={d} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--foreground)] border border-[var(--line)]">
+                    <Globe size={13} className="text-[var(--accent)] shrink-0" />
+                    <span className="font-mono text-sm flex-1">{d}</span>
+                    {d !== editCertModal.name && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--accent)]/10 text-[var(--accent)]">SAN</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Cert paths */}
+            {(editCertModal.certPath || editCertModal.keyPath) && (
+              <div>
+                <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">File Paths</p>
+                <div className="space-y-1.5">
+                  {editCertModal.certPath && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--foreground)] border border-[var(--line)]">
+                      <span className="text-[10px] text-[var(--muted)] shrink-0 w-12">cert</span>
+                      <span className="font-mono text-[11px] flex-1 truncate text-[var(--muted)]">{editCertModal.certPath}</span>
+                      <button onClick={() => { navigator.clipboard.writeText(editCertModal.certPath!); toast.success("Copied!"); }}
+                        className="shrink-0 p-1 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--main)] transition-colors">
+                        <Copy size={11} />
+                      </button>
+                    </div>
+                  )}
+                  {editCertModal.keyPath && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--foreground)] border border-[var(--line)]">
+                      <span className="text-[10px] text-[var(--muted)] shrink-0 w-12">key</span>
+                      <span className="font-mono text-[11px] flex-1 truncate text-[var(--muted)]">{editCertModal.keyPath}</span>
+                      <button onClick={() => { navigator.clipboard.writeText(editCertModal.keyPath!); toast.success("Copied!"); }}
+                        className="shrink-0 p-1 rounded hover:bg-[var(--line)] text-[var(--muted)] hover:text-[var(--main)] transition-colors">
+                        <Copy size={11} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {/* Add domain */}
+            <div>
+              <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">Add Domain to Certificate</p>
+              <div className="flex gap-2">
+                <input
+                  value={addDomainInput}
+                  onChange={e => setAddDomainInput(e.target.value)}
+                  placeholder="sub.example.com"
+                  className="flex-1 px-3 py-2 text-sm font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                  onKeyDown={e => { if (e.key === "Enter" && addDomainInput.trim()) expandCert(editCertModal.name, addDomainInput); }}
+                />
+                <button
+                  onClick={() => expandCert(editCertModal.name, addDomainInput)}
+                  disabled={!addDomainInput.trim() || expandingCert}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  <PlusCircle size={13} /> {expandingCert ? "Adding..." : "Add"}
+                </button>
+              </div>
+              <p className="text-[10px] text-[var(--muted)] mt-1.5">Runs certbot --expand to add the domain to this existing certificate.</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--line)]">
+              <button
+                onClick={() => { renewCert(editCertModal.name); setEditCertModal(null); }}
+                disabled={!!renewingCert}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors"
+              >
+                <RotateCcw size={13} /> Renew Now
+              </button>
+              <button onClick={() => setEditCertModal(null)} className="btn-secondary px-4 py-2 text-sm">Close</button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ── Delete Cert Modal ── */}
