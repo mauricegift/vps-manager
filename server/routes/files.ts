@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { readdir, stat, rm, rename, mkdir, readFile, writeFile, cp } from 'fs/promises';
-import { existsSync, createWriteStream } from 'fs';
+import { existsSync, createWriteStream, createReadStream } from 'fs';
 import path from 'path';
 import multer from 'multer';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 const router = Router();
 
@@ -126,22 +130,92 @@ router.post('/save', async (req, res) => {
   }
 });
 
-// Upload file(s) to a directory
+// Upload file(s) to a directory (supports folder structure via relativePaths field)
 router.post('/upload', upload.array('files'), async (req, res) => {
   try {
     const destDir = (req.body.path as string) || '/';
     if (!existsSync(destDir)) await mkdir(destDir, { recursive: true });
     const files = req.files as Express.Multer.File[];
+    let relativePaths: string[] = [];
+    try { relativePaths = req.body.relativePaths ? JSON.parse(req.body.relativePaths) : []; } catch { relativePaths = []; }
     const moved = await Promise.all(
-      files.map(async (f) => {
-        const dest = path.join(destDir, f.originalname);
+      files.map(async (f, i) => {
+        const relPath = relativePaths[i] || f.originalname;
+        const dest = path.join(destDir, relPath);
+        const destParent = path.dirname(dest);
+        if (!existsSync(destParent)) await mkdir(destParent, { recursive: true });
         const content = await readFile(f.path);
         await writeFile(dest, content);
         await rm(f.path, { force: true });
-        return f.originalname;
+        return relPath;
       })
     );
     res.json({ success: true, data: moved });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Check if path exists
+router.get('/exists', async (req, res) => {
+  try {
+    const { path: p } = req.query as { path: string };
+    if (!p) return res.status(400).json({ success: false, error: 'path required' });
+    const exists = existsSync(p);
+    let type = 'none';
+    if (exists) {
+      const s = await stat(p);
+      type = s.isDirectory() ? 'directory' : 'file';
+    }
+    res.json({ success: true, data: { exists, type } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Bulk delete multiple paths
+router.post('/bulk-delete', async (req, res) => {
+  try {
+    const { paths } = req.body as { paths: string[] };
+    if (!paths || !paths.length) return res.status(400).json({ success: false, error: 'paths required' });
+    await Promise.all(paths.map(p => rm(p, { recursive: true, force: true })));
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Zip selected paths into archive
+const ZIP_EXCLUDE = [
+  '*/node_modules/*', '*/.git/*', '*/.npm/*', '*/.agents/*',
+  '*/attached_assets/*', '*/replit.md', '*/replit.nix', '*/.replit',
+  '*/bun.lock', '*/package-lock.json',
+].map(p => `-x "${p}"`).join(' ');
+
+router.post('/zip', async (req, res) => {
+  try {
+    const { paths, dest } = req.body as { paths: string[]; dest?: string };
+    if (!paths || !paths.length) return res.status(400).json({ success: false, error: 'paths required' });
+    const outPath = dest || path.join('/tmp', `archive-${Date.now()}.zip`);
+    const quoted = paths.map(p => `"${p}"`).join(' ');
+    await execAsync(`zip -r "${outPath}" ${quoted} ${ZIP_EXCLUDE} 2>&1`);
+    res.json({ success: true, data: { path: outPath } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Download a file
+router.get('/download', async (req, res) => {
+  try {
+    const filePath = req.query.path as string;
+    if (!filePath || !existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+    const filename = path.basename(filePath);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    createReadStream(filePath).pipe(res);
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
