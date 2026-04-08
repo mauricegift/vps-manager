@@ -877,8 +877,14 @@ router.post('/:id/extras/:tool/install', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const cmd = `apt-get update -qq 2>&1; ${cmdFn(req.body)}`;
-    const { stdout, stderr } = await runSSHCommand(conn, cmd);
+    const installCmd = cmdFn(req.body);
+    const fullScript = `apt-get update -qq 2>&1; ${installCmd} 2>&1`;
+    const b64 = Buffer.from(fullScript, 'utf8').toString('base64');
+    const cmd = `bash -l -c "$(echo '${b64}' | base64 -d)"`;
+    const { stdout, stderr, code } = await runSSHCommand(conn, cmd);
+    if (code !== 0) {
+      return res.status(500).json({ success: false, error: 'Installation failed', output: stdout + stderr });
+    }
     res.json({ success: true, output: stdout + stderr });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -904,11 +910,28 @@ router.get('/:id/extras/pm2-version', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const cmd = `PM2_BIN=$(which pm2 2>/dev/null || echo ""); if [ -z "$PM2_BIN" ]; then NPM_PREFIX=$(npm config get prefix 2>/dev/null); PM2_BIN="$NPM_PREFIX/bin/pm2"; fi; if [ -z "$PM2_BIN" ] || ! [ -x "$PM2_BIN" ]; then PM2_BIN="$HOME/.npm-global/bin/pm2"; fi; if [ -x "$PM2_BIN" ]; then "$PM2_BIN" --version 2>/dev/null; fi; npm view pm2 version 2>/dev/null`;
-    const { stdout } = await runSSHCommand(conn, cmd);
-    const lines = stdout.trim().split('\n').filter(Boolean);
-    const version = lines[0]?.match(/(\d+\.\d+[\.\d]*)/)?.[1] || null;
-    const latestVersion = lines[1]?.match(/(\d+\.\d+[\.\d]*)/)?.[1] || null;
+    const script = `
+PM2_VER=""
+if command -v pm2 >/dev/null 2>&1; then
+  PM2_VER=$(pm2 --version 2>/dev/null | head -1 | tr -d '\\r')
+fi
+if [ -z "$PM2_VER" ]; then
+  NPM_BIN=$(npm config get prefix 2>/dev/null)/bin/pm2
+  if [ -x "$NPM_BIN" ]; then PM2_VER=$("$NPM_BIN" --version 2>/dev/null | head -1 | tr -d '\\r'); fi
+fi
+if [ -z "$PM2_VER" ]; then
+  for BIN in /usr/local/bin/pm2 /usr/bin/pm2 "$HOME/.npm-global/bin/pm2" "$HOME/.local/bin/pm2"; do
+    if [ -x "$BIN" ]; then PM2_VER=$("$BIN" --version 2>/dev/null | head -1 | tr -d '\\r'); break; fi
+  done
+fi
+LATEST=$(npm view pm2 version 2>/dev/null | tr -d '\\r' || true)
+echo "INSTALLED:$PM2_VER"
+echo "LATEST:$LATEST"
+`;
+    const b64 = Buffer.from(script, 'utf8').toString('base64');
+    const { stdout } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`);
+    const version = stdout.match(/^INSTALLED:(.+)$/m)?.[1]?.match(/(\d+\.\d+[\.\d]*)/)?.[1] || null;
+    const latestVersion = stdout.match(/^LATEST:(.+)$/m)?.[1]?.match(/(\d+\.\d+[\.\d]*)/)?.[1] || null;
     res.json({ success: true, data: { installed: !!version, version, latestVersion, updateAvailable: !!(version && latestVersion && version !== latestVersion) } });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
