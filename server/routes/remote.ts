@@ -87,8 +87,33 @@ router.get('/:id/pm2/:procId/logs', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const { stdout } = await runSSHCommand(conn, `pm2 logs ${req.params.procId} --lines 150 --nostream --no-color 2>&1`);
-    res.json({ success: true, data: stdout });
+    const procId = req.params.procId;
+
+    // Use node (always present with PM2) to read log files directly — avoids pm2 logs hanging
+    const script = `node -e "
+const { execSync } = require('child_process');
+try {
+  const procs = JSON.parse(execSync('pm2 jlist --no-color 2>/dev/null || echo []').toString());
+  const proc = procs.find(p => String(p.pm_id) === '${procId}' || p.name === '${procId}');
+  if (!proc) { console.log('(process not found)'); process.exit(0); }
+  const out = proc.pm2_env && proc.pm2_env.pm_out_log_path;
+  const err = proc.pm2_env && proc.pm2_env.pm_err_log_path;
+  if (out) {
+    try { process.stdout.write(execSync('tail -n 300 ' + JSON.stringify(out) + ' 2>/dev/null || true').toString()); } catch {}
+    if (err && err !== out) {
+      try {
+        const e = execSync('tail -n 150 ' + JSON.stringify(err) + ' 2>/dev/null || true').toString();
+        if (e.trim()) { process.stdout.write('\\n\\x1b[31m\\n── stderr ──\\x1b[0m\\n' + e); }
+      } catch {}
+    }
+  } else {
+    console.log('(log path not found, trying pm2 logs fallback)');
+    try { process.stdout.write(execSync('pm2 logs ${procId} --lines 100 --nostream --no-color 2>&1', { timeout: 12000 }).toString()); } catch(fe) { console.log(String(fe)); }
+  }
+} catch(e) { console.log(String(e)); }
+"`;
+    const { stdout } = await runSSHCommand(conn, script);
+    res.json({ success: true, data: stdout || '(no logs)' });
   } catch (e: any) {
     res.json({ success: true, data: e.message });
   }
@@ -102,8 +127,42 @@ router.post('/:id/pm2/terminal', async (req, res) => {
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
     const { command } = req.body;
     const args = (command || '').trim().replace(/^pm2\s+/i, '').trim();
-    const first = args.split(/\s+/)[0].toLowerCase();
+    const parts = args.split(/\s+/);
+    const first = parts[0].toLowerCase();
     if (!ALLOWED_PM2.includes(first)) return res.status(400).json({ success: false, error: `Not allowed: ${first}` });
+
+    // Intercept `logs` — read files directly to avoid pm2 logs hanging
+    if (first === 'logs') {
+      const nameOrId = parts[1] || '';
+      const lines = parseInt(
+        (parts.find((p, i) => i > 0 && /^\d+$/.test(p)) || parts[parts.indexOf('--lines') + 1] || ''),
+        10
+      ) || 100;
+      const script = `node -e "
+const { execSync } = require('child_process');
+try {
+  const procs = JSON.parse(execSync('pm2 jlist --no-color 2>/dev/null || echo []').toString());
+  const proc = ${nameOrId
+    ? `procs.find(p => String(p.pm_id) === '${nameOrId}' || p.name === '${nameOrId}')`
+    : `procs[0]`};
+  if (!proc) { console.log('(process not found)'); process.exit(0); }
+  const out = proc.pm2_env && proc.pm2_env.pm_out_log_path;
+  const err = proc.pm2_env && proc.pm2_env.pm_err_log_path;
+  if (out) {
+    try { process.stdout.write(execSync('tail -n ${lines} ' + JSON.stringify(out) + ' 2>/dev/null || true').toString()); } catch {}
+    if (err && err !== out) {
+      try {
+        const e = execSync('tail -n ${Math.ceil(lines / 2)} ' + JSON.stringify(err) + ' 2>/dev/null || true').toString();
+        if (e.trim()) process.stdout.write('\\n\\x1b[31m── stderr ──\\x1b[0m\\n' + e);
+      } catch {}
+    }
+  } else { console.log('(log path not found)'); }
+} catch(e) { console.log(String(e)); }
+"`;
+      const { stdout } = await runSSHCommand(conn, script);
+      return res.json({ success: true, data: stdout || '(no logs)' });
+    }
+
     const { stdout, stderr } = await runSSHCommand(conn, `FORCE_COLOR=3 COLORTERM=truecolor pm2 ${args} 2>&1`);
     res.json({ success: true, data: stdout || stderr || '(no output)' });
   } catch (e: any) {
