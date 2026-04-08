@@ -291,6 +291,32 @@ router.get('/:id/files/zip-download', async (req, res) => {
   }
 });
 
+// ── Raw file download (any file, via base64 over SSH) ─────────────────────────
+router.get('/:id/files/raw-download', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const filePath = (req.query.path as string || '').trim();
+    if (!filePath) return res.status(400).json({ success: false, error: 'path required' });
+
+    const { stdout: b64, code } = await runSSHCommand(conn,
+      `base64 ${JSON.stringify(filePath)} 2>&1; echo "_EXIT_$?"`
+    );
+    if (code !== 0 || !b64.trim()) {
+      return res.status(500).json({ success: false, error: 'Failed to read file from remote server' });
+    }
+    const clean = b64.replace(/_EXIT_\d+/g, '').trim();
+    const fileBuffer = Buffer.from(clean, 'base64');
+    const fileName = filePath.split('/').filter(Boolean).pop() || 'download';
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Length', fileBuffer.length);
+    res.send(fileBuffer);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Exec (terminal) ───────────────────────────────────────────────────────────
 router.post('/:id/exec', async (req, res) => {
   try {
