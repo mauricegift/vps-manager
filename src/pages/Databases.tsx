@@ -5,7 +5,7 @@ import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
   ChevronRight, X, Download, Trash2, FolderOpen,
   Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle, LayoutGrid,
-  Search, Copy, Globe, Wifi, WifiOff, Check
+  Search, Copy, Globe, Wifi, WifiOff, Check, Lock, Link2
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -71,6 +71,12 @@ export default function DatabasesPage() {
   const [connCopied, setConnCopied] = useState<string | null>(null);
   const [connPassword, setConnPassword] = useState("");
   const [connDbName, setConnDbName] = useState("");
+
+  // Change password modal (used in both the browser sidebar and standalone)
+  const [changePassModal, setChangePassModal] = useState<{ type: string; name: string } | null>(null);
+  const [changePwdVal, setChangePwdVal] = useState("");
+  const [changePwdLoading, setChangePwdLoading] = useState(false);
+  const [browserConnCopied, setBrowserConnCopied] = useState(false);
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
@@ -451,6 +457,37 @@ export default function DatabasesPage() {
     setManagingDb(false);
   };
 
+  const makeConnStr = (type: string, dbname: string, masked = true) => {
+    const host = activeServer?.ip ?? "127.0.0.1";
+    const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
+    const port = portMap[type] ?? 5432;
+    const pwd = masked ? "•••" : "PASSWORD";
+    if (type === "postgresql") return `postgresql://postgres:${pwd}@${host}:${port}/${dbname}`;
+    if (type === "mysql" || type === "mariadb") return `mysql://root:${pwd}@${host}:${port}/${dbname}`;
+    if (type === "mongodb") return `mongodb://root:${pwd}@${host}:${port}/${dbname}?authSource=admin`;
+    if (type === "redis") return `redis://:${pwd}@${host}:${port}/0`;
+    return dbname;
+  };
+
+  const changePassword = async () => {
+    if (!changePassModal || !changePwdVal.trim()) return;
+    setChangePwdLoading(true);
+    try {
+      const { type, name } = changePassModal;
+      if (activeServer) {
+        await api.post(`/remote/${activeServer.id}/databases/${type}/${name}/change-password`, { password: changePwdVal });
+      } else {
+        await api.post(`/databases/${type}/${name}/change-password`, { password: changePwdVal });
+      }
+      toast.success("Password changed successfully");
+      setChangePassModal(null);
+      setChangePwdVal("");
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to change password");
+    }
+    setChangePwdLoading(false);
+  };
+
   const dropTable = async (table: string) => {
     if (!browserDb) return;
     const type = browserDb.type;
@@ -648,6 +685,40 @@ export default function DatabasesPage() {
         </Modal>
       )}
 
+      {/* Change Password modal */}
+      {changePassModal && (
+        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); }} title={`Change Password — ${changePassModal.name}`} size="sm">
+          <div className="space-y-4">
+            <div className="p-3 rounded-xl bg-orange-500/5 border border-orange-500/20">
+              <p className="text-xs text-[var(--muted)]">
+                {changePassModal.type === "mongodb" && "Updates the root user password in the admin database."}
+                {(changePassModal.type === "mysql" || changePassModal.type === "mariadb") && "Updates the root user password for all hosts."}
+                {changePassModal.type === "postgresql" && "Updates the postgres superuser password."}
+                {changePassModal.type === "redis" && "Sets the requirepass configuration for Redis."}
+              </p>
+            </div>
+            <div>
+              <label className="text-xs text-[var(--muted)] mb-1.5 block font-semibold uppercase tracking-wide">New Password</label>
+              <input
+                type="text"
+                value={changePwdVal}
+                onChange={e => setChangePwdVal(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && !changePwdLoading && changePwdVal.trim() && changePassword()}
+                placeholder="Enter new password"
+                autoFocus
+                className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-orange-400 transition-colors font-mono"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setChangePassModal(null); setChangePwdVal(""); }} disabled={changePwdLoading} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors disabled:opacity-50">Cancel</button>
+              <button onClick={changePassword} disabled={changePwdLoading || !changePwdVal.trim()} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-400 hover:bg-orange-500/25 transition-colors disabled:opacity-50">
+                {changePwdLoading ? <><div className="w-3 h-3 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" /> Changing...</> : <><Lock size={13} /> Change Password</>}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* Output modal */}
       {outputModal && (
         <Modal isOpen onClose={() => setOutputModal(null)} title={outputModal.title} size="lg">
@@ -743,6 +814,37 @@ export default function DatabasesPage() {
                   )}
                 </div>
               )}
+
+              {/* Connection String + Change Password */}
+              <div className="mt-auto pt-3 border-t border-[var(--line)] hidden md:block">
+                <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider mb-2 flex items-center gap-1">
+                  <Link2 size={9} /> Connection
+                </p>
+                <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[var(--foreground)] border border-[var(--line)]">
+                  <code className="text-[9px] font-mono flex-1 truncate text-[var(--muted)]">
+                    {makeConnStr(browserDb.type, browserDb.name)}
+                  </code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(makeConnStr(browserDb.type, browserDb.name));
+                      setBrowserConnCopied(true);
+                      setTimeout(() => setBrowserConnCopied(false), 2000);
+                    }}
+                    className="shrink-0 text-[var(--muted)] hover:text-[var(--accent)] transition-colors"
+                    title="Copy connection string"
+                  >
+                    {browserConnCopied ? <Check size={10} className="text-green-400" /> : <Copy size={10} />}
+                  </button>
+                </div>
+                {browserDb.type !== "sqlite" && (
+                  <button
+                    onClick={() => { setChangePwdVal(""); setChangePassModal({ type: browserDb.type, name: browserDb.name }); }}
+                    className="mt-1.5 w-full flex items-center gap-1 text-[10px] px-2.5 py-1.5 rounded-lg border border-[var(--line)] hover:border-orange-400/40 hover:text-orange-400 transition-colors"
+                  >
+                    <Lock size={10} /> Change Password
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Main content */}
@@ -1290,8 +1392,16 @@ export default function DatabasesPage() {
                     </ol>
                   </div>
                 )}
-                <div className="flex justify-end">
-                  <button onClick={() => { setConnectionModal(null); setConnPassword(""); }} className="btn-secondary px-4 py-2 text-sm">Close</button>
+                <div className="flex items-center justify-between">
+                  {db.type !== "sqlite" && (
+                    <button
+                      onClick={() => { setConnectionModal(null); setConnPassword(""); setConnDbName(""); setChangePwdVal(""); setChangePassModal({ type: db.type, name: db.name || db.type }); }}
+                      className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-[var(--line)] hover:border-orange-400/40 hover:text-orange-400 transition-colors"
+                    >
+                      <Lock size={13} /> Change Password
+                    </button>
+                  )}
+                  <button onClick={() => { setConnectionModal(null); setConnPassword(""); setConnDbName(""); }} className="btn-secondary px-4 py-2 text-sm ml-auto">Close</button>
                 </div>
               </div>
             );
