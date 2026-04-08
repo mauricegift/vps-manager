@@ -51,6 +51,7 @@ export default function TerminalPage() {
   const { activeServer } = useRemoteServer();
   const { theme } = useTheme();
   const MONOKAI = theme === "dark" ? DARK_THEME : LIGHT_THEME;
+  const OUT = DARK_THEME;
 
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -232,39 +233,38 @@ export default function TerminalPage() {
           </div>
         </div>
 
-        {/* Output */}
+        {/* Output — always dark so ANSI colors render correctly */}
         <div
           ref={outputRef}
           onClick={() => inputRef.current?.focus()}
           className="h-[52vh] min-h-[260px] overflow-y-auto p-4 font-mono leading-relaxed cursor-text"
-          style={{ background: MONOKAI.bg, color: MONOKAI.text, fontSize: `${fontSize}px` }}
+          style={{ background: OUT.bg, color: OUT.text, fontSize: `${fontSize}px` }}
         >
           {lines.map((line, i) => {
             if (line.type === "system") {
               return (
-                <div key={i} style={{ color: MONOKAI.system, fontStyle: "italic" }}>
+                <div key={i} style={{ color: OUT.system, fontStyle: "italic" }}>
                   {line.text}
                 </div>
               );
             }
             if (line.type === "input") {
               return (
-                <div key={i} style={{ color: MONOKAI.prompt, fontWeight: 600 }}>
-                  <AnsiText text={line.text} fg={MONOKAI.text} />
+                <div key={i} style={{ color: OUT.prompt, fontWeight: 600 }}>
+                  <AnsiText text={line.text} fg={OUT.text} />
                 </div>
               );
             }
             if (line.type === "error") {
               return (
-                <div key={i} style={{ color: MONOKAI.error }}>
-                  <AnsiText text={line.text} fg={MONOKAI.text} />
+                <div key={i} style={{ color: OUT.error }}>
+                  <AnsiText text={line.text} fg={OUT.text} />
                 </div>
               );
             }
-            /* output: no forced color — let ANSI spans shine through */
             return (
               <div key={i}>
-                <AnsiText text={line.text} fg={MONOKAI.text} />
+                <AnsiText text={line.text} fg={OUT.text} />
               </div>
             );
           })}
