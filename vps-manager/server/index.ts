@@ -80,24 +80,26 @@ io.on('connection', async (socket) => {
                 sshClient?.end();
               });
 
-              // Send all color/alias setup as ONE line → terminal echoes one line, then clear wipes it
+              // ── Silent init ──────────────────────────────────────────────
+              // Step 1: disable terminal echo (this one line will be echoed, then echo goes off)
+              setTimeout(() => {
+                if (stream.writable) stream.write('stty -echo 2>/dev/null\n');
+              }, 250);
+              // Step 2: setup commands — echo is off, nothing appears in output
               setTimeout(() => {
                 if (stream.writable) {
-                  const setup = [
-                    "export FORCE_COLOR=3 COLORTERM=truecolor CLICOLOR=1 CLICOLOR_FORCE=1",
-                    "alias ls='ls --color=always'",
-                    "alias ll='ls -la --color=always'",
-                    "alias grep='grep --color=always'",
-                    "alias diff='diff --color=always'",
-                    'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "',
-                  ].join('; ');
-                  stream.write(setup + '\n');
+                  stream.write(
+                    'export FORCE_COLOR=3 COLORTERM=truecolor CLICOLOR=1 CLICOLOR_FORCE=1; ' +
+                    "alias ls='ls --color=always'; alias ll='ls -la --color=always'; " +
+                    "alias grep='grep --color=always'; alias diff='diff --color=always'; " +
+                    'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
+                  );
                 }
-              }, 350);
-              // Clear the echoed init line once bash has processed it
+              }, 500);
+              // Step 3: re-enable echo then clear screen — frontend will detect \x1b[2J and wipe display
               setTimeout(() => {
-                if (stream.writable) stream.write('clear\n');
-              }, 750);
+                if (stream.writable) stream.write('stty echo 2>/dev/null; clear\n');
+              }, 800);
 
               socket.on('command', (cmd: string) => {
                 if (stream.writable) stream.write(cmd + '\n');
