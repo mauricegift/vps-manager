@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Server, Container, Database,
-  FolderOpen, Terminal, X, Activity, Globe, Sparkles
+  FolderOpen, Terminal, X, Activity, Globe, Sparkles, Shield
 } from "lucide-react";
 
 const nav = [
@@ -11,6 +11,7 @@ const nav = [
   { path: "/databases", label: "Databases", icon: Database, desc: "DB management" },
   { path: "/files", label: "Files", icon: FolderOpen, desc: "File manager" },
   { path: "/terminal", label: "Terminal", icon: Terminal, desc: "Run commands" },
+  { path: "/nginx", label: "Nginx", icon: Shield, desc: "Web server & SSL certs" },
   { path: "/extras", label: "Extras", icon: Sparkles, desc: "Software & user management" },
   { path: "/servers", label: "Servers", icon: Globe, desc: "Remote VPS management" },
 ];
