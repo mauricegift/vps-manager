@@ -3,8 +3,8 @@ import { useTheme } from "@/context/ThemeContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
-  ChevronRight, X, Download, Trash2, FolderOpen, Terminal,
-  Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle
+  ChevronRight, X, Download, Trash2, FolderOpen,
+  Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle, LayoutGrid
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -60,8 +60,45 @@ export default function DatabasesPage() {
   const [installPort, setInstallPort] = useState("");
   const [installPassword, setInstallPassword] = useState("");
 
+  // New Table / Collection creation
+  const [newTableModal, setNewTableModal] = useState(false);
+  const [newTableName, setNewTableName] = useState("");
+  const [newTableCols, setNewTableCols] = useState([{ name: "id", type: "SERIAL PRIMARY KEY" }]);
+  const [creatingTable, setCreatingTable] = useState(false);
+
+  // MongoDB document (JSON) add
+  const [addDocModal, setAddDocModal] = useState(false);
+  const [addDocJson, setAddDocJson] = useState("{\n  \n}");
+  const [addDocLoading, setAddDocLoading] = useState(false);
+
   const DEFAULT_PORTS: Record<string, number> = {
     postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306,
+  };
+
+  // Identifier quoting per DB type
+  const quoteId = (col: string, type?: string): string => {
+    const t = type ?? browserDb?.type ?? "postgresql";
+    return (t === "mysql" || t === "mariadb") ? `\`${col}\`` : `"${col}"`;
+  };
+
+  const buildWhereClause = (columns: string[], row: any[]): string =>
+    columns.map((c, i) => {
+      const q = quoteId(c);
+      return row[i] === null ? `${q} IS NULL` : `${q} = '${String(row[i]).replace(/'/g, "''")}'`;
+    }).join(" AND ");
+
+  // MongoDB: extract _id filter expression from a row
+  const buildMongoFilter = (columns: string[], row: any[]): string => {
+    const idIdx = columns.indexOf("_id");
+    if (idIdx === -1) return "{}";
+    const idVal = String(row[idIdx] ?? "");
+    try {
+      const parsed = JSON.parse(idVal);
+      if (parsed.$oid) return `{_id: ObjectId("${parsed.$oid}")}`;
+      return `{_id: ${idVal}}`;
+    } catch {
+      return `{_id: "${idVal.replace(/"/g, '\\"')}"}`;
+    }
   };
 
   const dbEndpoint = activeServer ? `/remote/${activeServer.id}/databases` : "/databases";
@@ -208,35 +245,92 @@ export default function DatabasesPage() {
     }
   };
 
-  const buildWhereClause = (columns: string[], row: any[]) =>
-    columns.map((c, i) => row[i] === null ? `"${c}" IS NULL` : `"${c}" = '${String(row[i]).replace(/'/g, "''")}'`).join(" AND ");
-
   const saveEditRow = async () => {
     if (!editRowModal || !selectedTable || !browserDb) return;
     const { columns, row, original } = editRowModal;
-    const sets = columns.map((c, i) => `"${c}" = '${String(row[i] ?? "").replace(/'/g, "''")}'`).join(", ");
-    const where = buildWhereClause(columns, original);
-    await runSql(`UPDATE "${selectedTable}" SET ${sets} WHERE ${where}`, "Row updated");
+    const type = browserDb.type;
+    if (type === "mongodb") {
+      const filter = buildMongoFilter(columns, original);
+      const doc = Object.fromEntries(columns.filter(c => c !== "_id").map((c, idx) => {
+        const i = columns.indexOf(c);
+        return [c, row[i] ?? null];
+      }));
+      await runSql(`db.${selectedTable}.updateOne(${filter}, {$set: ${JSON.stringify(doc)}})`, "Document updated");
+    } else {
+      const qt = (c: string) => quoteId(c, type);
+      const sets = columns.map((c, i) => `${qt(c)} = '${String(row[i] ?? "").replace(/'/g, "''")}'`).join(", ");
+      const where = buildWhereClause(columns, original);
+      const tq = qt(selectedTable);
+      await runSql(`UPDATE ${tq} SET ${sets} WHERE ${where}`, "Row updated");
+    }
     setEditRowModal(null);
   };
 
   const deleteRow = async () => {
     if (!deleteRowModal || !selectedTable || !browserDb) return;
     const { columns, row } = deleteRowModal;
-    const where = buildWhereClause(columns, row);
-    await runSql(`DELETE FROM "${selectedTable}" WHERE ${where}`, "Row deleted");
+    const type = browserDb.type;
+    if (type === "mongodb") {
+      const filter = buildMongoFilter(columns, row);
+      await runSql(`db.${selectedTable}.deleteOne(${filter})`, "Document deleted");
+    } else {
+      const where = buildWhereClause(columns, row);
+      const qt = (c: string) => quoteId(c, type);
+      await runSql(`DELETE FROM ${qt(selectedTable)} WHERE ${where}`, "Row deleted");
+    }
     setDeleteRowModal(null);
   };
 
   const addRow = async () => {
     if (!tableData || !selectedTable || !browserDb) return;
+    const type = browserDb.type;
     const cols = Object.keys(addRowValues).filter(c => addRowValues[c] !== "");
     if (!cols.length) { toast.error("Fill in at least one column"); return; }
-    const colStr = cols.map(c => `"${c}"`).join(", ");
+    const qt = (c: string) => quoteId(c, type);
+    const colStr = cols.map(c => qt(c)).join(", ");
     const valStr = cols.map(c => `'${addRowValues[c].replace(/'/g, "''")}'`).join(", ");
-    await runSql(`INSERT INTO "${selectedTable}" (${colStr}) VALUES (${valStr})`, "Row added");
+    await runSql(`INSERT INTO ${qt(selectedTable)} (${colStr}) VALUES (${valStr})`, "Row added");
     setAddRowModal(false);
     setAddRowValues({});
+  };
+
+  const addDocument = async () => {
+    if (!selectedTable || !browserDb) return;
+    setAddDocLoading(true);
+    try {
+      let doc: any;
+      try { doc = JSON.parse(addDocJson); } catch { toast.error("Invalid JSON"); setAddDocLoading(false); return; }
+      await runSql(`db.${selectedTable}.insertOne(${JSON.stringify(doc)})`, "Document inserted");
+      setAddDocModal(false);
+      setAddDocJson("{\n  \n}");
+    } catch {}
+    setAddDocLoading(false);
+  };
+
+  const createTable = async () => {
+    if (!browserDb || !newTableName.trim()) return;
+    setCreatingTable(true);
+    try {
+      const type = browserDb.type;
+      const qt = (c: string) => quoteId(c, type);
+      let sql: string;
+      if (type === "mongodb") {
+        sql = `db.createCollection("${newTableName.replace(/"/g, '\\"')}")`;
+      } else {
+        const colDefs = newTableCols.map(c => `${qt(c.name)} ${c.type}`).join(", ");
+        sql = `CREATE TABLE ${qt(newTableName)} (${colDefs})`;
+      }
+      await api.post(`${dbApiBase(type, browserDb.name)}/query`, { sql });
+      toast.success(type === "mongodb" ? `Collection "${newTableName}" created` : `Table "${newTableName}" created`);
+      setNewTableModal(false);
+      setNewTableName("");
+      setNewTableCols([{ name: "id", type: "SERIAL PRIMARY KEY" }]);
+      const r = await api.get(`${dbApiBase(type, browserDb.name)}/tables`);
+      setTableList(r.data.data || []);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to create");
+    }
+    setCreatingTable(false);
   };
 
   const createDatabase = async () => {
@@ -265,7 +359,14 @@ export default function DatabasesPage() {
 
   const dropTable = async (table: string) => {
     if (!browserDb) return;
-    await runSql(`DROP TABLE IF EXISTS "${table}"`, `Table "${table}" dropped`);
+    const type = browserDb.type;
+    let sql: string;
+    if (type === "mongodb") {
+      sql = `db.${table}.drop()`;
+    } else {
+      sql = `DROP TABLE IF EXISTS ${quoteId(table, type)}`;
+    }
+    await runSql(sql, type === "mongodb" ? `Collection "${table}" dropped` : `Table "${table}" dropped`);
     setDropTableModal(null);
     setTableList(prev => prev.filter(t => t.name !== table));
     if (selectedTable === table) { setSelectedTable(null); setTableData(null); }
@@ -546,19 +647,34 @@ export default function DatabasesPage() {
                   >
                     <PlusCircle size={11} /> New Database
                   </button>
-                  {selectedTable && browserDb.type !== "mongodb" && (
+                  <button
+                    onClick={() => { setNewTableName(""); setNewTableCols([{ name: "id", type: "SERIAL PRIMARY KEY" }]); setNewTableModal(true); }}
+                    className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors"
+                  >
+                    <LayoutGrid size={11} /> {browserDb.type === "mongodb" ? "New Collection" : "New Table"}
+                  </button>
+                  {selectedTable && (
                     <>
-                      <button
-                        onClick={() => { setAddRowValues(tableData ? Object.fromEntries(tableData.columns.map(c => [c, ""])) : {}); setAddRowModal(true); }}
-                        className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-colors"
-                      >
-                        <Plus size={11} /> Add Row
-                      </button>
+                      {browserDb.type === "mongodb" ? (
+                        <button
+                          onClick={() => { setAddDocJson("{\n  \n}"); setAddDocModal(true); }}
+                          className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-colors"
+                        >
+                          <Plus size={11} /> Add Document
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => { setAddRowValues(tableData ? Object.fromEntries(tableData.columns.map(c => [c, ""])) : {}); setAddRowModal(true); }}
+                          className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-colors"
+                        >
+                          <Plus size={11} /> Add Row
+                        </button>
+                      )}
                       <button
                         onClick={() => setDropTableModal(selectedTable)}
                         className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
                       >
-                        <MinusCircle size={11} /> Drop Table
+                        <MinusCircle size={11} /> {browserDb.type === "mongodb" ? "Drop Collection" : "Drop Table"}
                       </button>
                     </>
                   )}
@@ -623,7 +739,7 @@ export default function DatabasesPage() {
                   ) : tableData ? (
                     <EditableDataTable
                       data={tableData}
-                      isSql={browserDb.type !== "mongodb" && browserDb.type !== "redis"}
+                      canEdit={browserDb.type !== "redis"}
                       onEdit={row => setEditRowModal({ columns: tableData.columns, row: [...row], original: [...row] })}
                       onDelete={row => setDeleteRowModal({ columns: tableData.columns, row })}
                     />
@@ -784,20 +900,123 @@ export default function DatabasesPage() {
         </Modal>
       )}
 
-      {/* Drop Table Modal */}
+      {/* Drop Table / Collection Modal */}
       {dropTableModal && (
-        <Modal isOpen onClose={() => setDropTableModal(null)} title="Drop Table" size="sm">
+        <Modal isOpen onClose={() => setDropTableModal(null)} title={browserDb?.type === "mongodb" ? "Drop Collection" : "Drop Table"} size="sm">
           <div className="space-y-4">
             <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
               <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
               <p className="text-sm text-[var(--main)]">
-                Drop table <strong className="font-mono">{dropTableModal}</strong>? This permanently deletes all data and cannot be undone.
+                {browserDb?.type === "mongodb" ? "Drop collection" : "Drop table"} <strong className="font-mono">{dropTableModal}</strong>? This permanently deletes all data and cannot be undone.
               </p>
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setDropTableModal(null)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
               <button onClick={() => dropTable(dropTableModal)} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 transition-colors">
-                <MinusCircle size={13} /> Drop Table
+                <MinusCircle size={13} /> {browserDb?.type === "mongodb" ? "Drop Collection" : "Drop Table"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* New Table / Collection Modal */}
+      {newTableModal && browserDb && (
+        <Modal isOpen onClose={() => setNewTableModal(false)} title={browserDb.type === "mongodb" ? "New Collection" : "New Table"} size="md">
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs text-[var(--muted)] mb-1.5 block">
+                {browserDb.type === "mongodb" ? "Collection Name" : "Table Name"}
+              </label>
+              <input
+                value={newTableName}
+                onChange={e => setNewTableName(e.target.value)}
+                placeholder={browserDb.type === "mongodb" ? "my_collection" : "my_table"}
+                className="w-full px-3 py-2 text-sm font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                autoFocus
+              />
+            </div>
+            {browserDb.type !== "mongodb" && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-[var(--muted)] font-semibold uppercase tracking-wide">Columns</label>
+                  <button
+                    onClick={() => setNewTableCols(prev => [...prev, { name: "", type: "VARCHAR(255)" }])}
+                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors"
+                  >
+                    <Plus size={10} /> Add Column
+                  </button>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {newTableCols.map((col, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input
+                        value={col.name}
+                        onChange={e => setNewTableCols(prev => prev.map((c, i) => i === idx ? { ...c, name: e.target.value } : c))}
+                        placeholder="column_name"
+                        className="flex-1 px-2.5 py-1.5 text-xs font-mono rounded-lg border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                      />
+                      <input
+                        value={col.type}
+                        onChange={e => setNewTableCols(prev => prev.map((c, i) => i === idx ? { ...c, type: e.target.value } : c))}
+                        placeholder="VARCHAR(255)"
+                        className="flex-1 px-2.5 py-1.5 text-xs font-mono rounded-lg border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                      />
+                      {newTableCols.length > 1 && (
+                        <button
+                          onClick={() => setNewTableCols(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1 rounded text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-lg bg-[var(--foreground)] border border-[var(--line)] p-2">
+                  <p className="text-[10px] text-[var(--muted)] font-mono">
+                    SQL preview: CREATE TABLE {newTableName || "table_name"} ({newTableCols.map(c => `${c.name} ${c.type}`).join(", ")})
+                  </p>
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <button onClick={() => setNewTableModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+              <button
+                onClick={createTable}
+                disabled={creatingTable || !newTableName.trim()}
+                className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50"
+              >
+                <LayoutGrid size={13} /> {creatingTable ? "Creating..." : browserDb.type === "mongodb" ? "Create Collection" : "Create Table"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Add Document Modal (MongoDB) */}
+      {addDocModal && selectedTable && (
+        <Modal isOpen onClose={() => setAddDocModal(false)} title={`Insert Document into ${selectedTable}`} size="md">
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs text-[var(--muted)] mb-1.5 block">Document (JSON)</label>
+              <textarea
+                value={addDocJson}
+                onChange={e => setAddDocJson(e.target.value)}
+                rows={8}
+                spellCheck={false}
+                className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors resize-y"
+                placeholder='{ "name": "value", "count": 0 }'
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setAddDocModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+              <button
+                onClick={addDocument}
+                disabled={addDocLoading}
+                className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50"
+              >
+                <Plus size={13} /> {addDocLoading ? "Inserting..." : "Insert Document"}
               </button>
             </div>
           </div>
@@ -1042,9 +1261,9 @@ function DataTable({ data }: { data: TableData }) {
   );
 }
 
-function EditableDataTable({ data, isSql, onEdit, onDelete }: {
+function EditableDataTable({ data, canEdit, onEdit, onDelete }: {
   data: TableData;
-  isSql: boolean;
+  canEdit: boolean;
   onEdit: (row: any[]) => void;
   onDelete: (row: any[]) => void;
 }) {
@@ -1052,49 +1271,57 @@ function EditableDataTable({ data, isSql, onEdit, onDelete }: {
     return <p className="text-xs text-[var(--muted)] italic">No data returned</p>;
   }
   return (
-    <div className="overflow-auto max-h-64 rounded-xl border border-[var(--line)]">
-      <table className="vps-table text-[11px] min-w-max">
-        <thead className="sticky top-0 bg-[var(--secondary)] z-10">
+    <div className="overflow-auto max-h-64 rounded-xl border border-[var(--line)] relative">
+      <table className="vps-table text-[11px] min-w-max w-full">
+        <thead className="sticky top-0 z-20 bg-[var(--secondary)]">
           <tr>
+            {canEdit && (
+              <th className="sticky left-0 z-30 px-2 py-2 border-b border-r border-[var(--line)] bg-[var(--secondary)] text-center w-14 shrink-0">
+                <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-wide">Act.</span>
+              </th>
+            )}
             {data.columns.map((col) => (
               <th key={col} className="px-3 py-2 text-left font-semibold text-[var(--muted)] uppercase tracking-wide whitespace-nowrap border-b border-[var(--line)]">
                 {col}
               </th>
             ))}
-            {isSql && <th className="px-3 py-2 border-b border-[var(--line)] text-right">Actions</th>}
           </tr>
         </thead>
         <tbody>
           {data.rows.length === 0 ? (
-            <tr><td colSpan={data.columns.length + (isSql ? 1 : 0)} className="text-center py-6 text-[var(--muted)] italic">No rows found</td></tr>
+            <tr>
+              <td colSpan={data.columns.length + (canEdit ? 1 : 0)} className="text-center py-6 text-[var(--muted)] italic">
+                No rows found
+              </td>
+            </tr>
           ) : (
             data.rows.map((row, i) => (
               <tr key={i} className="hover:bg-[var(--foreground)] transition-colors group">
-                {row.map((cell, j) => (
-                  <td key={j} className="px-3 py-2 font-mono max-w-[180px] truncate" title={String(cell ?? "")}>
-                    {cell === null ? <span className="text-[var(--muted)] italic">null</span> : String(cell)}
-                  </td>
-                ))}
-                {isSql && (
-                  <td className="px-3 py-1.5 text-right">
-                    <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                {canEdit && (
+                  <td className="sticky left-0 z-10 px-1.5 py-1.5 border-r border-[var(--line)] bg-[var(--background)] group-hover:bg-[var(--foreground)] transition-colors">
+                    <div className="flex items-center gap-0.5 justify-center">
                       <button
                         onClick={() => onEdit(row)}
-                        className="p-1 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors"
-                        title="Edit row"
+                        className="p-1 rounded hover:bg-blue-500/15 text-blue-400 transition-colors"
+                        title="Edit"
                       >
                         <Edit3 size={11} />
                       </button>
                       <button
                         onClick={() => onDelete(row)}
-                        className="p-1 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors"
-                        title="Delete row"
+                        className="p-1 rounded hover:bg-red-500/15 text-red-400 transition-colors"
+                        title="Delete"
                       >
                         <Trash size={11} />
                       </button>
                     </div>
                   </td>
                 )}
+                {row.map((cell, j) => (
+                  <td key={j} className="px-3 py-2 font-mono max-w-[200px] truncate" title={String(cell ?? "")}>
+                    {cell === null ? <span className="text-[var(--muted)] italic">null</span> : String(cell)}
+                  </td>
+                ))}
               </tr>
             ))
           )}
