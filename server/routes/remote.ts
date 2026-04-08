@@ -4,6 +4,9 @@ import { runSSHCommand, runSSHScript, getRemoteSystemInfo, SSHConnection } from 
 
 const router = Router();
 
+// Prepend active nvm bin dir to PATH so nvm-installed tools (pm2, node, npm) are found
+const NVM_PATH_SETUP = `NVM_ACTIVE=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$NVM_ACTIVE" ] && export PATH="$HOME/.nvm/versions/node/$NVM_ACTIVE/bin:$PATH"`;
+
 async function getServerConn(id: string): Promise<SSHConnection | null> {
   const r = await pool.query('SELECT * FROM vps_connections WHERE id = $1', [id]);
   if (!r.rows.length) return null;
@@ -50,7 +53,7 @@ router.get('/:id/pm2', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const { stdout } = await runSSHCommand(conn, 'pm2 jlist --no-color 2>/dev/null || echo "[]"');
+    const { stdout } = await runSSHCommand(conn, `${NVM_PATH_SETUP}; pm2 jlist --no-color 2>/dev/null || echo "[]"`);
     let processes = [];
     try { processes = JSON.parse(stdout.trim() || '[]'); } catch { processes = []; }
     const data = processes.map((p: any) => ({
@@ -75,7 +78,7 @@ router.post('/:id/pm2/:procId/:action', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    await runSSHCommand(conn, `pm2 ${action} ${procId} --no-color 2>&1 && pm2 save --no-color 2>&1`);
+    await runSSHCommand(conn, `${NVM_PATH_SETUP}; pm2 ${action} ${procId} --no-color 2>&1 && pm2 save --no-color 2>&1`);
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -90,7 +93,7 @@ router.get('/:id/pm2/:procId/logs', async (req, res) => {
     const procId = req.params.procId;
 
     // Use node (always present with PM2) to read log files directly — avoids pm2 logs hanging
-    const script = `node -e "
+    const script = `${NVM_PATH_SETUP}; node -e "
 const { execSync } = require('child_process');
 try {
   const procs = JSON.parse(execSync('pm2 jlist --no-color 2>/dev/null || echo []').toString());
@@ -138,7 +141,7 @@ router.post('/:id/pm2/terminal', async (req, res) => {
         (parts.find((p, i) => i > 0 && /^\d+$/.test(p)) || parts[parts.indexOf('--lines') + 1] || ''),
         10
       ) || 100;
-      const script = `node -e "
+      const script = `${NVM_PATH_SETUP}; node -e "
 const { execSync } = require('child_process');
 try {
   const procs = JSON.parse(execSync('pm2 jlist --no-color 2>/dev/null || echo []').toString());
@@ -163,7 +166,7 @@ try {
       return res.json({ success: true, data: stdout || '(no logs)' });
     }
 
-    const { stdout, stderr } = await runSSHCommand(conn, `FORCE_COLOR=3 COLORTERM=truecolor pm2 ${args} 2>&1`);
+    const { stdout, stderr } = await runSSHCommand(conn, `${NVM_PATH_SETUP}; FORCE_COLOR=3 COLORTERM=truecolor pm2 ${args} 2>&1`);
     res.json({ success: true, data: stdout || stderr || '(no output)' });
   } catch (e: any) {
     res.json({ success: true, data: e.message });
@@ -1027,14 +1030,22 @@ router.get('/:id/users', async (req, res) => {
 });
 
 router.post('/:id/users', async (req, res) => {
-  const { username, password, shell = '/bin/bash', sudo = false } = req.body;
+  const { username, password, shell = '/bin/bash', sudo = false, type = 'regular', homeDir } = req.body;
   if (!username || !password) return res.status(400).json({ success: false, error: 'username and password required' });
   const safeUser = username.replace(/[^a-z0-9_-]/g, '');
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    let cmd = `useradd -m -s ${shell} ${safeUser} 2>&1 && echo '${safeUser}:${password.replace(/'/g, "'\\''")}' | chpasswd 2>&1`;
-    if (sudo) cmd += ` && usermod -aG sudo ${safeUser} 2>&1`;
+    let cmd: string;
+    if (type === 'sub') {
+      const subShell = '/usr/sbin/nologin';
+      const subHome = homeDir || `/home/${safeUser}`;
+      cmd = `useradd -m -d ${subHome} -s ${subShell} ${safeUser} 2>&1 && echo '${safeUser}:${password.replace(/'/g, "'\\''")}' | chpasswd 2>&1`;
+      cmd += ` && chmod 750 ${subHome} 2>&1 || true`;
+    } else {
+      cmd = `useradd -m -s ${shell} ${safeUser} 2>&1 && echo '${safeUser}:${password.replace(/'/g, "'\\''")}' | chpasswd 2>&1`;
+      if (sudo) cmd += ` && usermod -aG sudo ${safeUser} 2>&1`;
+    }
     const { stdout, stderr } = await runSSHCommand(conn, cmd);
     res.json({ success: true, output: stdout + stderr });
   } catch (e: any) {
