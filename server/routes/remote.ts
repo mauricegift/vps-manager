@@ -698,9 +698,18 @@ router.post('/:id/databases/:type/:dbname/change-password', async (req, res) => 
       ].join(' ');
       cmd = `mysql -u root -e "${sql}" 2>&1`;
     } else if (type === 'postgresql') {
-      // Create/update a role scoped to this database
-      const sql = `DO \\$\\$BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${safeUser}') THEN CREATE USER \\"${safeUser}\\" WITH PASSWORD '${safePwd}'; ELSE ALTER USER \\"${safeUser}\\" WITH PASSWORD '${safePwd}'; END IF; END\\$\\$; GRANT ALL PRIVILEGES ON DATABASE \\"${dbname}\\" TO \\"${safeUser}\\";`;
-      cmd = `su - postgres -c "psql -c \\"${sql}\\""  2>&1`;
+      // Try ALTER first (user exists), fall back to CREATE, then GRANT
+      const alterCmd = `su - postgres -c "psql -c \\"ALTER USER ${safeUser} WITH PASSWORD '${safePwd}';\\""  2>&1`;
+      const createCmd = `su - postgres -c "psql -c \\"CREATE USER ${safeUser} WITH PASSWORD '${safePwd}';\\""  2>&1`;
+      const grantCmd = `su - postgres -c "psql -c \\"GRANT ALL PRIVILEGES ON DATABASE ${dbname} TO ${safeUser};\\""  2>&1`;
+      const { code: alterCode } = await runSSHCommand(conn, alterCmd);
+      if (alterCode !== 0) {
+        const { code: createCode, stderr: createErr, stdout: createOut } = await runSSHCommand(conn, createCmd);
+        if (createCode !== 0) return res.status(500).json({ success: false, error: createErr || createOut || 'Failed to create PostgreSQL user' });
+      }
+      const { code: grantCode, stderr: grantErr } = await runSSHCommand(conn, grantCmd);
+      if (grantCode !== 0) return res.status(500).json({ success: false, error: grantErr || 'Failed to grant privileges' });
+      return res.json({ success: true, username: safeUser });
     } else if (type === 'redis') {
       cmd = `redis-cli CONFIG SET requirepass '${safePwdShell}' 2>&1`;
     } else {
