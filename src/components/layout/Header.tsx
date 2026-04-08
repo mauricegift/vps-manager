@@ -2,7 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Server, Container, Database,
   FolderOpen, Terminal, Menu, Activity, Globe, Sun, Moon,
-  Unplug, Wifi, Sparkles
+  Unplug, Wifi, Sparkles, Shield
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { useRemoteServer } from "@/context/RemoteServerContext";
@@ -14,6 +14,7 @@ const nav = [
   { path: "/databases", label: "Databases", icon: Database },
   { path: "/files", label: "Files", icon: FolderOpen },
   { path: "/terminal", label: "Terminal", icon: Terminal },
+  { path: "/nginx", label: "Nginx", icon: Shield },
   { path: "/extras", label: "Extras", icon: Sparkles },
   { path: "/servers", label: "Servers", icon: Globe },
 ];
