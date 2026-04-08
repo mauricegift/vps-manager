@@ -663,6 +663,41 @@ router.delete('/:id/databases/:type/:dbName', async (req, res) => {
   }
 });
 
+// ── Remote DB: change password ────────────────────────────────────────────────
+router.post('/:id/databases/:type/:dbname/change-password', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const { type, dbname } = req.params;
+    const { password, username } = req.body;
+    if (!password) return res.status(400).json({ success: false, error: 'Password is required' });
+    const safePwd = password.replace(/'/g, "''");
+    const safePwdMongo = password.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const safePwdShell = password.replace(/'/g, "'\\''");
+
+    let cmd = '';
+    if (type === 'mongodb') {
+      const user = (username || 'root').replace(/[^a-zA-Z0-9_]/g, '');
+      cmd = `mongosh --quiet admin --eval 'db.updateUser("${user}", {pwd: "${safePwdMongo}"})' 2>&1`;
+    } else if (type === 'mysql' || type === 'mariadb') {
+      const user = (username || 'root').replace(/[^a-zA-Z0-9_]/g, '');
+      cmd = `mysql -u root -e "ALTER USER '${user}'@'%' IDENTIFIED BY '${safePwd}'; ALTER USER '${user}'@'localhost' IDENTIFIED BY '${safePwd}'; FLUSH PRIVILEGES;" 2>&1`;
+    } else if (type === 'postgresql') {
+      const user = (username || 'postgres').replace(/[^a-zA-Z0-9_]/g, '');
+      cmd = `su - postgres -c "psql -c \\"ALTER USER ${user} WITH PASSWORD '${safePwd}';\\""  2>&1`;
+    } else if (type === 'redis') {
+      cmd = `redis-cli CONFIG SET requirepass '${safePwdShell}' 2>&1`;
+    } else {
+      return res.status(400).json({ success: false, error: 'Unsupported database type' });
+    }
+    const { stdout, stderr, code } = await runSSHCommand(conn, cmd);
+    if (code !== 0) return res.status(500).json({ success: false, error: stderr || stdout || 'Password change failed' });
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Remote Extras: software status ───────────────────────────────────────────
 router.get('/:id/extras', async (req, res) => {
   try {
