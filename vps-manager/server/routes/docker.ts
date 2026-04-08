@@ -47,7 +47,12 @@ function parsePorts(ports: string) {
 }
 
 router.post('/containers/:id/start', async (req, res) => {
-  try { await dockerCmd(`start ${req.params.id}`); res.json({ success: true }); }
+  try {
+    await dockerCmd(`start ${req.params.id}`);
+    // Auto-enable docker to start on system boot
+    execAsync('systemctl enable docker 2>/dev/null').catch(() => {});
+    res.json({ success: true });
+  }
   catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
