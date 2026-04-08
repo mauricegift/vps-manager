@@ -255,6 +255,42 @@ router.delete('/:id/files', async (req, res) => {
   }
 });
 
+// ── Zip & download a file or folder from remote ───────────────────────────────
+router.get('/:id/files/zip-download', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const targetPath = (req.query.path as string || '').trim();
+    if (!targetPath) return res.status(400).json({ success: false, error: 'path required' });
+
+    const tmpZip = `/tmp/vpm_dl_${Date.now()}.zip`;
+    const baseName = targetPath.split('/').filter(Boolean).pop() || 'download';
+    const parentDir = targetPath.split('/').slice(0, -1).join('/') || '/';
+
+    // Create zip on remote (zip the target relative to its parent so paths are clean)
+    const { stderr: zipErr, code: zipCode } = await runSSHCommand(conn,
+      `cd ${JSON.stringify(parentDir)} && zip -r ${JSON.stringify(tmpZip)} ${JSON.stringify(baseName)} 2>&1; echo "_EXIT_$?"`
+    );
+
+    // Read zip as base64 then delete temp file
+    const { stdout: b64, code: readCode } = await runSSHCommand(conn,
+      `base64 ${JSON.stringify(tmpZip)} && rm -f ${JSON.stringify(tmpZip)}`
+    );
+
+    if (readCode !== 0 || !b64.trim()) {
+      return res.status(500).json({ success: false, error: 'Failed to create zip on remote server' });
+    }
+
+    const zipBuffer = Buffer.from(b64.trim(), 'base64');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.zip"`);
+    res.setHeader('Content-Length', zipBuffer.length);
+    res.send(zipBuffer);
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Exec (terminal) ───────────────────────────────────────────────────────────
 router.post('/:id/exec', async (req, res) => {
   try {
