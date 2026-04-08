@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client:delayed\"",
-    "client": "vite --port 5000",
-    "client:delayed": "bash -c 'until curl -sf http://localhost:5756/api/health > /dev/null 2>&1; do sleep 0.4; done && npx vite --port 5000'",
+    "client": "vite --port 5758",
+    "client:delayed": "bash -c 'until curl -sf http://localhost:5756/api/health > /dev/null 2>&1; do sleep 0.4; done && npx vite --port 5758'",
     "server": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
