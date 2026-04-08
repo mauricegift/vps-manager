@@ -3,12 +3,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Shield, RefreshCw, CheckCircle, XCircle, Play, RotateCcw,
   Plus, Edit3, Trash2, Power, PowerOff, Lock, AlertTriangle,
-  ChevronRight, Copy, Check, Terminal
+  Copy, Check, Terminal, Server
 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
 import { toast } from "react-toastify";
 import { useTheme } from "@/context/ThemeContext";
+import { useRemoteServer } from "@/context/RemoteServerContext";
 
 type Tab = "configs" | "certs";
 
@@ -34,9 +35,13 @@ const DEFAULT_CONFIG = (name: string) =>
 }`;
 
 export default function NginxPage() {
-  const qc = useQueryClient();
   const { theme } = useTheme();
+  const { activeServer } = useRemoteServer();
   const dark = theme === "dark";
+
+  // Compute base URL — switches between local and remote transparently
+  const base = activeServer ? `/remote/${activeServer.id}/nginx` : "/nginx";
+  const serverId = activeServer?.id ?? "local";
 
   const [tab, setTab] = useState<Tab>("configs");
   const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
@@ -46,7 +51,6 @@ export default function NginxPage() {
   const [newConfigModal, setNewConfigModal] = useState(false);
   const [newConfigName, setNewConfigName] = useState("");
   const [deleteConfig, setDeleteConfig] = useState<string | null>(null);
-  const [savingConfig, setSavingConfig] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -56,30 +60,30 @@ export default function NginxPage() {
   const [deleteCert, setDeleteCert] = useState<string | null>(null);
   const [renewingCert, setRenewingCert] = useState<string | null>(null);
 
-  // Status
+  // Status — refetches when active server changes
   const { data: status, refetch: refetchStatus } = useQuery<NginxStatus>({
-    queryKey: ["nginx-status"],
-    queryFn: () => api.get("/nginx/status").then(r => r.data),
+    queryKey: ["nginx-status", serverId],
+    queryFn: () => api.get(`${base}/status`).then(r => r.data),
     refetchInterval: 30000,
   });
 
   // Configs
   const { data: configs = [], refetch: refetchConfigs, isLoading: loadingConfigs } = useQuery<NginxConfig[]>({
-    queryKey: ["nginx-configs"],
-    queryFn: () => api.get("/nginx/configs").then(r => r.data.data),
+    queryKey: ["nginx-configs", serverId],
+    queryFn: () => api.get(`${base}/configs`).then(r => r.data.data),
     enabled: tab === "configs",
   });
 
   // Certs
   const { data: certsData, refetch: refetchCerts, isLoading: loadingCerts } = useQuery<{ data: NginxCert[]; raw: string }>({
-    queryKey: ["nginx-certs"],
-    queryFn: () => api.get("/nginx/certs").then(r => r.data),
+    queryKey: ["nginx-certs", serverId],
+    queryFn: () => api.get(`${base}/certs`).then(r => r.data),
     enabled: tab === "certs",
   });
   const certs = certsData?.data ?? [];
 
   const testMutation = useMutation({
-    mutationFn: () => api.post("/nginx/test"),
+    mutationFn: () => api.post(`${base}/test`),
     onSuccess: (r) => {
       setOutputModal({ title: "Nginx Config Test", output: r.data.output });
       refetchStatus();
@@ -87,7 +91,7 @@ export default function NginxPage() {
   });
 
   const reloadMutation = useMutation({
-    mutationFn: () => api.post("/nginx/reload"),
+    mutationFn: () => api.post(`${base}/reload`),
     onSuccess: (r) => {
       toast.success("Nginx reloaded");
       setOutputModal({ title: "Nginx Reload", output: r.data.output });
@@ -97,7 +101,7 @@ export default function NginxPage() {
   });
 
   const restartMutation = useMutation({
-    mutationFn: () => api.post("/nginx/restart"),
+    mutationFn: () => api.post(`${base}/restart`),
     onSuccess: (r) => {
       toast.success("Nginx restarted");
       setOutputModal({ title: "Nginx Restart", output: r.data.output });
@@ -108,7 +112,7 @@ export default function NginxPage() {
 
   const toggleMutation = useMutation({
     mutationFn: ({ name, enable }: { name: string; enable: boolean }) =>
-      api.post(`/nginx/configs/${name}/${enable ? "enable" : "disable"}`),
+      api.post(`${base}/configs/${name}/${enable ? "enable" : "disable"}`),
     onSuccess: (r, { enable, name }) => {
       toast.success(`${name} ${enable ? "enabled" : "disabled"}`);
       if (r.data.output) setOutputModal({ title: `${enable ? "Enable" : "Disable"}: ${name}`, output: r.data.output });
@@ -118,14 +122,14 @@ export default function NginxPage() {
   });
 
   const deleteConfigMutation = useMutation({
-    mutationFn: (name: string) => api.delete(`/nginx/configs/${name}`),
+    mutationFn: (name: string) => api.delete(`${base}/configs/${name}`),
     onSuccess: (_, name) => { toast.success(`${name} deleted`); setDeleteConfig(null); refetchConfigs(); },
     onError: () => toast.error("Delete failed"),
   });
 
   const newConfigMutation = useMutation({
     mutationFn: ({ name, content }: { name: string; content: string }) =>
-      api.post("/nginx/configs", { name, content }),
+      api.post(`${base}/configs`, { name, content }),
     onSuccess: (_, { name }) => {
       toast.success(`${name} created`);
       setNewConfigModal(false);
@@ -137,14 +141,14 @@ export default function NginxPage() {
 
   const saveConfigMutation = useMutation({
     mutationFn: ({ name, content }: { name: string; content: string }) =>
-      api.put(`/nginx/configs/${name}`, { content }),
+      api.put(`${base}/configs/${name}`, { content }),
     onSuccess: (_, { name }) => { toast.success(`${name} saved`); setEditConfig(null); },
     onError: () => toast.error("Save failed"),
   });
 
   const issueMutation = useMutation({
     mutationFn: (form: typeof issueForm) =>
-      api.post("/nginx/certs/issue", {
+      api.post(`${base}/certs/issue`, {
         domains: form.domains.split(/[\s,]+/).filter(Boolean),
         email: form.email,
         method: form.method,
@@ -161,7 +165,7 @@ export default function NginxPage() {
   });
 
   const deleteCertMutation = useMutation({
-    mutationFn: (name: string) => api.delete(`/nginx/certs/${name}`),
+    mutationFn: (name: string) => api.delete(`${base}/certs/${name}`),
     onSuccess: (r, name) => {
       toast.success(`${name} deleted`);
       setDeleteCert(null);
@@ -172,9 +176,8 @@ export default function NginxPage() {
   });
 
   async function openEdit(name: string) {
-    setSavingConfig(false);
     try {
-      const r = await api.get(`/nginx/configs/${name}`);
+      const r = await api.get(`${base}/configs/${name}`);
       setEditContent(r.data.content);
       setEditConfig({ name, content: r.data.content });
     } catch { toast.error("Failed to load config"); }
@@ -183,7 +186,7 @@ export default function NginxPage() {
   async function renewCert(name: string) {
     setRenewingCert(name);
     try {
-      const r = await api.post("/nginx/certs/renew", { name });
+      const r = await api.post(`${base}/certs/renew`, { name });
       setOutputModal({ title: `Renew: ${name}`, output: r.data.output });
       if (!r.data.ok) toast.warning("Renewal may have failed — check output");
       else toast.success(`${name} renewed`);
@@ -195,7 +198,7 @@ export default function NginxPage() {
   async function renewAll() {
     setRenewingCert("__all__");
     try {
-      const r = await api.post("/nginx/certs/renew", {});
+      const r = await api.post(`${base}/certs/renew`, {});
       setOutputModal({ title: "Renew All Certificates", output: r.data.output });
       toast.success("Renewal completed");
       refetchCerts();
@@ -203,21 +206,27 @@ export default function NginxPage() {
     finally { setRenewingCert(null); }
   }
 
-  const cardBorder = dark ? "border-[var(--line)]" : "border-[var(--line)]";
-  const termBg  = dark ? "#111" : "#f5f5f5";
-  const termFg  = dark ? "#4ec994" : "#16803c";
-  const termBorder = dark ? "#222" : "#d1d5db";
+  const termBg     = dark ? "#111"    : "#f5f5f5";
+  const termFg     = dark ? "#4ec994" : "#16803c";
+  const termBorder = dark ? "#222"    : "#d1d5db";
 
   return (
     <section className="main py-6 space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Shield size={22} className="text-[var(--accent)]" />
-            Nginx & SSL
+            {activeServer ? `Nginx & SSL · ${activeServer.name}` : "Nginx & SSL"}
           </h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">Manage nginx configs and Let's Encrypt certificates</p>
+          {activeServer ? (
+            <p className="text-sm text-[var(--muted)] mt-0.5 flex items-center gap-1.5">
+              <Server size={12} />
+              Remote · {activeServer.ip}
+            </p>
+          ) : (
+            <p className="text-sm text-[var(--muted)] mt-0.5">Manage nginx configs and Let's Encrypt certificates</p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -238,14 +247,14 @@ export default function NginxPage() {
             disabled={reloadMutation.isPending}
             className="btn-secondary flex items-center gap-1.5 text-sm px-3 py-1.5"
           >
-            <RotateCcw size={13} /> Reload
+            <RotateCcw size={13} /> {reloadMutation.isPending ? "Reloading..." : "Reload"}
           </button>
           <button
             onClick={() => restartMutation.mutate()}
             disabled={restartMutation.isPending}
             className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5"
           >
-            <Play size={13} /> Restart
+            <Play size={13} /> {restartMutation.isPending ? "Restarting..." : "Restart"}
           </button>
         </div>
       </div>
@@ -262,7 +271,7 @@ export default function NginxPage() {
             </span>
             {status.version && (
               <span className="text-xs text-[var(--muted)] font-mono">
-                {status.version.match(/[\d.]+/)?.[0]}
+                {status.version.match(/[\d]+\.[\d.]+/)?.[0]}
               </span>
             )}
           </div>
@@ -277,9 +286,9 @@ export default function NginxPage() {
               ? <CheckCircle size={15} className="text-green-500" />
               : <AlertTriangle size={15} className="text-amber-500" />}
             <span className="text-sm font-medium">{status.configOk ? "Config OK" : "Config error"}</span>
-            {!status.configOk && (
+            {!status.configOk && status.testOutput && (
               <button
-                onClick={() => setOutputModal({ title: "Config Error", output: status.testOutput })}
+                onClick={() => setOutputModal({ title: "Config Error Details", output: status.testOutput })}
                 className="text-xs text-[var(--accent)] hover:underline"
               >view</button>
             )}
@@ -309,7 +318,9 @@ export default function NginxPage() {
       {tab === "configs" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-[var(--muted)]">{configs.length} configuration file{configs.length !== 1 ? "s" : ""}</p>
+            <p className="text-sm text-[var(--muted)]">
+              {configs.length} configuration file{configs.length !== 1 ? "s" : ""}
+            </p>
             <button
               onClick={() => setNewConfigModal(true)}
               className="btn-primary flex items-center gap-1.5 text-sm px-3 py-1.5"
@@ -331,7 +342,7 @@ export default function NginxPage() {
           ) : (
             <div className="space-y-2">
               {configs.map(cfg => (
-                <div key={cfg.name} className={`card p-4 flex items-center gap-3 ${cardBorder}`}>
+                <div key={cfg.name} className="card p-4 flex items-center gap-3">
                   <div className={`w-2 h-2 rounded-full shrink-0 ${cfg.enabled ? "bg-green-500" : "bg-zinc-400"}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -350,8 +361,7 @@ export default function NginxPage() {
                     <button
                       onClick={() => toggleMutation.mutate({ name: cfg.name, enable: !cfg.enabled })}
                       disabled={toggleMutation.isPending}
-                      title={cfg.enabled ? "Disable" : "Enable"}
-                      className={`p-1.5 rounded-lg transition-colors text-xs font-medium flex items-center gap-1 px-2.5 ${
+                      className={`p-1.5 rounded-lg text-xs font-medium flex items-center gap-1 px-2.5 transition-colors ${
                         cfg.enabled
                           ? "bg-amber-500/10 text-amber-600 hover:bg-amber-500/20"
                           : "bg-green-500/10 text-green-600 hover:bg-green-500/20"
@@ -386,7 +396,9 @@ export default function NginxPage() {
       {tab === "certs" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <p className="text-sm text-[var(--muted)]">{certs.length} certificate{certs.length !== 1 ? "s" : ""}</p>
+            <p className="text-sm text-[var(--muted)]">
+              {certs.length} certificate{certs.length !== 1 ? "s" : ""}
+            </p>
             <div className="flex gap-2">
               <button
                 onClick={renewAll}
@@ -499,8 +511,7 @@ export default function NginxPage() {
                 className="w-full font-mono text-[12px] leading-relaxed rounded-xl p-4 pr-10 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] resize-none"
                 style={{
                   background: termBg, color: dark ? "#cdd6f4" : "#1a1a1a",
-                  border: `1px solid ${termBorder}`,
-                  minHeight: "400px",
+                  border: `1px solid ${termBorder}`, minHeight: "400px",
                 }}
                 spellCheck={false}
               />
@@ -530,6 +541,7 @@ export default function NginxPage() {
               onChange={e => setNewConfigName(e.target.value)}
               placeholder="mysite.com"
               autoFocus
+              onKeyDown={e => { if (e.key === "Enter" && newConfigName.trim()) newConfigMutation.mutate({ name: newConfigName, content: DEFAULT_CONFIG(newConfigName) }); }}
             />
           </div>
           <p className="text-xs text-[var(--muted)]">A proxy-pass template will be pre-filled. You can edit it after creation.</p>
@@ -551,8 +563,9 @@ export default function NginxPage() {
         {deleteConfig && (
           <div className="space-y-4">
             <p className="text-sm text-[var(--muted)]">
-              Are you sure you want to delete <span className="font-mono font-medium text-[var(--main)]">{deleteConfig}</span>?
-              This will also remove the symlink from sites-enabled.
+              Delete <span className="font-mono font-medium text-[var(--main)]">{deleteConfig}</span>?{" "}
+              This also removes the symlink from sites-enabled
+              {activeServer ? ` on ${activeServer.name}` : ""}.
             </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleteConfig(null)} className="btn-secondary px-4 py-2 text-sm">Cancel</button>
@@ -571,6 +584,12 @@ export default function NginxPage() {
       {/* ── Issue Certificate Modal ── */}
       <Modal isOpen={issueModal} onClose={() => setIssueModal(false)} title="Issue SSL Certificate" size="lg">
         <div className="space-y-4">
+          {activeServer && (
+            <div className="flex items-center gap-2 text-xs text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl px-3 py-2">
+              <Server size={12} />
+              Issuing on remote server: <span className="font-medium text-[var(--main)]">{activeServer.name} ({activeServer.ip})</span>
+            </div>
+          )}
           <div>
             <label className="block text-xs text-[var(--muted)] mb-1.5">Domains (space or comma separated)</label>
             <input
@@ -621,7 +640,10 @@ export default function NginxPage() {
           )}
           <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-400 flex gap-2">
             <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-            <span>Make sure port 80 is open and your domain's DNS points to this server. Standalone mode temporarily stops nginx.</span>
+            <span>
+              Port 80 must be open and DNS must point to {activeServer ? activeServer.ip : "this server"}.
+              Standalone mode temporarily stops nginx.
+            </span>
           </div>
           <div className="flex justify-end gap-2">
             <button onClick={() => setIssueModal(false)} className="btn-secondary px-4 py-2 text-sm">Cancel</button>
@@ -641,8 +663,8 @@ export default function NginxPage() {
         {deleteCert && (
           <div className="space-y-4">
             <p className="text-sm text-[var(--muted)]">
-              Permanently delete certificate <span className="font-medium text-[var(--main)]">{deleteCert}</span>?
-              This cannot be undone.
+              Permanently delete <span className="font-medium text-[var(--main)]">{deleteCert}</span>
+              {activeServer ? ` on ${activeServer.name}` : ""}? This cannot be undone.
             </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleteCert(null)} className="btn-secondary px-4 py-2 text-sm">Cancel</button>
