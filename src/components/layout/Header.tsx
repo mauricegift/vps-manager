@@ -46,7 +46,7 @@ export default function Header({ onMenuToggle }: Props) {
       />
 
       <div className="main">
-        <div className="flex items-center justify-between h-16 gap-3">
+        <div className="flex items-center justify-between h-12 gap-3">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2.5 group shrink-0">
             <div
