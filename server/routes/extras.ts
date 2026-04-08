@@ -550,6 +550,9 @@ router.patch('/users/:username', async (req, res) => {
 router.delete('/users/:username', async (req, res) => {
   const { username } = req.params;
   const safeUser = username.replace(/[^a-z0-9_-]/g, '');
+  if (safeUser === 'root') {
+    return res.status(403).json({ success: false, error: 'The root user cannot be deleted.' });
+  }
   const { keepHome = false } = req.body;
   try {
     const flag = keepHome ? '' : '-r';
