@@ -432,7 +432,7 @@ router.get('/mongodb/:dbname/tables', async (req, res) => {
     for (const name of names) {
       let rows: number | null = null;
       try {
-        const cnt = await mongoshRun(db, `db.${name}.estimatedDocumentCount()`);
+        const cnt = await mongoshRun(db, `db.getCollection("${name}").estimatedDocumentCount()`);
         const n = parseInt(cnt.trim());
         if (!isNaN(n)) rows = n;
       } catch {}
@@ -447,9 +447,9 @@ router.get('/mongodb/:dbname/:collection/data', async (req, res) => {
     const { dbname, collection } = req.params;
     const safeColl = collection.replace(/[^a-zA-Z0-9_]/g, '');
     const offset = parseInt(req.query.offset as string) || 0;
-    const cntOut = await mongoshRun(dbname, `db.${safeColl}.countDocuments()`);
+    const cntOut = await mongoshRun(dbname, `db.getCollection("${safeColl}").countDocuments()`);
     const total = parseInt(cntOut.trim()) || 0;
-    const dataOut = await mongoshRun(dbname, `JSON.stringify(db.${safeColl}.find().skip(${offset}).limit(50).toArray())`);
+    const dataOut = await mongoshRun(dbname, `JSON.stringify(db.getCollection("${safeColl}").find().skip(${offset}).limit(50).toArray())`);
     let columns: string[] = [];
     let rows: any[][] = [];
     try {
