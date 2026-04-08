@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   Download, RefreshCw, ArrowUpCircle, CheckCircle2, XCircle,
   UserPlus, Edit3, Trash2, Eye, EyeOff, Users, Package, ShieldAlert, Save,
-  RefreshCcw, Layers, Server, Cpu, Wrench, Globe, MonitorSmartphone
+  RefreshCcw, Layers, Server, Cpu, Wrench, Globe, MonitorSmartphone, Cloud, Key, Loader2
 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -16,7 +16,7 @@ import { useRemoteServer } from "@/context/RemoteServerContext";
 const NODE_VERSIONS = ["18", "20", "22", "24"];
 
 type MainTab = "system" | "software" | "users";
-type SoftwareSubTab = "runtimes" | "servers" | "devtools" | "systools" | "browsers";
+type SoftwareSubTab = "runtimes" | "servers" | "devtools" | "systools" | "browsers" | "cloud";
 
 interface Tool {
   id: string; name: string; icon: string; description: string;
@@ -36,6 +36,7 @@ const SOFTWARE_GROUPS: { id: SoftwareSubTab; label: string; icon: React.ElementT
   { id: "devtools", label: "Dev Tools", icon: Wrench, ids: ["git", "curl", "wget", "rsync", "vim", "nvim"] },
   { id: "systools", label: "System Tools", icon: Layers, ids: ["htop", "tmux", "screen", "ufw", "fail2ban-client", "jq", "unzip"] },
   { id: "browsers", label: "Browsers", icon: Globe, ids: ["chrome"] },
+  { id: "cloud", label: "Cloud", icon: Cloud, ids: ["wrangler"] },
 ];
 
 const ALL_KNOWN_IDS = SOFTWARE_GROUPS.flatMap(g => g.ids);
@@ -235,6 +236,11 @@ export default function ExtrasPage() {
   const [sysUpdLoading, setSysUpdLoading] = useState<string | null>(null);
   const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
 
+  const [cfToken, setCfToken] = useState("");
+  const [cfAccountId, setCfAccountId] = useState("");
+  const [cfShowToken, setCfShowToken] = useState(false);
+  const [cfSaving, setCfSaving] = useState(false);
+
   const [userModal, setUserModal] = useState<"create" | "edit" | null>(null);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
@@ -265,6 +271,32 @@ export default function ExtrasPage() {
     staleTime: 10000,
     enabled: mainTab === "users",
   });
+
+  const cfCredsQuery = useQuery<{ apiToken: string; accountId: string }>({
+    queryKey: ["cf-creds"],
+    queryFn: () => api.get(`/extras/cloudflare/creds`).then(r => r.data.data),
+    staleTime: Infinity,
+    enabled: !activeServer,
+  });
+
+  useEffect(() => {
+    if (cfCredsQuery.data) {
+      setCfToken(cfCredsQuery.data.apiToken || "");
+      setCfAccountId(cfCredsQuery.data.accountId || "");
+    }
+  }, [cfCredsQuery.data]);
+
+  const saveCfCreds = async () => {
+    setCfSaving(true);
+    try {
+      await api.post(`/extras/cloudflare/creds`, { apiToken: cfToken, accountId: cfAccountId });
+      toast.success("Cloudflare credentials saved and persisted to ~/.bashrc");
+      qc.invalidateQueries({ queryKey: ["cf-creds"] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to save credentials");
+    }
+    setCfSaving(false);
+  };
 
   const handleInstall = async (tool: Tool, nodeVersion?: string) => {
     setOpLoading(`install-${tool.id}`);
@@ -508,6 +540,76 @@ export default function ExtrasPage() {
                     ))}
                   </div>
                 </>
+              )}
+              {subTab === "cloud" && !activeServer && (
+                <div className="glass-card p-5 space-y-4 border border-[var(--accent)]/20">
+                  <div className="flex items-center gap-2">
+                    <Key size={15} className="text-[var(--accent)]" />
+                    <h3 className="font-semibold text-sm">Cloudflare Credentials</h3>
+                    <span className="text-[10px] text-[var(--muted)] bg-[var(--foreground)] px-2 py-0.5 rounded-full border border-[var(--line)]">persists to ~/.bashrc</span>
+                  </div>
+                  <p className="text-[11px] text-[var(--muted)]">
+                    Store your Cloudflare API token and Account ID so <code className="font-mono bg-[var(--foreground)] px-1 py-0.5 rounded">wrangler</code> works in the terminal without re-entering credentials each time.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-[var(--muted)] mb-1.5 block">API Token</label>
+                      <div className="relative">
+                        <input
+                          type={cfShowToken ? "text" : "password"}
+                          value={cfToken}
+                          onChange={e => setCfToken(e.target.value)}
+                          placeholder="Your Cloudflare API token"
+                          className={inp}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setCfShowToken(s => !s)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--main)] transition-colors"
+                        >
+                          {cfShowToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-[var(--muted)] mb-1.5 block">Account ID <span className="text-[10px]">(optional)</span></label>
+                      <input
+                        value={cfAccountId}
+                        onChange={e => setCfAccountId(e.target.value)}
+                        placeholder="Your Cloudflare account ID"
+                        className={inp}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={saveCfCreds}
+                      disabled={cfSaving}
+                      className="flex items-center gap-2 px-4 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                    >
+                      {cfSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                      {cfSaving ? "Saving..." : "Save & Apply"}
+                    </button>
+                    {cfToken && (
+                      <button
+                        onClick={async () => {
+                          setCfToken(""); setCfAccountId("");
+                          await api.post(`/extras/cloudflare/creds`, { apiToken: "", accountId: "" });
+                          toast.success("Credentials cleared");
+                          qc.invalidateQueries({ queryKey: ["cf-creds"] });
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        Clear credentials
+                      </button>
+                    )}
+                  </div>
+                  {cfCredsQuery.data?.apiToken && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-green-400">
+                      <CheckCircle2 size={11} /> Credentials saved and active
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
