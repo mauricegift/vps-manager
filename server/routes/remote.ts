@@ -692,8 +692,8 @@ router.post('/:id/databases/:type/:dbname/change-password', async (req, res) => 
         `ALTER USER '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
         `CREATE USER IF NOT EXISTS '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
         `ALTER USER '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
-        `GRANT ALL PRIVILEGES ON \\`${dbname}\\`.* TO '${safeUser}'@'localhost';`,
-        `GRANT ALL PRIVILEGES ON \\`${dbname}\\`.* TO '${safeUser}'@'%';`,
+        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'localhost';`,
+        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'%';`,
         `FLUSH PRIVILEGES;`
       ].join(' ');
       cmd = `mysql -u root -e "${sql}" 2>&1`;
