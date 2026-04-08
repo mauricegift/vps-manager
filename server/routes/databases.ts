@@ -222,7 +222,14 @@ router.post('/:type/restart', async (req, res) => {
 const installCmds: Record<string, string> = {
   postgresql: 'apt-get install -y postgresql postgresql-contrib 2>&1 && systemctl enable postgresql && systemctl start postgresql 2>&1',
   mysql: 'apt-get install -y mysql-server 2>&1 && systemctl enable mysql && systemctl start mysql 2>&1',
-  mongodb: 'apt-get install -y mongodb-org 2>&1 || apt-get install -y mongodb 2>&1 && systemctl enable mongod && systemctl start mongod 2>&1',
+  mongodb: `export DEBIAN_FRONTEND=noninteractive && \
+CODENAME=$(lsb_release -cs 2>/dev/null || echo jammy) && \
+MV=$([ "$CODENAME" = "noble" ] && echo 8.0 || echo 7.0) && \
+curl -fsSL "https://www.mongodb.org/static/pgp/server-$MV.asc" | gpg -o "/usr/share/keyrings/mongodb-server-$MV.gpg" --dearmor 2>&1 && \
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-$MV.gpg ] https://repo.mongodb.org/apt/ubuntu $CODENAME/mongodb-org/$MV multiverse" > /etc/apt/sources.list.d/mongodb-org-$MV.list && \
+apt-get update -qq 2>&1 && \
+apt-get install -y mongodb-org 2>&1 && \
+systemctl enable mongod 2>&1 && systemctl start mongod 2>&1`,
   redis: 'apt-get install -y redis-server 2>&1 && systemctl enable redis-server && systemctl start redis-server 2>&1',
   mariadb: 'apt-get install -y mariadb-server 2>&1 && systemctl enable mariadb && systemctl start mariadb 2>&1',
 };
