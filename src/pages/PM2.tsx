@@ -66,7 +66,7 @@ export default function PM2Page() {
     queryFn: () => api.get(`${pfx}/pm2`).then((r) => r.data.data),
     refetchInterval: 8000,
     placeholderData: keepPreviousData,
-    enabled: versionInfo !== null,
+    enabled: !!versionInfo?.installed,
   });
 
   const mutation = useMutation({
@@ -155,7 +155,7 @@ export default function PM2Page() {
     { id: "terminal", label: "Terminal", icon: TerminalIcon },
   ];
 
-  const pm2NotInstalled = !versionLoading && versionInfo === null;
+  const pm2NotInstalled = !versionLoading && versionInfo !== undefined && !versionInfo?.installed;
 
   return (
     <section className="main space-y-6">
@@ -168,19 +168,18 @@ export default function PM2Page() {
             </h1>
             {versionLoading ? (
               <div className="w-4 h-4 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
-            ) : versionInfo?.version ? (
+            ) : versionInfo?.installed && versionInfo?.version ? (
               <div className="flex items-center gap-2">
                 <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-[var(--foreground)] border border-[var(--line)] text-[var(--muted)]">
                   v{versionInfo.version}
                 </span>
-                {versionInfo.updateAvailable && (
+                {versionInfo.updateAvailable ? (
                   <a href="/extras?tab=software&sub=runtimes" className="text-[10px] flex items-center gap-1 text-amber-400 hover:underline">
                     <ArrowUpCircle size={11} /> v{versionInfo.latestVersion} available
                   </a>
-                )}
-                {!versionInfo.updateAvailable && versionInfo.latestVersion && (
+                ) : versionInfo.latestVersion ? (
                   <span className="text-[10px] text-green-400">✓ up to date</span>
-                )}
+                ) : null}
               </div>
             ) : pm2NotInstalled ? (
               <span className="text-xs text-red-400 font-medium px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20">
