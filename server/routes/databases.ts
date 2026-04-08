@@ -562,4 +562,38 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
+// ── Delete Database ───────────────────────────────────────────────────────────
+router.delete('/postgresql/:dbname', async (req, res) => {
+  const db = req.params.dbname.replace(/['"`;]/g, '');
+  try {
+    await pgRun(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db}' AND pid <> pg_backend_pid()`, 'postgres');
+    await pgRun(`DROP DATABASE IF EXISTS "${db}"`, 'postgres');
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.delete('/mysql/:dbname', async (req, res) => {
+  const db = req.params.dbname.replace(/['"`;]/g, '');
+  try {
+    await mysqlRun(`DROP DATABASE IF EXISTS \`${db}\``);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.delete('/mariadb/:dbname', async (req, res) => {
+  const db = req.params.dbname.replace(/['"`;]/g, '');
+  try {
+    await mysqlRun(`DROP DATABASE IF EXISTS \`${db}\``);
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.delete('/mongodb/:dbname', async (req, res) => {
+  const db = req.params.dbname.replace(/['"`;]/g, '');
+  try {
+    await mongoshRun(db, 'db.dropDatabase()');
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
 export default router;
