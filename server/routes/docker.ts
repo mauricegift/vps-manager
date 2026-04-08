@@ -47,7 +47,12 @@ function parsePorts(ports: string) {
 }
 
 router.post('/containers/:id/start', async (req, res) => {
-  try { await dockerCmd(`start ${req.params.id}`); res.json({ success: true }); }
+  try {
+    await dockerCmd(`start ${req.params.id}`);
+    // Auto-enable docker to start on system boot
+    execAsync('systemctl enable docker 2>/dev/null').catch(() => {});
+    res.json({ success: true });
+  }
   catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
@@ -109,7 +114,21 @@ router.delete('/images/:id', async (req, res) => {
 
 router.post('/images/pull', async (req, res) => {
   try {
-    await execAsync(`docker pull ${req.body.image}`, { timeout: 120000 });
+    const { image, port, autoRun } = req.body;
+    if (!image) return res.status(400).json({ success: false, error: 'image is required' });
+    // Sanitise inputs
+    const safeImage = image.replace(/[^a-zA-Z0-9:.\-_/@]/g, '');
+    await execAsync(`docker pull ${safeImage}`, { timeout: 180000 });
+
+    if (autoRun && port) {
+      const safePort = port.replace(/[^0-9:]/g, '');
+      const containerName = safeImage.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/^_+|_+$/g, '');
+      await execAsync(
+        `docker run -d --name "${containerName}" -p ${safePort} --restart unless-stopped ${safeImage}`,
+        { timeout: 30000 }
+      );
+    }
+
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -168,6 +187,68 @@ router.post('/compose/:action', async (req, res) => {
       : `docker compose -f "${composePath}" restart`;
     await execAsync(cmd, { timeout: 60000 });
     res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Compose CRUD ─────────────────────────────────────────────────────────────
+router.get('/compose/read', async (req, res) => {
+  try {
+    const { path: filePath } = req.query as { path: string };
+    if (!filePath) return res.status(400).json({ success: false, error: 'path required' });
+    const { readFile } = await import('fs/promises');
+    const content = await readFile(filePath, 'utf-8');
+    res.json({ success: true, data: content });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.post('/compose/create', async (req, res) => {
+  try {
+    const { dir, yaml } = req.body;
+    if (!dir || !yaml) return res.status(400).json({ success: false, error: 'dir and yaml required' });
+    const { writeFile, mkdir } = await import('fs/promises');
+    await mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, 'docker-compose.yml');
+    await writeFile(filePath, yaml, 'utf-8');
+    await execAsync(`docker compose -f "${filePath}" up -d`, { timeout: 120000 });
+    res.json({ success: true, data: { path: filePath } });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.post('/compose/save', async (req, res) => {
+  try {
+    const { path: filePath, yaml } = req.body;
+    if (!filePath || !yaml) return res.status(400).json({ success: false, error: 'path and yaml required' });
+    const { writeFile } = await import('fs/promises');
+    await writeFile(filePath, yaml, 'utf-8');
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.get('/compose/logs', async (req, res) => {
+  try {
+    const { path: composePath } = req.query as { path: string };
+    if (!composePath) return res.status(400).json({ success: false, error: 'path required' });
+    const { stdout } = await execAsync(`docker compose -f "${composePath}" logs --tail 300 2>&1`);
+    res.json({ success: true, data: stdout });
+  } catch (e: any) { res.json({ success: true, data: e.message }); }
+});
+
+// ── Dockerfile Build ─────────────────────────────────────────────────────────
+router.post('/images/build', async (req, res) => {
+  try {
+    const { name, tag = 'latest', context = '/tmp', dockerfile } = req.body;
+    if (!name || !dockerfile) return res.status(400).json({ success: false, error: 'name and dockerfile required' });
+    const { writeFile, mkdir } = await import('fs/promises');
+    const buildDir = path.join('/tmp', `docker-build-${Date.now()}`);
+    await mkdir(buildDir, { recursive: true });
+    await writeFile(path.join(buildDir, 'Dockerfile'), dockerfile, 'utf-8');
+    const contextDir = context && existsSync(context) ? context : buildDir;
+    const fullTag = `${name}:${tag}`;
+    const { stdout } = await execAsync(
+      `docker build -t "${fullTag}" -f "${path.join(buildDir, 'Dockerfile')}" "${contextDir}" 2>&1`,
+      { timeout: 300000 }
+    );
+    res.json({ success: true, data: stdout });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
