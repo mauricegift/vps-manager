@@ -138,11 +138,25 @@ export default function DatabasesPage() {
     try {
       let output = "";
       const pkgMap: Record<string, string> = {
-        postgresql: "postgresql", mysql: "mysql-server", mongodb: "mongodb",
+        postgresql: "postgresql", mysql: "mysql-server",
         redis: "redis-server", sqlite: "sqlite3", mariadb: "mariadb-server",
       };
       const pkg = pkgMap[db.type] || db.type;
       let installCmd = `DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg} 2>&1`;
+
+      // MongoDB requires the official repo setup first
+      if (db.type === "mongodb") {
+        installCmd = [
+          `export DEBIAN_FRONTEND=noninteractive`,
+          `CODENAME=$(lsb_release -cs 2>/dev/null || echo jammy)`,
+          `MV=$([ "$CODENAME" = "noble" ] && echo 8.0 || echo 7.0)`,
+          `curl -fsSL "https://www.mongodb.org/static/pgp/server-$MV.asc" | gpg -o "/usr/share/keyrings/mongodb-server-$MV.gpg" --dearmor 2>&1`,
+          `echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-$MV.gpg ] https://repo.mongodb.org/apt/ubuntu $CODENAME/mongodb-org/$MV multiverse" > /etc/apt/sources.list.d/mongodb-org-$MV.list`,
+          `apt-get update -qq 2>&1`,
+          `apt-get install -y mongodb-org 2>&1`,
+          `systemctl enable mongod 2>&1 && systemctl start mongod 2>&1`,
+        ].join(" && ");
+      }
 
       // Pre-seed password for MySQL
       if ((db.type === "mysql" || db.type === "mariadb") && opts?.password) {
@@ -154,7 +168,15 @@ export default function DatabasesPage() {
 
       if (activeServer) {
         const r = await api.post(`/remote/${activeServer.id}/exec`, { command: installCmd });
-        output = r.data.data?.stdout || r.data.data || "";
+        const data = r.data.data || {};
+        output = (data.stdout || "") + (data.stderr ? `\nSTDERR:\n${data.stderr}` : "");
+        const exitCode = data.code ?? 0;
+        if (exitCode !== 0) {
+          toast.error(`${db.name} installation failed`);
+          if (output) setOutputModal({ title: `Install ${db.name} — Error Output`, output });
+          setActionLoading(null);
+          return;
+        }
       } else {
         const r = await api.post(`/databases/${db.type}/install`, opts);
         output = r.data.output || "";
