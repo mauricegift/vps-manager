@@ -498,6 +498,33 @@ router.post('/:id/databases/:type/:dbName/query', async (req, res) => {
   }
 });
 
+// ── Remote DB: delete database ────────────────────────────────────────────────
+router.delete('/:id/databases/:type/:dbName', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const { type, dbName } = req.params;
+    const db = decodeURIComponent(dbName).replace(/['"`;]/g, '');
+
+    let cmd = '';
+    if (type === 'postgresql') {
+      cmd = pgTry(`-c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${db}' AND pid<>pg_backend_pid()"`, 'postgres') +
+        ' ; ' + pgTry(`-c "DROP DATABASE IF EXISTS \\"${db}\\""`, 'postgres');
+    } else if (type === 'mysql' || type === 'mariadb') {
+      cmd = mysqlTry(`"DROP DATABASE IF EXISTS \\\`${db}\\\`"`, '', '-N');
+    } else if (type === 'mongodb') {
+      cmd = `mongosh --quiet ${JSON.stringify(db)} --eval 'db.dropDatabase()' 2>&1`;
+    } else {
+      return res.status(400).json({ success: false, error: 'Unsupported database type for deletion' });
+    }
+
+    await runSSHCommand(conn, cmd);
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Remote Extras: software status ───────────────────────────────────────────
 router.get('/:id/extras', async (req, res) => {
   try {
@@ -739,11 +766,12 @@ router.get('/:id/extras/pm2-version', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const { stdout } = await runSSHCommand(conn, 'pm2 --version 2>/dev/null && npm view pm2 version 2>/dev/null || echo ""');
+    const cmd = `PM2_BIN=$(which pm2 2>/dev/null || echo ""); if [ -z "$PM2_BIN" ]; then NPM_PREFIX=$(npm config get prefix 2>/dev/null); PM2_BIN="$NPM_PREFIX/bin/pm2"; fi; if [ -z "$PM2_BIN" ] || ! [ -x "$PM2_BIN" ]; then PM2_BIN="$HOME/.npm-global/bin/pm2"; fi; if [ -x "$PM2_BIN" ]; then "$PM2_BIN" --version 2>/dev/null; fi; npm view pm2 version 2>/dev/null`;
+    const { stdout } = await runSSHCommand(conn, cmd);
     const lines = stdout.trim().split('\n').filter(Boolean);
     const version = lines[0]?.match(/(\d+\.\d+[\.\d]*)/)?.[1] || null;
     const latestVersion = lines[1]?.match(/(\d+\.\d+[\.\d]*)/)?.[1] || null;
-    res.json({ success: true, data: { version, latestVersion, updateAvailable: version && latestVersion && version !== latestVersion } });
+    res.json({ success: true, data: { installed: !!version, version, latestVersion, updateAvailable: !!(version && latestVersion && version !== latestVersion) } });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
