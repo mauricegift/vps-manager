@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { toast } from 'react-toastify';
+import AOS from 'aos';
 import api from '@/lib/api';
 import { VpsConnection } from '@/types/server';
 import Modal from '@/components/ui/Modal';
@@ -48,8 +49,15 @@ export default function Servers() {
       return r.data.data as VpsConnection[];
     },
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   });
 
+  useEffect(() => {
+    if (!isLoading) {
+      const t = setTimeout(() => AOS.refresh(), 80);
+      return () => clearTimeout(t);
+    }
+  }, [data, isLoading]);
 
   const addMutation = useMutation({
     mutationFn: (body: any) => api.post('/servers', body),
@@ -57,7 +65,6 @@ export default function Servers() {
       qc.invalidateQueries({ queryKey: ['vps-connections'] });
       toast.success('Server added successfully');
       closeForm();
-      setTimeout(() => AOS.refresh(), 100);
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to add server'),
   });
@@ -155,14 +162,14 @@ export default function Servers() {
           {[...Array(3)].map((_, i) => <div key={i} className="h-52 rounded-2xl glass-card animate-pulse" />)}
         </div>
       ) : !data || data.length === 0 ? (
-        <div className="glass-card flex flex-col items-center justify-center py-24 text-[var(--muted)]" data-aos="fade-up">
+        <div className="glass-card flex flex-col items-center justify-center py-24 text-[var(--muted)]">
           <Globe size={48} className="mb-4 opacity-30" />
           <p className="text-lg font-medium">No servers yet</p>
           <p className="text-sm mt-1">Click "Add Server" to connect a remote VPS</p>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {data.map((s, i) => (
+          {data.map((s) => (
             <div
               key={s.id}
               className="glass-card p-5 space-y-4 hover:border-[var(--accent)]/30 transition-all duration-300"
@@ -203,7 +210,6 @@ export default function Servers() {
               </div>
 
               <div className="space-y-2 pt-1">
-                {/* Connect / Disconnect button */}
                 {activeServer?.id === s.id ? (
                   <button
                     onClick={() => disconnect()}
