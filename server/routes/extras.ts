@@ -244,13 +244,19 @@ router.get('/', async (_req, res) => {
   try {
     // Run a single comprehensive shell script instead of 26+ individual execs
     const script = `
-NPM_PREFIX=$(npm config get prefix 2>/dev/null)
-NPM_BIN="$NPM_PREFIX/bin"
 NVM_ACTIVE=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1)
+NVM_BIN="$HOME/.nvm/versions/node/$NVM_ACTIVE/bin"
+# Get npm prefix: try nvm npm first, then PATH npm
+if [ -n "$NVM_ACTIVE" ] && [ -x "$NVM_BIN/npm" ]; then
+  NPM_PREFIX=$("$NVM_BIN/npm" config get prefix 2>/dev/null)
+else
+  NPM_PREFIX=$(npm config get prefix 2>/dev/null)
+fi
+NPM_BIN="$NPM_PREFIX/bin"
 
 find_bin() {
   local name=$1
-  for p in $(which "$name" 2>/dev/null) "$NPM_BIN/$name" "$HOME/.local/bin/$name" "$HOME/.bun/bin/$name" "$HOME/.deno/bin/$name" "$HOME/.cargo/bin/$name" "$HOME/go/bin/$name" /usr/local/go/bin/$name /usr/local/bin/$name /usr/bin/$name /bin/$name; do
+  for p in $(which "$name" 2>/dev/null) "$HOME/.nvm/versions/node/$NVM_ACTIVE/bin/$name" "$NPM_BIN/$name" "$HOME/.local/bin/$name" "$HOME/.bun/bin/$name" "$HOME/.deno/bin/$name" "$HOME/.cargo/bin/$name" "$HOME/go/bin/$name" /usr/local/go/bin/$name /usr/local/bin/$name /usr/bin/$name /bin/$name; do
     [ -x "$p" ] && echo "$p" && return
   done
 }
