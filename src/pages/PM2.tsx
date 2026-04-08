@@ -116,6 +116,7 @@ export default function PM2Page() {
     typeof window !== "undefined" && window.innerWidth < 640 ? 5 : 10
   );
   const [installingPM2, setInstallingPM2] = useState(false);
+  const [pm2InstallOutput, setPm2InstallOutput] = useState<string | null>(null);
   const termEndRef = useRef<HTMLDivElement>(null);
   const termContainerRef = useRef<HTMLDivElement>(null);
 
@@ -274,12 +275,16 @@ export default function PM2Page() {
     setInstallingPM2(true);
     try {
       const url = activeServer ? `/remote/${activeServer.id}/extras/pm2/install` : "/extras/pm2/install";
-      await api.post(url);
+      const { data } = await api.post(url);
       toast.success("PM2 installed successfully");
+      if (data.output) setPm2InstallOutput(data.output);
       qc.invalidateQueries({ queryKey: ["pm2-version"] });
       qc.invalidateQueries({ queryKey: ["pm2"] });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Failed to install PM2");
+      const errMsg = e.response?.data?.error || "Failed to install PM2";
+      const errOut = e.response?.data?.output;
+      toast.error(errMsg);
+      if (errOut) setPm2InstallOutput(errOut);
     }
     setInstallingPM2(false);
   };
@@ -1218,6 +1223,16 @@ export default function PM2Page() {
               ? "Click a file to select it as the entry script, or click folders to navigate."
               : "Click 'Use as Working Dir' to select the current folder, or navigate to find your project."}
           </p>
+        </div>
+      </Modal>
+
+      {/* PM2 install output modal */}
+      <Modal isOpen={!!pm2InstallOutput} onClose={() => setPm2InstallOutput(null)} title="PM2 Install Output" size="xl">
+        <pre className="text-xs font-mono whitespace-pre-wrap max-h-[60vh] overflow-y-auto p-3 rounded-xl bg-[var(--foreground)] text-[var(--main)] border border-[var(--line)]">
+          {pm2InstallOutput}
+        </pre>
+        <div className="flex justify-end mt-3">
+          <button onClick={() => setPm2InstallOutput(null)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Close</button>
         </div>
       </Modal>
     </section>
