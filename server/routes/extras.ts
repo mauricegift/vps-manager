@@ -573,13 +573,20 @@ router.get('/users', async (_req, res) => {
 });
 
 router.post('/users', async (req, res) => {
-  const { username, password, shell = '/bin/bash', sudo = false } = req.body;
+  const { username, password, shell = '/bin/bash', sudo = false, type = 'regular', homeDir } = req.body;
   if (!username || !password) return res.status(400).json({ success: false, error: 'username and password are required' });
   const safeUser = username.replace(/[^a-z0-9_-]/g, '');
   if (!safeUser) return res.status(400).json({ success: false, error: 'Invalid username' });
   try {
-    let cmd = `useradd -m -s ${shell} ${safeUser} 2>&1 && echo '${safeUser}:${password.replace(/'/g, "'\\''")}' | chpasswd 2>&1`;
-    if (sudo) cmd += ` && usermod -aG sudo ${safeUser} 2>&1`;
+    let cmd: string;
+    if (type === 'sub') {
+      const subHome = homeDir || `/home/${safeUser}`;
+      cmd = `useradd -m -d ${subHome} -s /usr/sbin/nologin ${safeUser} 2>&1 && echo '${safeUser}:${password.replace(/'/g, "'\\''")}' | chpasswd 2>&1`;
+      cmd += ` && chmod 750 ${subHome} 2>&1 || true`;
+    } else {
+      cmd = `useradd -m -s ${shell} ${safeUser} 2>&1 && echo '${safeUser}:${password.replace(/'/g, "'\\''")}' | chpasswd 2>&1`;
+      if (sudo) cmd += ` && usermod -aG sudo ${safeUser} 2>&1`;
+    }
     const output = await run(cmd);
     if (output.includes('already exists')) return res.status(409).json({ success: false, error: 'User already exists' });
     res.json({ success: true, output });
