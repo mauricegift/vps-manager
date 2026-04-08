@@ -51,6 +51,7 @@ export default function DatabasesPage() {
   const [deleteDbModal, setDeleteDbModal] = useState<{ type: string; name: string } | null>(null);
   const [deletingDb, setDeletingDb] = useState(false);
   const [managingDb, setManagingDb] = useState(false);
+  const [createDbType, setCreateDbType] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState<DB | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [installTarget, setInstallTarget] = useState<DB | null>(null);
@@ -237,15 +238,23 @@ export default function DatabasesPage() {
   };
 
   const createDatabase = async () => {
-    if (!browserDb || !newDbName.trim()) return;
+    const dbType = browserDb?.type || createDbType;
+    if (!dbType || !newDbName.trim()) return;
     setManagingDb(true);
     try {
-      await api.post(`${dbApiBase(browserDb.type, browserDb.name)}/query`, {
-        sql: browserDb.type === "postgresql" ? `CREATE DATABASE "${newDbName}"` : `CREATE DATABASE \`${newDbName}\``
-      });
+      const defaultDb = dbType === "postgresql" ? "postgres" : dbType === "mongodb" ? "admin" : "mysql";
+      const existingDb = browserDb?.name || defaultDb;
+      const sql = dbType === "postgresql"
+        ? `CREATE DATABASE "${newDbName}"`
+        : dbType === "mongodb"
+        ? `db.getSiblingDB("${newDbName}").createCollection("_init")`
+        : `CREATE DATABASE \`${newDbName}\``;
+      await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql });
       toast.success(`Database "${newDbName}" created`);
       setCreateDbModal(false);
+      setCreateDbType(null);
       setNewDbName("");
+      qc.invalidateQueries({ queryKey: ["databases"] });
     } catch (e: any) {
       toast.error(e.response?.data?.error || "Failed to create database");
     }
@@ -320,6 +329,7 @@ export default function DatabasesPage() {
                     onBrowse={openBrowser}
                     onUninstall={() => setConfirmUninstall(db)}
                     onDeleteDb={(name) => setDeleteDbModal({ type: db.type, name })}
+                    onCreateDb={() => { setCreateDbType(db.type); setNewDbName(""); setCreateDbModal(true); }}
                   />
                 ))}
               </div>
@@ -790,13 +800,14 @@ export default function DatabasesPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb }: {
+function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb }: {
   db: any;
   actionLoading: string | null;
   actionMutation: any;
   onBrowse: (db: any, name: string) => void;
   onUninstall: () => void;
   onDeleteDb: (name: string) => void;
+  onCreateDb: () => void;
 }) {
   const [showDbs, setShowDbs] = useState(false);
   const busy = actionLoading === `install-${db.type}` || actionLoading === `uninstall-${db.type}` || actionMutation.isPending;
@@ -836,14 +847,25 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
           </div>
         )}
         {db.databases && (
-          <div className="flex justify-between text-xs">
+          <div className="flex justify-between items-center text-xs">
             <span className="text-[var(--muted)]">Databases</span>
-            <button
-              onClick={() => setShowDbs(!showDbs)}
-              className="font-mono font-medium text-[var(--accent)] hover:underline flex items-center gap-1"
-            >
-              {db.databases.length} <FolderOpen size={10} />
-            </button>
+            <div className="flex items-center gap-2">
+              {db.running && db.type !== "redis" && (
+                <button
+                  onClick={e => { e.stopPropagation(); onCreateDb(); }}
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20 hover:bg-[var(--accent)]/20 transition-colors"
+                  title="Create new database"
+                >
+                  <Plus size={9} /> New
+                </button>
+              )}
+              <button
+                onClick={() => setShowDbs(!showDbs)}
+                className="font-mono font-medium text-[var(--accent)] hover:underline flex items-center gap-1"
+              >
+                {db.databases.length} <FolderOpen size={10} />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -879,7 +901,7 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
               </button>
               <button
                 onClick={e => { e.stopPropagation(); onDeleteDb(d); }}
-                className="shrink-0 w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover/row:opacity-100 transition-opacity text-red-400 hover:bg-red-500/10"
+                className="shrink-0 w-6 h-6 flex items-center justify-center rounded text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                 title={`Delete database "${d}"`}
               >
                 <Trash size={11} />
