@@ -768,12 +768,16 @@ router.get('/:id/users', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const { stdout } = await runSSHCommand(conn, `getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1"|"$3"|"$5"|"$6"|"$7}'`);
-    const users = stdout.trim().split('\n').filter(Boolean).map(line => {
+    const [usersResult, whoamiResult] = await Promise.all([
+      runSSHCommand(conn, `getent passwd | awk -F: '($3 >= 1000 && $3 < 65534) || $3 == 0 {print $1"|"$3"|"$5"|"$6"|"$7}'`),
+      runSSHCommand(conn, `whoami`).catch(() => ({ stdout: '' })),
+    ]);
+    const currentUser = (whoamiResult.stdout || '').trim();
+    const users = usersResult.stdout.trim().split('\n').filter(Boolean).map(line => {
       const [username, uid, displayName, home, shell] = line.split('|');
-      return { username, uid: parseInt(uid), displayName, home, shell };
+      return { username, uid: parseInt(uid), displayName, home, shell, isCurrent: username === currentUser };
     });
-    res.json({ success: true, data: users });
+    res.json({ success: true, data: users, currentUser });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
