@@ -1,7 +1,7 @@
 # VPS Manager
 
 > A professional full-stack VPS control panel built with React + TypeScript + Express.
-> Manage PM2 processes, Docker containers, databases, files, and SSH terminals across unlimited remote servers — all from a clean, responsive UI.
+> Manage PM2 processes, Docker containers, databases, files, Nginx, SSL, and SSH terminals across unlimited remote servers — all from one clean, responsive UI.
 
 **Author:** [Gifted Tech](https://me.giftedtech.co.ke) · [GitHub @mauricegift](https://github.com/mauricegift)
 
@@ -9,229 +9,209 @@
 
 ## Features
 
-| Module | Description |
-|---|---|
-| **Dashboard** | Real-time CPU, memory, disk, uptime and network stats |
-| **PM2 Manager** | List, start, stop, restart, delete processes — live logs & version badges |
-| **Docker Manager** | Container & image management, start/stop/remove, stats |
-| **Database Browser** | PostgreSQL, MySQL, MariaDB, MongoDB, Redis — browse tables, run queries |
-| **File Manager** | Navigate, create, edit, delete, upload and download files over SSH |
-| **SSH Terminal** | Full xterm.js terminal with dark/light themes, persistent connections |
-| **Extras** | Install/update Node.js, Bun, PM2, Python, Nginx, Apache, Certbot |
-| **Multi-server** | Add unlimited remote VPS servers, switch between them instantly |
+### Process Manager (PM2)
+- View all PM2 processes with CPU, memory, uptime, restarts, and status badges
+- Start, stop, restart, reload, and delete processes
+- View live logs per process in a themed terminal modal
+- **New Process form**:
+  - Script/entry-file verification — confirm the file exists before submitting
+  - Automatic `.env` detection in the working directory
+  - Port field — sets the `PORT` environment variable for the process
+- **Clone from GitHub** — pull a repo directly onto the server (or remote VPS via SSH), auto-installs dependencies and starts with PM2
+- PM2 terminal for running `pm2 list`, `pm2 logs`, `pm2 monit`, etc.
+- Auto-install PM2 if not present with one click
+- Full remote server support — all actions run on the connected remote VPS via SSH
+
+### Docker
+- **Containers**: list all, start, stop, restart, remove, view logs
+- **Images**: list, pull from registry, delete
+  - **Pull with custom port mapping** — enter a port map (e.g. `8080:80`) and optionally auto-run the container immediately after pulling
+  - **Build from Dockerfile** — paste a Dockerfile, set image name/tag, optionally set build context path
+- **Compose**: discover all docker-compose projects on the server
+  - Up / Down / Restart each project
+  - View compose logs in modal
+  - Edit `docker-compose.yml` content inline
+  - **Create new compose project** — paste YAML, choose directory, auto-starts with `docker compose up -d`
+- Auto-install Docker if not present
+
+### Databases
+Supports **PostgreSQL**, **MySQL**, **MariaDB**, **MongoDB**, **Redis**, and **SQLite**.
+
+#### Browsing & Querying
+- Browse all databases, tables/collections, and row/document data with pagination (50 rows per page)
+- Run custom SQL queries (PostgreSQL / MySQL / MariaDB / SQLite) or raw MongoDB expressions / Redis commands
+- **Action buttons always visible** — edit and delete buttons pinned to the left of every row in a sticky column (no horizontal scrolling required)
+
+#### PostgreSQL / MySQL / MariaDB / SQLite
+- Edit any row via modal — pre-filled fields, safe SQL `UPDATE ... WHERE`
+- Delete any row — confirmed `DELETE ... WHERE`
+- **Add Row** form auto-generates input fields from column names
+- **New Table** modal — column builder with name + type per column, live SQL `CREATE TABLE` preview
+- **Drop Table** with confirmation
+- MariaDB fully supported in remote SSH mode (tables list, data, and query endpoints)
+
+#### MongoDB
+- Full document CRUD — edit via JSON-aware update, delete via `_id` filter with EJSON ObjectId support
+- **Add Document** — JSON editor modal with `insertOne` support
+- **New Collection** — create a collection by name
+- **Drop Collection** with confirmation
+
+#### Redis
+- Browse keys by type: string, hash, list, set
+- **Type-aware edit commands**:
+  - String → `SET key value`
+  - Hash → `HSET key field value`
+  - List → `LSET key index value`
+  - Set → `SREM old + SADD new`
+- **Type-aware delete commands**:
+  - String → `DEL key`
+  - Hash → `HDEL key field`
+  - List → `LREM key 0 value`
+  - Set → `SREM key member`
+
+#### Remote Database Support
+- All CRUD features work on remote VPS databases via SSH
+- MariaDB fully handled in remote table-data and query routes
+
+### File Manager
+- Browse full directory tree with breadcrumb navigation
+- View files with **syntax highlighting** (50+ languages)
+- Edit files inline in a code-styled editor
+- Create new files and folders
+- Cut, Copy, Paste operations
+- **Multi-file drag-and-drop upload**
+- **Bulk select mode**:
+  - Toggle with the Select button in the toolbar
+  - Check individual items or use "Select All"
+  - **Zip & Download** selected items as a single archive
+  - **Bulk delete** selected items with confirmation
+- **Download button** shown inline for every `.zip` file
+- **Clone from GitHub** — clone any repo into a chosen directory (works on remote VPS via SSH exec)
+- Seamlessly switches to SSH remote file browsing when a remote server is active
+
+### Terminal
+- Full interactive bash shell for both local and SSH-remote servers
+- Output follows the **active theme** — dark background in dark mode, light in light mode
+- Colorized output — `ls`, `grep`, `diff`, `ll` aliases applied automatically
+- Remote SSH terminal receives the same color environment on connect
+- Command history with Up/Down arrows
+- Quick-access Ctrl+C, Ctrl+L, Ctrl+D, Tab, history shortcuts
+- `exit` handled gracefully — local shell auto-reconnects, SSH shows session-end message
+- Adjustable font size
+
+### Nginx + SSL
+- Real-time nginx status: running/stopped, version, and available updates
+- **Certbot detection**: installed version and update availability shown on the status card
+- List all config files — enable, disable, delete, view, or edit
+- Create new configs from templates: Static site, Reverse proxy, PHP-FPM, SSL redirect
+- Test configuration, reload, and restart nginx
+- **Let's Encrypt SSL via Certbot**:
+  - Issue certificates for domains
+  - Renew and delete certificates
+- One-click **Refresh** invalidates all cached queries
+- Full remote server support via SSH — certbot status returned in parallel with nginx status
+
+### Software / Extras
+- **System** tab: CPU, memory, disk usage
+- **Software** tab organized by category:
+  - Runtimes: Node.js (multi-version), npm, Bun, Deno, Python, Go, Rust, PM2, pnpm, yarn
+  - Servers & SSL: nginx, Apache, Certbot
+  - Dev Tools: git, curl, wget, rsync, vim, nvim
+  - System Tools: htop, tmux, screen, ufw, fail2ban, jq, unzip
+  - Browsers: Chrome
+  - Install, update, and check for newer versions
+- **Users** tab: list all system users with home directory, shell, and UID
+
+### Remote Servers
+- Add unlimited VPS connections (IP, port, username, password or SSH key)
+- One-click connect — all pages (PM2, Docker, Databases, Files, Nginx, Terminal) switch to remote context
+- Test connection before saving
+- View basic server info and uptime for each connected server
+- GitHub tokens stored per-session and shared across PM2 and FileManager clone flows
 
 ---
 
-## Screenshots
+## Installation
 
-> The UI adapts to both light and dark modes and is fully responsive for mobile.
-
----
-
-## Quick Start
-
-### Prerequisites
-
-- **Node.js** 18 or later
-- **PostgreSQL** (for the local database that stores server credentials)
-
-### Automated Install
+### Automated (recommended)
 
 ```bash
-# Clone the repo
+curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | bash
+```
+
+### Manual
+
+```bash
 git clone https://github.com/mauricegift/vps-manager.git
 cd vps-manager
-
-# Run the installer (handles PostgreSQL setup, .env creation, npm install, build)
-bash install.sh
+chmod +x install.sh
+./install.sh
 ```
 
 The installer will:
-1. Check for an existing PostgreSQL installation (uses it if present, installs it if not)
-2. Create the `vpsmanager` database and user (skips if they already exist)
-3. Generate a `.env` file with secure random secrets
-4. Install npm dependencies
-5. Build the frontend
+1. Install Node.js 20 LTS (if missing or outdated)
+2. Install PM2 globally (if missing) and configure startup on reboot
+3. Install `nginx` and `sshpass` system packages
+4. Clone / pull the latest repo
+5. Install npm dependencies
+6. Generate a `.env` with a random `SESSION_SECRET`
+7. Set UFW firewall rules (SSH, 80, 443, 5756, 5000)
+8. Start the app via PM2 using `npm run dev` (backend on **5756**, Vite on **5000**)
+9. **Auto-configure Nginx** as a reverse proxy on port 80:
+   - `/api/` → Express backend
+   - `/socket.io/` → WebSocket terminal (with upgrade headers)
+   - everything else → Vite frontend
+10. Optionally issue a **free SSL certificate** via `certbot --nginx` with zero downtime
+11. Add a daily **auto-renewal cron job** (`certbot renew` at 03:00)
 
-### Manual Install
+After install, access the dashboard at:
+- `http://<your-server-ip>` — via Nginx on port 80
+- `http://<your-server-ip>:5000` — Vite frontend direct
+- `http://<your-server-ip>:5756` — API backend direct
+
+---
+
+## Development
 
 ```bash
-# 1. Clone and enter the project
 git clone https://github.com/mauricegift/vps-manager.git
 cd vps-manager
-
-# 2. Create .env (copy and fill in your values)
-cp .env.example .env        # or create manually (see below)
-
-# 3. Install dependencies
 npm install
-
-# 4. Build the frontend
-npm run build
-
-# 5. Start the server
-npm start
+npm run dev
 ```
 
-### Required `.env` variables
-
-```env
-DATABASE_URL=postgresql://vpsmanager:password@localhost:5432/vpsmanager
-PGHOST=localhost
-PGPORT=5432
-PGUSER=vpsmanager
-PGPASSWORD=your_password
-PGDATABASE=vpsmanager
-SESSION_SECRET=your_32char_secret
-PORT=5756
-```
+- Backend: **http://localhost:5756**
+- Frontend (Vite dev server): **http://localhost:5000**
 
 ---
 
-## Running
+## Environment Variables
 
-| Command | Description |
-|---|---|
-| `npm start` | Start in production mode (serves built frontend + API) |
-| `npm run dev` | Start in development mode with hot reload |
-| `pm2 start dist/server/index.js --name vps-manager` | Run with PM2 (recommended for production) |
-
-The frontend runs on **port 5000** (Vite dev) or is served statically in production.
-The API server runs on **port 5756**.
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Backend server port | `5756` |
+| `DATABASE_URL` | PostgreSQL connection URL | auto (local internal DB) |
+| `SESSION_SECRET` | Session signing key | auto-generated |
 
 ---
 
-## Adding Remote Servers
-
-1. Go to the **Servers** page
-2. Click **Add Server**
-3. Enter the server's IP, SSH port (default 22), username, and either a password or SSH private key
-4. Click **Test Connection** to verify
-5. Once saved, select the server from the top bar to manage it remotely
-
-All SSH connections are pooled and reused for efficiency.
-
----
-
-## Database Browser
-
-The built-in database browser supports:
-
-| Database | Features |
-|---|---|
-| **PostgreSQL** | List tables, browse rows with pagination, run SQL queries |
-| **MySQL / MariaDB** | List tables, browse rows with pagination, run SQL queries |
-| **MongoDB** | List collections, browse documents (JSON), run JS expressions |
-| **Redis** | Scan all keys, inspect string/list/hash/set/zset values, run commands |
-
-> No database client installation required — the app shells out to `psql`, `mysql`, `mongosh`, and `redis-cli` on the target server.
-
----
-
-## Architecture
+## Project Structure
 
 ```
 vps-manager/
-├── src/                         # React frontend (Vite + TypeScript)
-│   ├── pages/                   # Dashboard, PM2, Docker, Databases, Files, Terminal, Extras, Servers
-│   ├── components/
-│   │   ├── layout/              # Header, Footer, Layout, MobileSidebar
-│   │   └── ui/                  # Modal, StatusBadge, StatCard, AnsiText, CodeView, ConfirmDialog
-│   ├── context/                 # ThemeContext, RemoteServerContext
-│   ├── lib/api.ts               # Axios instance (baseURL /api)
-│   └── types/                   # Shared TypeScript interfaces
-│
-├── server/                      # Express API (TypeScript)
-│   ├── index.ts                 # App entry, static serving, Socket.io
-│   ├── db.ts                    # PostgreSQL connection pool
-│   ├── ssh.ts                   # SSH2 persistent connection pool + helpers
-│   └── routes/
-│       ├── system.ts            # Local system stats
-│       ├── pm2.ts               # Local PM2 management
-│       ├── docker.ts            # Local Docker management
-│       ├── databases.ts         # Local database browser (pg, mysql, mongo, redis)
-│       ├── files.ts             # Local file manager
-│       ├── extras.ts            # Local extras/software manager
-│       ├── vps.ts               # VPS connection management
-│       ├── vps-connections.ts   # SSH connection CRUD
-│       └── remote.ts            # Remote server proxy (all of the above over SSH)
-│
-├── public/                      # Static assets (favicon.svg, og-image.svg)
-├── index.html                   # Root HTML with SEO meta tags
-├── install.sh                   # One-shot installation script
-├── vite.config.ts               # Vite configuration
-└── package.json
+├── src/                    # React + TypeScript frontend (Vite)
+│   ├── pages/              # PM2, Docker, Databases, FileManager, Terminal, Nginx, Extras, Servers
+│   ├── components/ui/      # Modal, ConfirmDialog, StatusBadge, CodeView, AnsiText
+│   └── context/            # ThemeContext, RemoteServerContext
+├── server/                 # Express backend (TypeScript, runs via tsx)
+│   ├── index.ts            # WebSocket terminal (local bash + SSH)
+│   └── routes/             # pm2, docker, databases, files, nginx, extras, remote, vps-connections, github
+├── install.sh              # VPS auto-installer (Node, PM2, Nginx, SSL, cron)
+└── README.md
 ```
-
-### Key Design Decisions
-
-- **SSH connection pool** — `getPooledClient()` in `ssh.ts` reuses live SSH2 connections per `user@host:port`. Idle connections are cleaned up after 5 minutes.
-- **Script runner** — `runSSHScript()` base64-encodes multi-line scripts and pipes them to `bash`, avoiding complex shell escaping for compound remote commands.
-- **DB auth fallback chain** — `pgTry()` / `mysqlTry()` helpers generate OR-chained shell commands that silently try multiple authentication methods (socket, sudo, TCP) until one succeeds.
-- **Remote mode** — All pages transparently switch between local and remote routes based on `RemoteServerContext`. The `dbApiBase()` helper handles URL switching.
-
----
-
-## Tech Stack
-
-### Frontend
-| Package | Purpose |
-|---|---|
-| React 18 + TypeScript | UI framework |
-| Vite | Build tool + dev server |
-| Tailwind CSS v4 | Utility-first styling |
-| TanStack Query | Server state management |
-| React Router | Client-side routing |
-| xterm.js | Terminal emulator |
-| Socket.io client | WebSocket for terminal |
-| AOS | Scroll animations |
-| Lucide React | Icon library |
-
-### Backend
-| Package | Purpose |
-|---|---|
-| Express | HTTP server |
-| ssh2 | SSH client for remote management |
-| pg | PostgreSQL client (for local app DB) |
-| Socket.io | WebSocket server for terminal |
-| express-session | Session management |
-
----
-
-## Security Notes
-
-- **Never expose VPS Manager publicly without authentication.** The default setup has no login screen — add one before deploying to an internet-accessible host.
-- SSH credentials are stored in the PostgreSQL database. Ensure your DB is not publicly accessible and `SESSION_SECRET` is a strong random value.
-- The file manager and terminal allow arbitrary command execution. Restrict access to trusted users only.
-- Consider running behind a reverse proxy (Nginx) with HTTPS and HTTP basic auth as a minimum.
-
----
-
-## Environment Variables Reference
-
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `5756` | API server port |
-| `DATABASE_URL` | — | Full PostgreSQL connection string |
-| `PGHOST` | `localhost` | PostgreSQL host |
-| `PGPORT` | `5432` | PostgreSQL port |
-| `PGUSER` | — | PostgreSQL user |
-| `PGPASSWORD` | — | PostgreSQL password |
-| `PGDATABASE` | — | PostgreSQL database name |
-| `SESSION_SECRET` | — | Express session secret (use 32+ random chars) |
 
 ---
 
 ## License
 
-MIT © [Gifted Tech](https://me.giftedtech.co.ke)
-
----
-
-## Author
-
-**Maurice Gift** (mauricegift)
-- Website: [me.giftedtech.co.ke](https://me.giftedtech.co.ke)
-- API: [api.giftedtech.co.ke](https://api.giftedtech.co.ke)
-- GitHub: [@mauricegift](https://github.com/mauricegift)
-- Org: [@GiftedTech-Nexus](https://github.com/GiftedTech-Nexus)
+MIT — free to use, modify, and deploy.
