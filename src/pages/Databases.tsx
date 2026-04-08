@@ -49,6 +49,7 @@ export default function DatabasesPage() {
   const [addRowModal, setAddRowModal] = useState(false);
   const [addRowValues, setAddRowValues] = useState<Record<string, string>>({});
   const [newDbName, setNewDbName] = useState("");
+  const [newDbPassword, setNewDbPassword] = useState("");
   const [createDbModal, setCreateDbModal] = useState(false);
   const [dropTableModal, setDropTableModal] = useState<string | null>(null);
   const [deleteDbModal, setDeleteDbModal] = useState<{ type: string; name: string } | null>(null);
@@ -68,6 +69,7 @@ export default function DatabasesPage() {
   // Connection string modal
   const [connectionModal, setConnectionModal] = useState<DB | null>(null);
   const [connCopied, setConnCopied] = useState<string | null>(null);
+  const [connPassword, setConnPassword] = useState("");
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
@@ -385,16 +387,40 @@ export default function DatabasesPage() {
     try {
       const defaultDb = dbType === "postgresql" ? "postgres" : dbType === "mongodb" ? "admin" : "mysql";
       const existingDb = browserDb?.name || defaultDb;
-      const sql = dbType === "postgresql"
-        ? `CREATE DATABASE "${newDbName}"`
-        : dbType === "mongodb"
-        ? `db.getSiblingDB("${newDbName}").createCollection("_init")`
-        : `CREATE DATABASE \`${newDbName}\``;
-      await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql });
-      toast.success(`Database "${newDbName}" created`);
+      const safeName = newDbName.trim().replace(/[^a-zA-Z0-9_]/g, "_");
+      const pwd = newDbPassword.trim();
+
+      if (dbType === "postgresql") {
+        await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql: `CREATE DATABASE "${safeName}"` });
+        if (pwd) {
+          await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
+            sql: `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${safeName}') THEN CREATE ROLE "${safeName}" WITH LOGIN PASSWORD '${pwd.replace(/'/g, "''")}'; END IF; END $$`
+          });
+          await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql: `GRANT ALL PRIVILEGES ON DATABASE "${safeName}" TO "${safeName}"` });
+        }
+      } else if (dbType === "mongodb") {
+        await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
+          sql: `db.getSiblingDB("${safeName}").createCollection("_init")`
+        });
+        if (pwd) {
+          await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
+            sql: `db.getSiblingDB("${safeName}").createUser({user:"${safeName}",pwd:"${pwd.replace(/"/g, '\\"')}",roles:[{role:"dbOwner",db:"${safeName}"}]})`
+          });
+        }
+      } else {
+        await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql: `CREATE DATABASE \`${safeName}\`` });
+        if (pwd) {
+          await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
+            sql: `CREATE USER IF NOT EXISTS '${safeName}'@'%' IDENTIFIED BY '${pwd.replace(/'/g, "''")}'; GRANT ALL PRIVILEGES ON \`${safeName}\`.* TO '${safeName}'@'%'; FLUSH PRIVILEGES`
+          });
+        }
+      }
+
+      toast.success(`Database "${safeName}" created${pwd ? " with user access" : ""}`);
       setCreateDbModal(false);
       setCreateDbType(null);
       setNewDbName("");
+      setNewDbPassword("");
       qc.invalidateQueries({ queryKey: ["databases"] });
     } catch (e: any) {
       toast.error(e.response?.data?.error || "Failed to create database");
@@ -938,7 +964,7 @@ export default function DatabasesPage() {
 
       {/* Create Database Modal */}
       {createDbModal && (
-        <Modal isOpen onClose={() => setCreateDbModal(false)} title="Create New Database" size="sm">
+        <Modal isOpen onClose={() => { setCreateDbModal(false); setNewDbName(""); setNewDbPassword(""); }} title="Create New Database" size="sm">
           <div className="space-y-4">
             <div>
               <label className="text-xs text-[var(--muted)] mb-1.5 block">Database Name</label>
@@ -950,8 +976,25 @@ export default function DatabasesPage() {
                 autoFocus
               />
             </div>
+            {(browserDb?.type || createDbType) !== "redis" && (
+              <div>
+                <label className="text-xs text-[var(--muted)] mb-1.5 block">
+                  Password for external access <span className="text-[10px] opacity-60">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={newDbPassword}
+                  onChange={e => setNewDbPassword(e.target.value)}
+                  placeholder="Set a strong password"
+                  className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors font-mono"
+                />
+                <p className="text-[10px] text-[var(--muted)] mt-1">
+                  A dedicated user <span className="font-mono text-[var(--main)]">{newDbName || "db_name"}</span> will be created with this password and granted full access.
+                </p>
+              </div>
+            )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setCreateDbModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+              <button onClick={() => { setCreateDbModal(false); setNewDbName(""); setNewDbPassword(""); }} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
               <button onClick={createDatabase} disabled={managingDb || !newDbName.trim()} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
                 <PlusCircle size={13} /> {managingDb ? "Creating..." : "Create"}
               </button>
@@ -1107,24 +1150,25 @@ export default function DatabasesPage() {
       )}
       {/* Connection String Modal */}
       {connectionModal && (
-        <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
+        <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); setConnPassword(""); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
           {(() => {
             const db = connectionModal;
             const host = activeServer?.ip ?? "127.0.0.1";
             const port = db.port;
-            const strings: { label: string; key: string; value: string }[] = [];
+            const pwd = connPassword || "PASSWORD";
+            const strings: { label: string; key: string; value: string; hasPwd: boolean }[] = [];
             if (db.type === "postgresql") {
-              strings.push({ label: "PostgreSQL URL", key: "pg", value: `postgresql://postgres:PASSWORD@${host}:${port}/postgres` });
-              strings.push({ label: "psql CLI", key: "psql", value: `psql -h ${host} -p ${port} -U postgres` });
+              strings.push({ label: "PostgreSQL URL", key: "pg", hasPwd: true, value: `postgresql://postgres:${pwd}@${host}:${port}/postgres` });
+              strings.push({ label: "psql CLI", key: "psql", hasPwd: false, value: `psql -h ${host} -p ${port} -U postgres` });
             } else if (db.type === "mysql" || db.type === "mariadb") {
-              strings.push({ label: "MySQL URL", key: "mysql", value: `mysql://root:PASSWORD@${host}:${port}/` });
-              strings.push({ label: "mysql CLI", key: "mysql-cli", value: `mysql -h ${host} -P ${port} -u root -p` });
+              strings.push({ label: "MySQL URL", key: "mysql", hasPwd: true, value: `mysql://root:${pwd}@${host}:${port}/` });
+              strings.push({ label: "mysql CLI", key: "mysql-cli", hasPwd: true, value: `mysql -h ${host} -P ${port} -u root -p'${pwd}'` });
             } else if (db.type === "mongodb") {
-              strings.push({ label: "MongoDB URI", key: "mongo", value: `mongodb://root:PASSWORD@${host}:${port}/admin?authSource=admin` });
-              strings.push({ label: "mongosh CLI", key: "mongosh", value: `mongosh "mongodb://${host}:${port}" --username root` });
+              strings.push({ label: "MongoDB URI", key: "mongo", hasPwd: true, value: `mongodb://root:${pwd}@${host}:${port}/admin?authSource=admin` });
+              strings.push({ label: "mongosh CLI", key: "mongosh", hasPwd: true, value: `mongosh "mongodb://${host}:${port}" --username root --password '${pwd}'` });
             } else if (db.type === "redis") {
-              strings.push({ label: "Redis URL", key: "redis", value: `redis://:PASSWORD@${host}:${port}/0` });
-              strings.push({ label: "redis-cli", key: "redis-cli", value: `redis-cli -h ${host} -p ${port} -a PASSWORD` });
+              strings.push({ label: "Redis URL", key: "redis", hasPwd: true, value: `redis://:${pwd}@${host}:${port}/0` });
+              strings.push({ label: "redis-cli", key: "redis-cli", hasPwd: true, value: `redis-cli -h ${host} -p ${port} -a '${pwd}'` });
             }
             const copyStr = (key: string, val: string) => {
               navigator.clipboard.writeText(val);
@@ -1133,15 +1177,8 @@ export default function DatabasesPage() {
             };
             return (
               <div className="space-y-4">
-                <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
-                  <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
-                  <p className="text-xs text-[var(--muted)]">
-                    Replace <span className="font-mono font-semibold text-[var(--main)]">PASSWORD</span> with your actual credentials.
-                    {host === "127.0.0.1" ? " These strings connect from this server (local)." : ` Connecting to remote ${host}.`}
-                  </p>
-                </div>
                 {/* Port + Status */}
-                <div className="flex items-center gap-4 text-sm">
+                <div className="flex items-center gap-4 text-sm flex-wrap">
                   <div className="flex items-center gap-2">
                     <Globe size={13} className="text-[var(--muted)]" />
                     <span className="text-[var(--muted)]">Host:</span>
@@ -1157,12 +1194,24 @@ export default function DatabasesPage() {
                     <div className="flex items-center gap-1.5 text-red-500"><WifiOff size={13} /> Stopped</div>
                   )}
                 </div>
+                {/* Password input */}
+                <div>
+                  <label className="text-xs text-[var(--muted)] mb-1.5 block font-semibold uppercase tracking-wide">Database Password</label>
+                  <input
+                    type="text"
+                    value={connPassword}
+                    onChange={e => setConnPassword(e.target.value)}
+                    placeholder="Enter your database password"
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors font-mono"
+                  />
+                  <p className="text-[10px] text-[var(--muted)] mt-1">The connection strings below update as you type.</p>
+                </div>
                 {/* Connection strings */}
                 <div className="space-y-2">
                   {strings.map(({ label, key, value }) => (
                     <div key={key}>
                       <p className="text-[10px] text-[var(--muted)] font-semibold uppercase tracking-wider mb-1">{label}</p>
-                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--foreground)] border border-[var(--line)] group">
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--foreground)] border border-[var(--line)]">
                         <code className="text-[11px] font-mono flex-1 truncate text-[var(--main)]">{value}</code>
                         <button
                           onClick={() => copyStr(key, value)}
@@ -1188,7 +1237,7 @@ export default function DatabasesPage() {
                   </div>
                 )}
                 <div className="flex justify-end">
-                  <button onClick={() => setConnectionModal(null)} className="btn-secondary px-4 py-2 text-sm">Close</button>
+                  <button onClick={() => { setConnectionModal(null); setConnPassword(""); }} className="btn-secondary px-4 py-2 text-sm">Close</button>
                 </div>
               </div>
             );
