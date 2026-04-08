@@ -77,6 +77,8 @@ export default function DatabasesPage() {
   const [changePwdVal, setChangePwdVal] = useState("");
   const [changePwdLoading, setChangePwdLoading] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
+  // Track dedicated per-database users created via Change Password
+  const [dbUsers, setDbUsers] = useState<Record<string, string>>({});
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
@@ -462,9 +464,20 @@ export default function DatabasesPage() {
     const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
     const port = portMap[type] ?? 5432;
     const pwd = masked ? "•••" : "PASSWORD";
-    if (type === "postgresql") return `postgresql://postgres:${pwd}@${host}:${port}/${dbname}`;
-    if (type === "mysql" || type === "mariadb") return `mysql://root:${pwd}@${host}:${port}/${dbname}`;
-    if (type === "mongodb") return `mongodb://root:${pwd}@${host}:${port}/${dbname}?authSource=admin`;
+    const key = `${activeServer?.id ?? "local"}:${type}:${dbname}`;
+    const dedicatedUser = dbUsers[key];
+    if (type === "postgresql") {
+      const user = dedicatedUser || "postgres";
+      return `postgresql://${user}:${pwd}@${host}:${port}/${dbname}`;
+    }
+    if (type === "mysql" || type === "mariadb") {
+      const user = dedicatedUser || "root";
+      return `mysql://${user}:${pwd}@${host}:${port}/${dbname}`;
+    }
+    if (type === "mongodb") {
+      if (dedicatedUser) return `mongodb://${dedicatedUser}:${pwd}@${host}:${port}/${dbname}`;
+      return `mongodb://root:${pwd}@${host}:${port}/${dbname}?authSource=admin`;
+    }
     if (type === "redis") return `redis://:${pwd}@${host}:${port}/0`;
     return dbname;
   };
@@ -474,10 +487,16 @@ export default function DatabasesPage() {
     setChangePwdLoading(true);
     try {
       const { type, name } = changePassModal;
+      let resp: any;
       if (activeServer) {
-        await api.post(`/remote/${activeServer.id}/databases/${type}/${name}/change-password`, { password: changePwdVal });
+        resp = await api.post(`/remote/${activeServer.id}/databases/${type}/${name}/change-password`, { password: changePwdVal });
       } else {
-        await api.post(`/databases/${type}/${name}/change-password`, { password: changePwdVal });
+        resp = await api.post(`/databases/${type}/${name}/change-password`, { password: changePwdVal });
+      }
+      // Store the dedicated username so connection strings update
+      if (resp?.data?.username && type !== "redis") {
+        const key = `${activeServer?.id ?? "local"}:${type}:${name}`;
+        setDbUsers(prev => ({ ...prev, [key]: resp.data.username }));
       }
       toast.success("Password changed successfully");
       setChangePassModal(null);
