@@ -46,6 +46,12 @@
     <link rel="stylesheet" href="https://unpkg.com/aos@2.3.4/dist/aos.css" />
   </head>
   <body>
+    <script>
+      (function () {
+        var t = localStorage.getItem('vps-theme') || 'dark';
+        document.documentElement.className = t;
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
