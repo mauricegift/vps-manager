@@ -9,8 +9,20 @@ const ThemeContext = createContext<{ theme: Theme; toggleTheme: () => void }>({
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem("vps-theme");
-    return (saved as Theme) || "dark";
+    try {
+      const saved = localStorage.getItem("vps-theme");
+      const migrated = localStorage.getItem("vps-theme-v2");
+      if (!migrated) {
+        localStorage.setItem("vps-theme-v2", "1");
+        if (saved === "light") {
+          localStorage.setItem("vps-theme", "dark");
+          return "dark";
+        }
+      }
+      return (saved as Theme) || "dark";
+    } catch {
+      return "dark";
+    }
   });
 
   useEffect(() => {
