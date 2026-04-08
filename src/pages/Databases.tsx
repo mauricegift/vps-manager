@@ -70,6 +70,7 @@ export default function DatabasesPage() {
   const [connectionModal, setConnectionModal] = useState<DB | null>(null);
   const [connCopied, setConnCopied] = useState<string | null>(null);
   const [connPassword, setConnPassword] = useState("");
+  const [connDbName, setConnDbName] = useState("");
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
@@ -291,7 +292,7 @@ export default function DatabasesPage() {
         const i = columns.indexOf(c);
         return [c, row[i] ?? null];
       }));
-      await runSql(`db.${selectedTable}.updateOne(${filter}, {$set: ${JSON.stringify(doc)}})`, "Document updated");
+      await runSql(`db.getCollection("${selectedTable}").updateOne(${filter}, {$set: ${JSON.stringify(doc)}})`, "Document updated");
     } else if (type === "redis") {
       const key = selectedTable;
       if (columns.includes("field")) {
@@ -327,7 +328,7 @@ export default function DatabasesPage() {
     const type = browserDb.type;
     if (type === "mongodb") {
       const filter = buildMongoFilter(columns, row);
-      await runSql(`db.${selectedTable}.deleteOne(${filter})`, "Document deleted");
+      await runSql(`db.getCollection("${selectedTable}").deleteOne(${filter})`, "Document deleted");
     } else if (type === "redis") {
       const key = selectedTable;
       if (columns.includes("field")) {
@@ -369,7 +370,7 @@ export default function DatabasesPage() {
     try {
       let doc: any;
       try { doc = JSON.parse(addDocJson); } catch { toast.error("Invalid JSON"); setAddDocLoading(false); return; }
-      await runSql(`db.${selectedTable}.insertOne(${JSON.stringify(doc)})`, "Document inserted");
+      await runSql(`db.getCollection("${selectedTable}").insertOne(${JSON.stringify(doc)})`, "Document inserted");
       setAddDocModal(false);
       setAddDocJson("{\n  \n}");
     } catch {}
@@ -455,7 +456,7 @@ export default function DatabasesPage() {
     const type = browserDb.type;
     let sql: string;
     if (type === "mongodb") {
-      sql = `db.${table}.drop()`;
+      sql = `db.getCollection("${table}").drop()`;
     } else {
       sql = `DROP TABLE IF EXISTS ${quoteId(table, type)}`;
     }
@@ -702,7 +703,7 @@ export default function DatabasesPage() {
                 </p>
               ) : (
                 <div className="flex gap-1.5 overflow-x-auto pb-2 hide-scrollbar md:hidden">
-                  {tableList.filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase())).map((t) => (
+                  {tableList.filter(t => !(browserDb.type === "mongodb" && t.name === "_init") && t.name.toLowerCase().includes(tableSearch.toLowerCase())).map((t) => (
                     <button
                       key={t.name}
                       onClick={() => loadTable(t.name, 0)}
@@ -720,7 +721,7 @@ export default function DatabasesPage() {
               {/* Desktop vertical list */}
               {tableList.length > 0 && !loadingTables && (
                 <div className="hidden md:flex flex-col gap-0.5 overflow-y-auto" style={{ maxHeight: '52vh' }}>
-                  {tableList.filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase())).map((t) => (
+                  {tableList.filter(t => !(browserDb.type === "mongodb" && t.name === "_init") && t.name.toLowerCase().includes(tableSearch.toLowerCase())).map((t) => (
                     <button
                       key={t.name}
                       onClick={() => loadTable(t.name, 0)}
@@ -801,7 +802,7 @@ export default function DatabasesPage() {
                     onChange={e => setQueryText(e.target.value)}
                     placeholder={
                       browserDb.type === "mongodb"
-                        ? `db.${selectedTable || "collection"}.find().limit(10)`
+                        ? `db.getCollection("${selectedTable || "collection"}").find().limit(10)`
                         : browserDb.type === "redis"
                         ? `KEYS *`
                         : `SELECT * FROM ${selectedTable || "table_name"} LIMIT 50;`
@@ -1172,25 +1173,33 @@ export default function DatabasesPage() {
       )}
       {/* Connection String Modal */}
       {connectionModal && (
-        <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); setConnPassword(""); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
+        <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); setConnPassword(""); setConnDbName(""); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
           {(() => {
             const db = connectionModal;
             const host = activeServer?.ip ?? "127.0.0.1";
             const port = db.port;
             const pwd = connPassword || "PASSWORD";
+            const dbName = connDbName.trim();
             const strings: { label: string; key: string; value: string; hasPwd: boolean }[] = [];
             if (db.type === "postgresql") {
-              strings.push({ label: "PostgreSQL URL", key: "pg", hasPwd: true, value: `postgresql://postgres:${pwd}@${host}:${port}/postgres` });
-              strings.push({ label: "psql CLI", key: "psql", hasPwd: false, value: `psql -h ${host} -p ${port} -U postgres` });
+              const pgDb = dbName || "postgres";
+              strings.push({ label: "PostgreSQL URL", key: "pg", hasPwd: true, value: `postgresql://postgres:${pwd}@${host}:${port}/${pgDb}` });
+              strings.push({ label: "psql CLI", key: "psql", hasPwd: false, value: `psql -h ${host} -p ${port} -U postgres -d ${pgDb}` });
             } else if (db.type === "mysql" || db.type === "mariadb") {
-              strings.push({ label: "MySQL URL", key: "mysql", hasPwd: true, value: `mysql://root:${pwd}@${host}:${port}/` });
-              strings.push({ label: "mysql CLI", key: "mysql-cli", hasPwd: true, value: `mysql -h ${host} -P ${port} -u root -p'${pwd}'` });
+              const myDb = dbName || "";
+              strings.push({ label: "MySQL URL", key: "mysql", hasPwd: true, value: `mysql://root:${pwd}@${host}:${port}/${myDb}` });
+              strings.push({ label: "mysql CLI", key: "mysql-cli", hasPwd: true, value: `mysql -h ${host} -P ${port} -u root -p'${pwd}'${myDb ? ` ${myDb}` : ""}` });
             } else if (db.type === "mongodb") {
-              strings.push({ label: "MongoDB URI", key: "mongo", hasPwd: true, value: `mongodb://root:${pwd}@${host}:${port}/admin?authSource=admin` });
-              strings.push({ label: "mongosh CLI", key: "mongosh", hasPwd: true, value: `mongosh "mongodb://${host}:${port}" --username root --password '${pwd}'` });
+              const mongoDb = dbName || "admin";
+              strings.push({ label: "MongoDB URI", key: "mongo", hasPwd: true, value: `mongodb://root:${pwd}@${host}:${port}/${mongoDb}?authSource=admin` });
+              strings.push({ label: "mongosh CLI", key: "mongosh", hasPwd: true, value: `mongosh "mongodb://${host}:${port}/${mongoDb}" --username root --password '${pwd}' --authenticationDatabase admin` });
             } else if (db.type === "redis") {
               strings.push({ label: "Redis URL", key: "redis", hasPwd: true, value: `redis://:${pwd}@${host}:${port}/0` });
               strings.push({ label: "redis-cli", key: "redis-cli", hasPwd: true, value: `redis-cli -h ${host} -p ${port} -a '${pwd}'` });
+            } else if (db.type === "sqlite") {
+              const sqliteDb = dbName || "/path/to/database.db";
+              strings.push({ label: "SQLite file path", key: "sqlite", hasPwd: false, value: sqliteDb });
+              strings.push({ label: "sqlite3 CLI", key: "sqlite-cli", hasPwd: false, value: `sqlite3 ${sqliteDb}` });
             }
             const copyStr = (key: string, val: string) => {
               navigator.clipboard.writeText(val);
@@ -1216,18 +1225,41 @@ export default function DatabasesPage() {
                     <div className="flex items-center gap-1.5 text-red-500"><WifiOff size={13} /> Stopped</div>
                   )}
                 </div>
-                {/* Password input */}
-                <div>
-                  <label className="text-xs text-[var(--muted)] mb-1.5 block font-semibold uppercase tracking-wide">Database Password</label>
-                  <input
-                    type="text"
-                    value={connPassword}
-                    onChange={e => setConnPassword(e.target.value)}
-                    placeholder="Enter your database password"
-                    className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors font-mono"
-                  />
-                  <p className="text-[10px] text-[var(--muted)] mt-1">The connection strings below update as you type.</p>
+                {/* Database Name + Password inputs */}
+                <div className="grid grid-cols-2 gap-3">
+                  {db.type !== "redis" && (
+                    <div className={db.type === "sqlite" ? "col-span-2" : ""}>
+                      <label className="text-xs text-[var(--muted)] mb-1.5 block font-semibold uppercase tracking-wide">
+                        {db.type === "sqlite" ? "Database File Path" : "Database Name"}
+                      </label>
+                      <input
+                        type="text"
+                        value={connDbName}
+                        onChange={e => setConnDbName(e.target.value)}
+                        placeholder={
+                          db.type === "postgresql" ? "postgres" :
+                          db.type === "mongodb" ? "admin" :
+                          db.type === "sqlite" ? "/var/db/app.db" :
+                          "my_database"
+                        }
+                        className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors font-mono"
+                      />
+                    </div>
+                  )}
+                  {db.type !== "sqlite" && (
+                    <div className={db.type === "redis" ? "col-span-2" : ""}>
+                      <label className="text-xs text-[var(--muted)] mb-1.5 block font-semibold uppercase tracking-wide">Database Password</label>
+                      <input
+                        type="text"
+                        value={connPassword}
+                        onChange={e => setConnPassword(e.target.value)}
+                        placeholder="Enter your database password"
+                        className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors font-mono"
+                      />
+                    </div>
+                  )}
                 </div>
+                <p className="text-[10px] text-[var(--muted)] -mt-2">The connection strings below update as you type.</p>
                 {/* Connection strings */}
                 <div className="space-y-2">
                   {strings.map(({ label, key, value }) => (
