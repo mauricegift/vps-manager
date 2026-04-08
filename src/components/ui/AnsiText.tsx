@@ -27,6 +27,18 @@ const converter = new AnsiToHtml({
   },
 });
 
+function cleanTerminal(raw: string): string {
+  return raw
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[\?[0-9;]*[hl]/g, "")
+    .replace(/\x1b\[[0-9;]*[ABCDEFGHJKLMSTfnsu]/g, "")
+    .replace(/\x1b[()][AB012]/g, "")
+    .replace(/\x1bM/g, "")
+    .replace(/\x1b[@-Z\\-_]/g, "")
+    .replace(/[^\n]*\r([^\n\r])/g, "$1")
+    .replace(/[^\n]*\r$/gm, "");
+}
+
 interface Props {
   text: string;
   className?: string;
@@ -35,9 +47,9 @@ interface Props {
 export default function AnsiText({ text, className }: Props) {
   const html = useMemo(() => {
     try {
-      return converter.toHtml(text);
+      return converter.toHtml(cleanTerminal(text));
     } catch {
-      return text.replace(/\x1b\[[0-9;]*m/g, "");
+      return cleanTerminal(text).replace(/\x1b\[[0-9;]*m/g, "");
     }
   }, [text]);
 
