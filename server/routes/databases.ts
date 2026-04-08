@@ -264,6 +264,35 @@ router.post('/:type/uninstall', async (req, res) => {
   }
 });
 
+// ── Change Password ───────────────────────────────────────────────────────────
+router.post('/:type/:dbname/change-password', async (req, res) => {
+  const { type, dbname } = req.params;
+  const { password, username } = req.body;
+  if (!password) return res.status(400).json({ success: false, error: 'Password is required' });
+  const safePwd = password.replace(/'/g, "''");
+  const safePwdMongo = password.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  try {
+    if (type === 'mongodb') {
+      const user = (username || 'root').replace(/[^a-zA-Z0-9_]/g, '');
+      await mongoshRun('admin', `db.updateUser("${user}", {pwd: "${safePwdMongo}"})`);
+    } else if (type === 'mysql' || type === 'mariadb') {
+      const user = (username || 'root').replace(/[^a-zA-Z0-9_]/g, '');
+      await execAsync(`mysql -u root -e "ALTER USER '${user}'@'%' IDENTIFIED BY '${safePwd}'; ALTER USER '${user}'@'localhost' IDENTIFIED BY '${safePwd}'; FLUSH PRIVILEGES;" 2>&1`, { timeout: 15000 });
+    } else if (type === 'postgresql') {
+      const user = (username || 'postgres').replace(/[^a-zA-Z0-9_]/g, '');
+      await execAsync(`su - postgres -c "psql -c \\"ALTER USER ${user} WITH PASSWORD '${safePwd}';\\""`, { timeout: 15000 });
+    } else if (type === 'redis') {
+      const safePwdRedis = password.replace(/'/g, "\\'");
+      await execAsync(`redis-cli CONFIG SET requirepass '${safePwdRedis}' 2>&1`, { timeout: 10000 });
+    } else {
+      return res.status(400).json({ success: false, error: 'Unsupported database type' });
+    }
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message || 'Failed to change password' });
+  }
+});
+
 // ── Database browser helpers ──────────────────────────────────────────────────
 function parseCSV(text: string): { columns: string[]; rows: string[][] } {
   const lines = text.trim().split('\n').filter(Boolean);
