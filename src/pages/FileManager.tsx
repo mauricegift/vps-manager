@@ -59,6 +59,7 @@ export default function FileManagerPage() {
   const [newFileContent, setNewFileContent] = useState("");
   const [uploading, setUploading] = useState(false);
   const [folderDlLoading, setFolderDlLoading] = useState<string | null>(null);
+  const [fileOpLoading, setFileOpLoading] = useState<string | null>(null);
 
   // Bulk selection
   const [selectMode, setSelectMode] = useState(false);
@@ -143,15 +144,32 @@ export default function FileManagerPage() {
     onError: () => toast.error("Failed to save file"),
   });
 
-  const viewFile = async (item: FileItem) => {
+  const viewFile = async (item: FileItem, op: "view" | "edit" = "view") => {
+    const key = `${item.path}:${op}`;
+    setFileOpLoading(key);
     try {
       const { data } = activeServer
         ? await api.get(`/remote/${activeServer.id}/files/read`, { params: { path: item.path } })
         : await api.get("/files/read", { params: { path: item.path } });
       setViewContent({ name: item.name, content: data.data, path: item.path });
       setEditContent(data.data);
-      setIsEditing(false);
+      setIsEditing(op === "edit");
     } catch { toast.error("Cannot read file"); }
+    setFileOpLoading(null);
+  };
+
+  const downloadFileSmart = (item: FileItem) => {
+    if (activeServer) {
+      const url = `/api/remote/${activeServer.id}/files/raw-download?path=${encodeURIComponent(item.path)}`;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = item.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      downloadFile(item.path, item.name);
+    }
   };
 
   const handleUpload = async (files: FileList) => {
@@ -529,7 +547,6 @@ export default function FileManagerPage() {
                     return a.name.localeCompare(b.name);
                   })
                   .map((item) => {
-                    const isZip = item.type === "file" && item.name.endsWith(".zip");
                     return (
                       <tr
                         key={item.path}
@@ -562,11 +579,33 @@ export default function FileManagerPage() {
                           <div className="flex items-center gap-1">
                             {item.type === "file" && (
                               <>
-                                <button onClick={() => viewFile(item)} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="View"><Eye size={13} /></button>
-                                <button onClick={async () => { await viewFile(item); setIsEditing(true); }} className="p-1.5 rounded-lg hover:bg-green-500/10 text-green-400 transition-colors" title="Edit"><Edit3 size={13} /></button>
-                                {isZip && (
-                                  <button onClick={() => downloadFile(item.path, item.name)} className="p-1.5 rounded-lg hover:bg-purple-500/10 text-purple-400 transition-colors" title="Download zip"><Download size={13} /></button>
-                                )}
+                                <button
+                                  onClick={() => viewFile(item, "view")}
+                                  disabled={!!fileOpLoading}
+                                  className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors disabled:opacity-40"
+                                  title="View"
+                                >
+                                  {fileOpLoading === `${item.path}:view`
+                                    ? <Loader2 size={13} className="animate-spin" />
+                                    : <Eye size={13} />}
+                                </button>
+                                <button
+                                  onClick={() => viewFile(item, "edit")}
+                                  disabled={!!fileOpLoading}
+                                  className="p-1.5 rounded-lg hover:bg-green-500/10 text-green-400 transition-colors disabled:opacity-40"
+                                  title="Edit"
+                                >
+                                  {fileOpLoading === `${item.path}:edit`
+                                    ? <Loader2 size={13} className="animate-spin" />
+                                    : <Edit3 size={13} />}
+                                </button>
+                                <button
+                                  onClick={() => downloadFileSmart(item)}
+                                  className="p-1.5 rounded-lg hover:bg-purple-500/10 text-purple-400 transition-colors"
+                                  title="Download"
+                                >
+                                  <Download size={13} />
+                                </button>
                               </>
                             )}
                             {item.type === "directory" && (
