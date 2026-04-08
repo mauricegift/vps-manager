@@ -33,7 +33,7 @@ export default function Dashboard() {
   const { data: info, isLoading, refetch, isFetching } = useQuery<SystemInfo>({
     queryKey: ["system", activeServer?.id ?? "local"],
     queryFn: () => api.get(endpoint).then((r) => r.data.data),
-    refetchInterval: activeServer ? 15000 : 8000,
+    refetchInterval: 3000,
   });
 
   useEffect(() => { AOS.refresh(); }, [info]);
