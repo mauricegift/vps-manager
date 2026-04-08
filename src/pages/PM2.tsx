@@ -14,6 +14,7 @@ import AnsiText from "@/components/ui/AnsiText";
 import type { PM2Process } from "@/types";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
+import { useTheme } from "@/context/ThemeContext";
 
 function fmtMem(b: number) {
   if (b > 1e6) return (b / 1e6).toFixed(1) + " MB";
@@ -32,19 +33,34 @@ interface TermLine { type: "input" | "output" | "error"; text: string; }
 
 const inp = "px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none transition-colors";
 
-const TERM_BG = "#1e1e2e";
-const TERM_HEADER = "#181825";
-const TERM_BORDER = "#313244";
-const TERM_MUTED = "#6c7086";
-const TERM_TEXT = "#cdd6f4";
-const TERM_INPUT = "#a6e22e";
-const TERM_ERR = "#f38ba8";
+const DARK_TERM = {
+  bg:     "#1e1e2e",
+  header: "#181825",
+  border: "#313244",
+  muted:  "#6c7086",
+  text:   "#cdd6f4",
+  input:  "#a6e22e",
+  err:    "#f38ba8",
+};
+
+const LIGHT_TERM = {
+  bg:     "#f5f5f5",
+  header: "#e8e8e8",
+  border: "#d0d0d0",
+  muted:  "#888888",
+  text:   "#1a1a1a",
+  input:  "#16803c",
+  err:    "#dc2626",
+};
 
 const MIN_FONT = 5;
 const MAX_FONT = 22;
 
 export default function PM2Page() {
   const qc = useQueryClient();
+  const { theme } = useTheme();
+  const T = theme === "dark" ? DARK_TERM : LIGHT_TERM;
+
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") as Tab) || "processes";
   const setTab = (t: Tab) => setSearchParams(p => { p.set("tab", t); return p; }, { replace: true });
@@ -363,18 +379,18 @@ export default function PM2Page() {
 
           {/* Terminal Tab */}
           {tab === "terminal" && (
-            <div className="rounded-2xl overflow-hidden shadow-xl" style={{ border: `1px solid ${TERM_BORDER}` }}>
+            <div className="rounded-2xl overflow-hidden shadow-xl" style={{ border: `1px solid ${T.border}` }}>
               {/* Chrome bar */}
               <div className="flex items-center gap-2 px-4 py-2.5 border-b"
-                style={{ background: TERM_HEADER, borderColor: TERM_BORDER }}>
+                style={{ background: T.header, borderColor: T.border }}>
                 <div className="flex gap-1.5">
                   <div className="w-3 h-3 rounded-full bg-red-500 opacity-80" />
                   <div className="w-3 h-3 rounded-full bg-amber-400 opacity-80" />
                   <div className="w-3 h-3 rounded-full bg-green-500 opacity-80" />
                 </div>
-                <TerminalIcon size={12} style={{ color: TERM_MUTED, marginLeft: 4 }} />
-                <span className="text-sm font-semibold flex-1" style={{ color: TERM_TEXT }}>PM2 Terminal</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full border mr-2" style={{ color: TERM_MUTED, borderColor: TERM_BORDER }}>
+                <TerminalIcon size={12} style={{ color: T.muted, marginLeft: 4 }} />
+                <span className="text-sm font-semibold flex-1" style={{ color: T.text }}>PM2 Terminal</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full border mr-2" style={{ color: T.muted, borderColor: T.border }}>
                   pm2 commands
                 </span>
                 {/* Font size controls */}
@@ -382,16 +398,16 @@ export default function PM2Page() {
                   <button
                     onClick={() => setFontSize(f => Math.max(MIN_FONT, +(f - 1).toFixed(1)))}
                     className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-                    style={{ background: TERM_BORDER, color: TERM_MUTED }}
+                    style={{ background: T.border, color: T.muted }}
                     title="Decrease font size"
                   >
                     <Minus size={10} />
                   </button>
-                  <span className="text-[10px] font-mono w-7 text-center" style={{ color: TERM_MUTED }}>{fontSize}</span>
+                  <span className="text-[10px] font-mono w-7 text-center" style={{ color: T.muted }}>{fontSize}</span>
                   <button
                     onClick={() => setFontSize(f => Math.min(MAX_FONT, +(f + 1).toFixed(1)))}
                     className="w-6 h-6 flex items-center justify-center rounded transition-colors"
-                    style={{ background: TERM_BORDER, color: TERM_MUTED }}
+                    style={{ background: T.border, color: T.muted }}
                     title="Increase font size"
                   >
                     <Plus size={10} />
@@ -400,7 +416,7 @@ export default function PM2Page() {
                 <button
                   onClick={() => setTermHistory([{ type: "output", text: "Terminal cleared." }])}
                   className="p-1.5 rounded-lg ml-1 transition-colors"
-                  style={{ color: TERM_MUTED }}
+                  style={{ color: T.muted }}
                   title="Clear"
                 >
                   <Trash size={13} />
@@ -410,25 +426,25 @@ export default function PM2Page() {
               {/* Output */}
               <div
                 className="font-mono p-4 h-72 overflow-y-auto leading-relaxed"
-                style={{ background: TERM_BG, fontSize: `${fontSize}px` }}
+                style={{ background: T.bg, color: T.text, fontSize: `${fontSize}px` }}
               >
                 {termHistory.map((line, i) => (
                   <div key={i}>
                     {line.type === "input" ? (
-                      <span style={{ color: TERM_INPUT, fontWeight: 600 }}>
-                        <AnsiText text={line.text} />
+                      <span style={{ color: T.input, fontWeight: 600 }}>
+                        <AnsiText text={line.text} fg={T.text} />
                       </span>
                     ) : line.type === "error" ? (
-                      <span style={{ color: TERM_ERR }}>
-                        <AnsiText text={line.text} />
+                      <span style={{ color: T.err }}>
+                        <AnsiText text={line.text} fg={T.text} />
                       </span>
                     ) : (
-                      <AnsiText text={line.text} />
+                      <AnsiText text={line.text} fg={T.text} />
                     )}
                   </div>
                 ))}
                 {termLoading && (
-                  <div className="flex items-center gap-2 animate-pulse" style={{ color: TERM_MUTED }}>
+                  <div className="flex items-center gap-2 animate-pulse" style={{ color: T.muted }}>
                     <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     Running...
                   </div>
@@ -438,13 +454,13 @@ export default function PM2Page() {
 
               {/* Quick commands */}
               <div className="flex flex-wrap gap-1.5 px-4 py-2 border-t"
-                style={{ background: TERM_HEADER, borderColor: TERM_BORDER }}>
+                style={{ background: T.header, borderColor: T.border }}>
                 {["list", "status", "monit", "flush", "save", "reload all", "logs --lines 50"].map(cmd => (
                   <button
                     key={cmd}
                     onClick={() => setTermCmd(cmd)}
                     className="text-[10px] px-2 py-1 rounded-lg font-mono transition-colors"
-                    style={{ background: TERM_BORDER, color: TERM_TEXT }}
+                    style={{ background: T.border, color: T.text }}
                   >
                     {cmd}
                   </button>
@@ -453,15 +469,15 @@ export default function PM2Page() {
 
               {/* Input bar */}
               <div className="flex items-center gap-2 px-4 py-2.5 border-t"
-                style={{ background: TERM_HEADER, borderColor: TERM_BORDER }}>
-                <span className="font-mono text-sm font-bold shrink-0" style={{ color: TERM_INPUT }}>pm2</span>
+                style={{ background: T.header, borderColor: T.border }}>
+                <span className="font-mono text-sm font-bold shrink-0" style={{ color: T.input }}>pm2</span>
                 <input
                   value={termCmd}
                   onChange={e => setTermCmd(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && runTermCmd()}
                   placeholder="list · logs myapp · restart 0 · reload all"
                   className="flex-1 bg-transparent font-mono text-sm focus:outline-none disabled:opacity-50"
-                  style={{ color: TERM_TEXT, caretColor: TERM_INPUT }}
+                  style={{ color: T.text, caretColor: T.input }}
                   disabled={termLoading}
                   autoComplete="off"
                   spellCheck={false}
@@ -470,9 +486,9 @@ export default function PM2Page() {
                   onClick={runTermCmd}
                   disabled={termLoading || !termCmd.trim()}
                   className="shrink-0 p-1.5 rounded-xl disabled:opacity-40 transition-opacity"
-                  style={{ background: TERM_INPUT }}
+                  style={{ background: T.input }}
                 >
-                  <Send size={13} style={{ color: "#272822" }} />
+                  <Send size={13} style={{ color: theme === "dark" ? "#272822" : "#ffffff" }} />
                 </button>
               </div>
             </div>
@@ -494,17 +510,16 @@ export default function PM2Page() {
 
       {/* Logs Modal */}
       <Modal isOpen={!!logs} onClose={() => { setLogs(null); setLogsCopied(false); }} title={`Logs: ${logs?.name}`} size="xl">
-        {/* Dark terminal log viewer */}
-        <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${TERM_BORDER}` }}>
+        <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
           {/* Log toolbar */}
-          <div className="flex items-center justify-between px-4 py-2 border-b" style={{ background: TERM_HEADER, borderColor: TERM_BORDER }}>
-            <span className="text-xs font-mono" style={{ color: TERM_MUTED }}>
+          <div className="flex items-center justify-between px-4 py-2 border-b" style={{ background: T.header, borderColor: T.border }}>
+            <span className="text-xs font-mono" style={{ color: T.muted }}>
               {logs?.name} · {logs?.content?.split("\n").length ?? 0} lines
             </span>
             <button
               onClick={copyLogs}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
-              style={{ background: TERM_BORDER, color: logsCopied ? "#4ec994" : TERM_TEXT }}
+              style={{ background: T.border, color: logsCopied ? "#4ec994" : T.text }}
               title="Copy all logs"
             >
               {logsCopied ? <Check size={12} /> : <Copy size={12} />}
@@ -514,9 +529,9 @@ export default function PM2Page() {
           {/* Log content */}
           <div
             className="font-mono text-[11px] leading-relaxed p-4 overflow-auto"
-            style={{ background: TERM_BG, color: TERM_TEXT, maxHeight: "60vh" }}
+            style={{ background: T.bg, color: T.text, maxHeight: "60vh" }}
           >
-            <AnsiText text={logs?.content || "No logs available"} />
+            <AnsiText text={logs?.content || "No logs available"} fg={T.text} />
           </div>
         </div>
       </Modal>
