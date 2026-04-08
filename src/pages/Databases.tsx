@@ -251,11 +251,30 @@ export default function DatabasesPage() {
     const type = browserDb.type;
     if (type === "mongodb") {
       const filter = buildMongoFilter(columns, original);
-      const doc = Object.fromEntries(columns.filter(c => c !== "_id").map((c, idx) => {
+      const doc = Object.fromEntries(columns.filter(c => c !== "_id").map((c) => {
         const i = columns.indexOf(c);
         return [c, row[i] ?? null];
       }));
       await runSql(`db.${selectedTable}.updateOne(${filter}, {$set: ${JSON.stringify(doc)}})`, "Document updated");
+    } else if (type === "redis") {
+      const key = selectedTable;
+      if (columns.includes("field")) {
+        const field = row[columns.indexOf("field")];
+        const val = row[columns.indexOf("value")] ?? "";
+        await runSql(`HSET ${key} ${field} ${val}`, "Hash field updated");
+      } else if (columns.includes("index")) {
+        const idx = row[columns.indexOf("index")];
+        const val = row[columns.indexOf("value")] ?? "";
+        await runSql(`LSET ${key} ${idx} ${val}`, "List item updated");
+      } else if (columns.includes("member")) {
+        const oldMember = original[columns.indexOf("member")];
+        const newMember = row[columns.indexOf("member")];
+        await runSql(`SREM ${key} ${oldMember}`, "Removing old member");
+        await runSql(`SADD ${key} ${newMember}`, "Set member updated");
+      } else {
+        const val = row[columns.indexOf("value")] ?? "";
+        await runSql(`SET ${key} ${val}`, "Key updated");
+      }
     } else {
       const qt = (c: string) => quoteId(c, type);
       const sets = columns.map((c, i) => `${qt(c)} = '${String(row[i] ?? "").replace(/'/g, "''")}'`).join(", ");
@@ -273,6 +292,20 @@ export default function DatabasesPage() {
     if (type === "mongodb") {
       const filter = buildMongoFilter(columns, row);
       await runSql(`db.${selectedTable}.deleteOne(${filter})`, "Document deleted");
+    } else if (type === "redis") {
+      const key = selectedTable;
+      if (columns.includes("field")) {
+        const field = row[columns.indexOf("field")];
+        await runSql(`HDEL ${key} ${field}`, "Hash field deleted");
+      } else if (columns.includes("index")) {
+        const val = row[columns.indexOf("value")];
+        await runSql(`LREM ${key} 0 ${val}`, "List item deleted");
+      } else if (columns.includes("member")) {
+        const member = row[columns.indexOf("member")];
+        await runSql(`SREM ${key} ${member}`, "Set member deleted");
+      } else {
+        await runSql(`DEL ${key}`, "Key deleted");
+      }
     } else {
       const where = buildWhereClause(columns, row);
       const qt = (c: string) => quoteId(c, type);
@@ -739,7 +772,7 @@ export default function DatabasesPage() {
                   ) : tableData ? (
                     <EditableDataTable
                       data={tableData}
-                      canEdit={browserDb.type !== "redis"}
+                      canEdit={true}
                       onEdit={row => setEditRowModal({ columns: tableData.columns, row: [...row], original: [...row] })}
                       onDelete={row => setDeleteRowModal({ columns: tableData.columns, row })}
                     />
