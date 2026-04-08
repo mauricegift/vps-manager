@@ -43,9 +43,9 @@ const CTRL_KEYS = [
   { label: "↓", title: "Next command", raw: "__HIST_DOWN__" },
 ];
 
-const MIN_FONT = 9;
+const MIN_FONT = 5;
 const MAX_FONT = 22;
-const DEFAULT_FONT = 12.5;
+const DEFAULT_FONT = typeof window !== "undefined" && window.innerWidth < 640 ? 5 : 12.5;
 
 export default function TerminalPage() {
   const { activeServer } = useRemoteServer();
@@ -261,8 +261,9 @@ export default function TerminalPage() {
                 </div>
               );
             }
+            /* output: no forced color — let ANSI spans shine through */
             return (
-              <div key={i} style={{ color: MONOKAI.text }}>
+              <div key={i}>
                 <AnsiText text={line.text} />
               </div>
             );
