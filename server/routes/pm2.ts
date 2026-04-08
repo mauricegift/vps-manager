@@ -99,10 +99,39 @@ router.post('/:id/delete', async (req, res) => {
 
 router.get('/:id/logs', async (req, res) => {
   try {
-    const { stdout } = await runPM2(`logs ${req.params.id} --lines 200 --nostream`);
-    res.json({ success: true, data: stdout });
+    const id = req.params.id;
+    // Get full process list (raw jlist includes pm2_env with log file paths)
+    const processes = await listProcesses();
+    const proc = processes.find((p: any) =>
+      String(p.pm_id) === String(id) || p.name === id
+    );
+
+    const outLog: string = proc?.pm2_env?.pm_out_log_path || '';
+    const errLog: string = proc?.pm2_env?.pm_err_log_path || '';
+
+    if (outLog) {
+      let content = '';
+      try {
+        const { stdout } = await execAsync(`tail -n 300 "${outLog}" 2>/dev/null || true`, { timeout: 5000 });
+        content += stdout;
+      } catch { /* ignore */ }
+      if (errLog && errLog !== outLog) {
+        try {
+          const { stdout } = await execAsync(`tail -n 150 "${errLog}" 2>/dev/null || true`, { timeout: 5000 });
+          if (stdout.trim()) content += `\n\x1b[31m\n── stderr ──\x1b[0m\n${stdout}`;
+        } catch { /* ignore */ }
+      }
+      return res.json({ success: true, data: content || '(no log output yet)' });
+    }
+
+    // Fallback: pm2 logs with a short timeout & limited lines
+    const { stdout } = await execAsync(
+      `pm2 logs ${id} --lines 100 --nostream --no-color 2>&1`,
+      { timeout: 12000 }
+    );
+    res.json({ success: true, data: stdout || 'No logs available' });
   } catch (e: any) {
-    res.json({ success: true, data: e.message || 'No logs' });
+    res.json({ success: true, data: e.stdout || e.message || 'No logs available' });
   }
 });
 
@@ -120,13 +149,51 @@ router.post('/terminal', async (req, res) => {
       return res.status(400).json({ success: false, error: 'command is required' });
     }
     const trimmed = command.trim();
-    // Strip leading "pm2 " if user typed it
     const args = trimmed.replace(/^pm2\s+/i, '').trim();
-    const firstWord = args.split(/\s+/)[0].toLowerCase();
+    const parts = args.split(/\s+/);
+    const firstWord = parts[0].toLowerCase();
     if (!ALLOWED_PM2_CMDS.includes(firstWord)) {
       return res.status(400).json({ success: false, error: `Command not allowed: ${firstWord}` });
     }
-    const { stdout, stderr } = await execAsync(`pm2 ${args} 2>&1`, { timeout: 15000, env: COLOR_ENV });
+
+    // `logs` can hang with pm2 daemon — read files directly instead
+    if (firstWord === 'logs') {
+      const nameOrId = parts[1] || '';
+      const lines = parseInt(
+        (parts.find(p => /^\d+$/.test(p) && p !== nameOrId) || parts[parts.indexOf('--lines') + 1] || ''),
+        10
+      ) || 100;
+
+      const processes = await listProcesses();
+      const proc = processes.find((p: any) =>
+        !nameOrId || String(p.pm_id) === nameOrId || p.name === nameOrId
+      );
+      const outLog: string = proc?.pm2_env?.pm_out_log_path || '';
+      const errLog: string = proc?.pm2_env?.pm_err_log_path || '';
+
+      if (outLog) {
+        let content = '';
+        try {
+          const { stdout } = await execAsync(`tail -n ${lines} "${outLog}" 2>/dev/null || true`, { timeout: 5000 });
+          content += stdout;
+        } catch { /* ignore */ }
+        if (errLog && errLog !== outLog) {
+          try {
+            const { stdout } = await execAsync(`tail -n ${Math.ceil(lines / 2)} "${errLog}" 2>/dev/null || true`, { timeout: 5000 });
+            if (stdout.trim()) content += `\n\x1b[31m── stderr ──\x1b[0m\n${stdout}`;
+          } catch { /* ignore */ }
+        }
+        return res.json({ success: true, data: content || '(no log output yet)' });
+      }
+      // No log path found — fallback with nostream
+      const { stdout } = await execAsync(
+        `pm2 logs ${nameOrId} --lines ${lines} --nostream --no-color 2>&1`,
+        { timeout: 15000 }
+      );
+      return res.json({ success: true, data: stdout || '(no logs)' });
+    }
+
+    const { stdout, stderr } = await execAsync(`pm2 ${args} 2>&1`, { timeout: 20000, env: COLOR_ENV });
     res.json({ success: true, data: stdout || stderr || '(no output)' });
   } catch (e: any) {
     res.json({ success: true, data: e.stdout || e.stderr || e.message || 'Error running command' });
