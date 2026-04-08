@@ -387,15 +387,17 @@ export default function Servers() {
               </div>
             </div>
 
-            <div className="rounded-xl bg-[var(--foreground)] px-3 py-2">
-              <p className="text-xs text-[var(--muted)] mb-1">Disk (/)</p>
-              <p className="text-lg font-bold">{remoteInfo.disk?.use?.toFixed(1)}%</p>
-              <p className="text-xs text-[var(--muted)]">{formatBytes(remoteInfo.disk?.used)} used / {formatBytes(remoteInfo.disk?.total)} total</p>
-              <div className="mt-1.5 h-1.5 rounded-full bg-[var(--line)] overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full"
-                  style={{ width: `${Math.min(remoteInfo.disk?.use || 0, 100)}%` }} />
+            {remoteInfo.disk?.map((d: any, i: number) => (
+              <div key={i} className="rounded-xl bg-[var(--foreground)] px-3 py-2">
+                <p className="text-xs text-[var(--muted)] mb-1">Disk {d.mount || '/'} <span className="font-mono">{d.fs}</span></p>
+                <p className="text-lg font-bold">{d.use?.toFixed(1)}%</p>
+                <p className="text-xs text-[var(--muted)]">{formatBytes(d.used)} used / {formatBytes(d.size)} total</p>
+                <div className="mt-1.5 h-1.5 rounded-full bg-[var(--line)] overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full"
+                    style={{ width: `${Math.min(d.use || 0, 100)}%` }} />
+                </div>
               </div>
-            </div>
+            ))}
           </div>
         ) : (
           <p className="text-center text-[var(--muted)] py-8 text-sm">Could not retrieve system info</p>
