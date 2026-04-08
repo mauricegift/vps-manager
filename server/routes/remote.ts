@@ -104,7 +104,7 @@ router.post('/:id/pm2/terminal', async (req, res) => {
     const args = (command || '').trim().replace(/^pm2\s+/i, '').trim();
     const first = args.split(/\s+/)[0].toLowerCase();
     if (!ALLOWED_PM2.includes(first)) return res.status(400).json({ success: false, error: `Not allowed: ${first}` });
-    const { stdout, stderr } = await runSSHCommand(conn, `pm2 ${args} --no-color 2>&1`);
+    const { stdout, stderr } = await runSSHCommand(conn, `FORCE_COLOR=3 COLORTERM=truecolor pm2 ${args} 2>&1`);
     res.json({ success: true, data: stdout || stderr || '(no output)' });
   } catch (e: any) {
     res.json({ success: true, data: e.message });
