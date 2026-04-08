@@ -437,11 +437,11 @@ router.get('/:id/databases/:type/:dbName/:table/data', async (req, res) => {
         pgTry(`-tAc "SELECT COUNT(*) FROM \\"${tbl}\\""`, db)
       );
       total = parseInt(cnt.trim()) || rows.length;
-    } else if (type === 'mysql') {
+    } else if (type === 'mysql' || type === 'mariadb') {
       const { stdout } = await runSSHCommand(conn,
         mysqlTry(`"SELECT * FROM \\\`${tbl}\\\` LIMIT 50 OFFSET ${offset}"`, db, '-B')
       );
-      const lines = stdout.trim().split('\n').filter(l => l && !l.startsWith('ERROR') && !l.startsWith('mysql:'));
+      const lines = stdout.trim().split('\n').filter(l => l && !l.startsWith('ERROR') && !l.startsWith('mysql:') && !l.startsWith('Warning'));
       if (lines.length > 0) {
         columns = lines[0].split('\t');
         rows = lines.slice(1).map(l => l.split('\t'));
@@ -449,7 +449,7 @@ router.get('/:id/databases/:type/:dbName/:table/data', async (req, res) => {
       const { stdout: cnt } = await runSSHCommand(conn,
         mysqlTry(`"SELECT COUNT(*) FROM \\\`${tbl}\\\`"`, db)
       );
-      total = parseInt(cnt.trim()) || rows.length;
+      total = parseInt(cnt.trim().split('\n').pop() || '0') || rows.length;
     } else if (type === 'mongodb') {
       const { stdout } = await runSSHCommand(conn,
         `mongosh --quiet ${JSON.stringify(db)} --eval "JSON.stringify(db.${tbl}.find().skip(${offset}).limit(50).toArray())" 2>&1`
@@ -528,12 +528,12 @@ router.post('/:id/databases/:type/:dbName/query', async (req, res) => {
       const parsed = parseCSV(cleanOut);
       columns = parsed.columns;
       rows = parsed.rows;
-    } else if (type === 'mysql') {
+    } else if (type === 'mysql' || type === 'mariadb') {
       const safe = sql.replace(/"/g, '\\"');
       const { stdout } = await runSSHCommand(conn,
         mysqlTry(`"${safe}"`, db, '-B')
       );
-      const lines = stdout.trim().split('\n').filter(l => l && !l.startsWith('ERROR') && !l.startsWith('mysql:'));
+      const lines = stdout.trim().split('\n').filter(l => l && !l.startsWith('ERROR') && !l.startsWith('mysql:') && !l.startsWith('Warning'));
       if (lines.length > 0) {
         columns = lines[0].split('\t');
         rows = lines.slice(1).map(l => l.split('\t'));
@@ -925,12 +925,52 @@ router.get('/:id/nginx/status', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ error: 'Server not found' });
-    const version = (await runSSHCommand(conn, 'nginx -v 2>&1')).stdout + (await runSSHCommand(conn, 'nginx -v 2>&1')).stderr;
-    const installed = /nginx/i.test(version);
-    const test = (await runSSHCommand(conn, 'nginx -t 2>&1')).stdout + (await runSSHCommand(conn, 'nginx -t 2>&1')).stderr;
-    const configOk = test.includes('syntax is ok');
-    const running = (await runSSHCommand(conn, 'systemctl is-active nginx 2>/dev/null || service nginx status 2>/dev/null | grep -c running || echo inactive')).stdout.trim() === 'active';
-    res.json({ installed, configOk, running, version: version.trim(), testOutput: test.trim() });
+
+    // Run all checks in parallel via a single SSH session
+    const [versionR, runningR, certbotR] = await Promise.all([
+      runSSHCommand(conn, 'nginx -v 2>&1 || echo "not installed"'),
+      runSSHCommand(conn, 'systemctl is-active nginx 2>/dev/null || echo inactive'),
+      runSSHCommand(conn, 'certbot --version 2>&1 || echo "not installed"'),
+    ]);
+
+    const version   = (versionR.stdout + versionR.stderr).trim();
+    const installed = /nginx/i.test(version) && !version.includes('not installed');
+    const running   = runningR.stdout.trim() === 'active';
+
+    let test = '';
+    let configOk = false;
+    if (installed) {
+      const testR = await runSSHCommand(conn, 'nginx -t 2>&1');
+      test     = (testR.stdout + testR.stderr).trim();
+      configOk = test.includes('syntax is ok');
+    }
+
+    const certbotVer      = (certbotR.stdout + certbotR.stderr).trim();
+    const certbotInstalled = /certbot/i.test(certbotVer) && !certbotVer.includes('not installed');
+
+    // Check for available updates (best-effort)
+    let nginxUpdateAvailable   = false;
+    let certbotUpdateAvailable = false;
+    if (installed) {
+      const ng = await runSSHCommand(conn, 'apt-cache policy nginx 2>/dev/null | grep -E "Installed:|Candidate:" | head -2 || true');
+      const lines = (ng.stdout + ng.stderr).split('\n').map(l => l.trim());
+      const inst = lines.find(l => l.startsWith('Installed:'))?.replace('Installed:', '').trim() ?? '';
+      const cand = lines.find(l => l.startsWith('Candidate:'))?.replace('Candidate:', '').trim() ?? '';
+      nginxUpdateAvailable = !!inst && !!cand && inst !== cand;
+    }
+    if (certbotInstalled) {
+      const cb = await runSSHCommand(conn, 'apt-cache policy certbot 2>/dev/null | grep -E "Installed:|Candidate:" | head -2 || true');
+      const lines = (cb.stdout + cb.stderr).split('\n').map(l => l.trim());
+      const inst = lines.find(l => l.startsWith('Installed:'))?.replace('Installed:', '').trim() ?? '';
+      const cand = lines.find(l => l.startsWith('Candidate:'))?.replace('Candidate:', '').trim() ?? '';
+      certbotUpdateAvailable = !!inst && !!cand && inst !== cand;
+    }
+
+    res.json({
+      installed, configOk, running, version, testOutput: test,
+      nginxUpdateAvailable,
+      certbotInstalled, certbotVersion: certbotVer, certbotUpdateAvailable,
+    });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
