@@ -246,7 +246,7 @@ export default function ExtrasPage() {
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [showPass, setShowPass] = useState(false);
-  const [userForm, setUserForm] = useState({ username: "", password: "", shell: "/bin/bash", sudo: false });
+  const [userForm, setUserForm] = useState({ username: "", password: "", shell: "/bin/bash", sudo: false, type: "regular" as "regular" | "sub", homeDir: "" });
   const [keepHome, setKeepHome] = useState(false);
 
   const { data: tools = [], isLoading, refetch, isFetching } = useQuery<Tool[]>({
@@ -354,7 +354,7 @@ export default function ExtrasPage() {
     onSuccess: () => {
       toast.success("User created");
       setUserModal(null);
-      setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false });
+      setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false, type: "regular", homeDir: "" });
       qc.invalidateQueries({ queryKey: ["system-users"] });
     },
     onError: (e: any) => toast.error(e.response?.data?.error || "Failed to create user"),
@@ -658,7 +658,7 @@ export default function ExtrasPage() {
               )}
             </div>
             <button
-              onClick={() => { setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false }); setUserModal("create"); }}
+              onClick={() => { setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false, type: "regular", homeDir: "" }); setUserModal("create"); }}
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 transition-opacity"
             >
               <UserPlus size={14} /> New User
@@ -765,17 +765,48 @@ export default function ExtrasPage() {
           className="space-y-4"
         >
           {userModal === "create" && (
-            <div>
-              <label className="text-xs text-[var(--muted)] mb-1.5 block">Username</label>
-              <input
-                value={userForm.username}
-                onChange={e => setUserForm(f => ({ ...f, username: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))}
-                placeholder="username"
-                className={inp}
-                required
-                autoFocus
-              />
-            </div>
+            <>
+              <div>
+                <label className="text-xs text-[var(--muted)] mb-1.5 block">User Type</label>
+                <div className="flex gap-2">
+                  {(["regular", "sub"] as const).map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setUserForm(f => ({ ...f, type: t, shell: t === "sub" ? "/usr/sbin/nologin" : "/bin/bash", sudo: false }))}
+                      className={`flex-1 py-2 text-sm rounded-xl border transition-colors ${userForm.type === t ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--accent)]/50"}`}
+                    >
+                      {t === "regular" ? "Regular User" : "Sub User"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-[var(--muted)] mt-1.5">
+                  {userForm.type === "sub" ? "SFTP/service account — no shell login, restricted home directory." : "Full shell access with optional sudo privileges."}
+                </p>
+              </div>
+              <div>
+                <label className="text-xs text-[var(--muted)] mb-1.5 block">Username</label>
+                <input
+                  value={userForm.username}
+                  onChange={e => setUserForm(f => ({ ...f, username: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))}
+                  placeholder="username"
+                  className={inp}
+                  required
+                  autoFocus
+                />
+              </div>
+              {userForm.type === "sub" && (
+                <div>
+                  <label className="text-xs text-[var(--muted)] mb-1.5 block">Home Directory <span className="text-[var(--muted)]">(optional)</span></label>
+                  <input
+                    value={userForm.homeDir}
+                    onChange={e => setUserForm(f => ({ ...f, homeDir: e.target.value }))}
+                    placeholder={`/home/${userForm.username || "username"}`}
+                    className={inp}
+                  />
+                </div>
+              )}
+            </>
           )}
           <div>
             <label className="text-xs text-[var(--muted)] mb-1.5 block">
@@ -795,18 +826,20 @@ export default function ExtrasPage() {
               </button>
             </div>
           </div>
-          <div>
-            <label className="text-xs text-[var(--muted)] mb-1.5 block">Shell</label>
-            <select value={userForm.shell} onChange={e => setUserForm(f => ({ ...f, shell: e.target.value }))}
-              className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors">
-              <option value="/bin/bash">/bin/bash</option>
-              <option value="/bin/sh">/bin/sh</option>
-              <option value="/bin/zsh">/bin/zsh</option>
-              <option value="/usr/bin/fish">/usr/bin/fish</option>
-              <option value="/sbin/nologin">/sbin/nologin (no login)</option>
-            </select>
-          </div>
-          {userModal === "create" && (
+          {(userModal === "edit" || userForm.type === "regular") && (
+            <div>
+              <label className="text-xs text-[var(--muted)] mb-1.5 block">Shell</label>
+              <select value={userForm.shell} onChange={e => setUserForm(f => ({ ...f, shell: e.target.value }))}
+                className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors">
+                <option value="/bin/bash">/bin/bash</option>
+                <option value="/bin/sh">/bin/sh</option>
+                <option value="/bin/zsh">/bin/zsh</option>
+                <option value="/usr/bin/fish">/usr/bin/fish</option>
+                <option value="/sbin/nologin">/sbin/nologin (no login)</option>
+              </select>
+            </div>
+          )}
+          {userModal === "create" && userForm.type === "regular" && (
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={userForm.sudo} onChange={e => setUserForm(f => ({ ...f, sudo: e.target.checked }))}
                 className="rounded" />
