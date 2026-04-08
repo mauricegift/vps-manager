@@ -668,14 +668,20 @@ router.get('/:id/extras', async (req, res) => {
 
     // Comprehensive detection: check PATH, nvm, npm-global, ~/.bun, ~/.deno, ~/.cargo
     const script = `
-NPM_PREFIX=$(npm config get prefix 2>/dev/null)
-NPM_BIN="${'${NPM_PREFIX}'}/bin"
 NVM_ACTIVE=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1)
+NVM_BIN_DIR="$HOME/.nvm/versions/node/$NVM_ACTIVE/bin"
+# Get npm prefix: try nvm npm first, then PATH npm
+if [ -n "$NVM_ACTIVE" ] && [ -x "$NVM_BIN_DIR/npm" ]; then
+  NPM_PREFIX=$("$NVM_BIN_DIR/npm" config get prefix 2>/dev/null)
+else
+  NPM_PREFIX=$(npm config get prefix 2>/dev/null)
+fi
+NPM_BIN="${'${NPM_PREFIX}'}/bin"
 
 # find binary: returns path or empty
 find_bin() {
   local name=$1
-  for p in $(which "$name" 2>/dev/null) "$NPM_BIN/$name" "$HOME/.local/bin/$name" "$HOME/.bun/bin/$name" "$HOME/.deno/bin/$name" "$HOME/.cargo/bin/$name" "$HOME/go/bin/$name" /usr/local/go/bin/$name /usr/local/bin/$name /usr/bin/$name /bin/$name; do
+  for p in $(which "$name" 2>/dev/null) "$NVM_BIN_DIR/$name" "$NPM_BIN/$name" "$HOME/.local/bin/$name" "$HOME/.bun/bin/$name" "$HOME/.deno/bin/$name" "$HOME/.cargo/bin/$name" "$HOME/go/bin/$name" /usr/local/go/bin/$name /usr/local/bin/$name /usr/bin/$name /bin/$name; do
     [ -x "$p" ] && echo "$p" && return
   done
 }
@@ -792,8 +798,31 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
 });
 
 // ── Remote Extras: install/update ─────────────────────────────────────────────
+
+const NPM_DEPENDENT_REMOTE = new Set(['pm2','pnpm','yarn','npm','wrangler','bun']);
+
+const REMOTE_NVM_ENSURE_NODE24 = `
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
+if ! command -v npm >/dev/null 2>&1; then
+  echo "==> npm/node not found. Installing Node.js v24 via nvm..."
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash 2>&1
+  export NVM_DIR="$HOME/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  nvm install 24 2>&1 && nvm use 24 2>&1 && nvm alias default 24 2>&1
+  echo "==> Node.js $(node --version 2>/dev/null) / npm $(npm --version 2>/dev/null) ready"
+fi
+`;
+
 const REMOTE_INSTALL: Record<string, (opts: any) => string> = {
-  nodejs: (o) => { const v = o?.nodeVersion || '20'; return `curl -fsSL https://deb.nodesource.com/setup_${v}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs`; },
+  nodejs: (o) => {
+    const v = o?.nodeVersion || '24';
+    return `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; ` +
+      `if command -v nvm >/dev/null 2>&1; then nvm install ${v} 2>&1 && nvm use ${v} 2>&1 && nvm alias default ${v} 2>&1; else ` +
+      `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash 2>&1 && ` +
+      `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && ` +
+      `nvm install ${v} 2>&1 && nvm use ${v} 2>&1 && nvm alias default ${v} 2>&1; fi`;
+  },
   npm:    () => `npm install -g npm@latest`,
   bun:    () => `curl -fsSL https://bun.sh/install | bash 2>&1 || npm install -g bun`,
   deno:   () => `curl -fsSL https://deno.land/install.sh | sh`,
@@ -878,7 +907,10 @@ router.post('/:id/extras/:tool/install', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
     const installCmd = cmdFn(req.body);
-    const fullScript = `apt-get update -qq 2>&1; ${installCmd} 2>&1`;
+    const nvmPrefix = NPM_DEPENDENT_REMOTE.has(tool) ? REMOTE_NVM_ENSURE_NODE24 : '';
+    const needsAptUpdate = tool.startsWith('python') || ['nginx','apache','certbot','git','curl','wget','rsync','vim','nvim','htop','tmux','screen','ufw','fail2ban-client','jq','unzip','go'].includes(tool);
+    const aptPrefix = needsAptUpdate ? 'apt-get update -qq 2>&1\n' : '';
+    const fullScript = nvmPrefix + aptPrefix + installCmd + ' 2>&1\n';
     const b64 = Buffer.from(fullScript, 'utf8').toString('base64');
     const cmd = `bash -l -c "$(echo '${b64}' | base64 -d)"`;
     const { stdout, stderr, code } = await runSSHCommand(conn, cmd);
