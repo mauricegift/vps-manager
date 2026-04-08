@@ -364,8 +364,32 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
 });
 
 // ── Install/Update ────────────────────────────────────────────────────────────
+
+// Tools that require npm/node — if npm is missing, install Node.js 24 via nvm first
+const NPM_DEPENDENT_LOCAL = new Set(['pm2','pnpm','yarn','npm','wrangler','bun']);
+
+const NVM_ENSURE_NODE24 = `
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
+if ! command -v npm >/dev/null 2>&1; then
+  echo "==> npm/node not found. Installing Node.js v24 via nvm..."
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash 2>&1
+  export NVM_DIR="$HOME/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+  nvm install 24 2>&1 && nvm use 24 2>&1 && nvm alias default 24 2>&1
+  echo "==> Node.js $(node --version 2>/dev/null) / npm $(npm --version 2>/dev/null) ready"
+fi
+`;
+
 const INSTALL_CMDS: Record<string, (opts: any) => string> = {
-  nodejs: (o) => { const v = o?.nodeVersion || '20'; return `curl -fsSL https://deb.nodesource.com/setup_${v}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs`; },
+  nodejs: (o) => {
+    const v = o?.nodeVersion || '24';
+    return `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; ` +
+      `if command -v nvm >/dev/null 2>&1; then nvm install ${v} 2>&1 && nvm use ${v} 2>&1 && nvm alias default ${v} 2>&1; else ` +
+      `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash 2>&1 && ` +
+      `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && ` +
+      `nvm install ${v} 2>&1 && nvm use ${v} 2>&1 && nvm alias default ${v} 2>&1; fi`;
+  },
   npm:    () => `npm install -g npm@latest`,
   bun:    () => `curl -fsSL https://bun.sh/install | bash 2>&1 || npm install -g bun`,
   deno:   () => `curl -fsSL https://deno.land/install.sh | sh`,
@@ -469,9 +493,18 @@ router.post('/:tool/install', async (req, res) => {
   const cmdFn = INSTALL_CMDS[tool];
   if (!cmdFn) return res.status(400).json({ success: false, error: 'Unknown tool' });
   try {
-    const update = tool.startsWith('python') || ['nginx','apache','certbot','git','curl','wget','rsync','vim','nvim','htop','tmux','screen','ufw','fail2ban-client','jq','unzip','go'].includes(tool);
-    const prefix = update ? 'apt-get update -qq 2>&1; ' : '';
-    const output = await run(prefix + cmdFn(req.body), 300000);
+    const needsAptUpdate = tool.startsWith('python') || ['nginx','apache','certbot','git','curl','wget','rsync','vim','nvim','htop','tmux','screen','ufw','fail2ban-client','jq','unzip','go'].includes(tool);
+    const aptPrefix = needsAptUpdate ? 'apt-get update -qq 2>&1\n' : '';
+    const nvmPrefix = NPM_DEPENDENT_LOCAL.has(tool) ? NVM_ENSURE_NODE24 : '';
+    const fullScript = nvmPrefix + aptPrefix + cmdFn(req.body) + '\n';
+    let output: string;
+    try {
+      const result = await execAsync(fullScript, { timeout: 300000, env: { ...process.env, HOME }, shell: '/bin/bash' });
+      output = (result.stdout + result.stderr).trim();
+    } catch (e: any) {
+      const out = ((e.stdout || '') + (e.stderr || '') + (e.message || '')).trim();
+      return res.status(500).json({ success: false, error: 'Installation failed', output: out });
+    }
     res.json({ success: true, output });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
