@@ -53,6 +53,8 @@ export default function DockerPage() {
   const [logs, setLogs] = useState<{ name: string; content: string } | null>(null);
   const [pullModal, setPullModal] = useState(false);
   const [pullImage, setPullImage] = useState("");
+  const [pullPort, setPullPort] = useState("");
+  const [pullAutoRun, setPullAutoRun] = useState(false);
   const [installingDocker, setInstallingDocker] = useState(false);
 
   // Compose YAML creation
@@ -128,14 +130,18 @@ export default function DockerPage() {
   });
 
   const pullMutation = useMutation({
-    mutationFn: (image: string) => api.post("/docker/images/pull", { image }),
-    onSuccess: () => {
-      toast.success("Image pulled");
+    mutationFn: (opts: { image: string; port?: string; autoRun?: boolean }) =>
+      api.post("/docker/images/pull", opts),
+    onSuccess: (_, opts) => {
+      toast.success(opts.autoRun && opts.port ? `Image pulled & container started on port ${opts.port}` : "Image pulled");
       qc.invalidateQueries({ queryKey: ["docker-images"] });
+      qc.invalidateQueries({ queryKey: ["docker-containers"] });
       setPullModal(false);
       setPullImage("");
+      setPullPort("");
+      setPullAutoRun(false);
     },
-    onError: () => toast.error("Failed to pull image"),
+    onError: (e: any) => toast.error(e.response?.data?.error || "Failed to pull image"),
   });
 
   const composeMutation = useMutation({
@@ -510,18 +516,42 @@ export default function DockerPage() {
       </Modal>
 
       {/* Pull */}
-      <Modal isOpen={pullModal} onClose={() => setPullModal(false)} title="Pull Docker Image">
-        <form onSubmit={(e) => { e.preventDefault(); pullMutation.mutate(pullImage); }} className="space-y-4">
-          <input
-            value={pullImage} onChange={e => setPullImage(e.target.value)}
-            placeholder="nginx:latest"
-            className={inpCls + " font-mono"}
-            required
-          />
+      <Modal isOpen={pullModal} onClose={() => { setPullModal(false); setPullPort(""); setPullAutoRun(false); }} title="Pull Docker Image">
+        <form onSubmit={(e) => { e.preventDefault(); pullMutation.mutate({ image: pullImage, port: pullPort || undefined, autoRun: pullAutoRun }); }} className="space-y-4">
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">Image Name</label>
+            <input
+              value={pullImage} onChange={e => setPullImage(e.target.value)}
+              placeholder="nginx:latest"
+              className={inpCls + " font-mono"}
+              required
+            />
+          </div>
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">Custom Port Mapping <span className="text-[var(--muted)] font-normal">(optional)</span></label>
+            <input
+              value={pullPort}
+              onChange={e => setPullPort(e.target.value)}
+              placeholder="e.g. 8080:80  or  3000:3000"
+              className={inpCls + " font-mono"}
+            />
+            <p className="text-[10px] text-[var(--muted)] mt-1">Format: host_port:container_port — overrides the image's default port</p>
+          </div>
+          {pullPort && (
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <div
+                onClick={() => setPullAutoRun(v => !v)}
+                className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${pullAutoRun ? "bg-[var(--accent)]" : "bg-[var(--foreground)] border border-[var(--line)]"}`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${pullAutoRun ? "translate-x-4" : "translate-x-0.5"}`} />
+              </div>
+              <span className="text-sm">Auto-run container after pull</span>
+            </label>
+          )}
           <div className="flex gap-2 justify-end">
-            <button type="button" onClick={() => setPullModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
-            <button type="submit" disabled={pullMutation.isPending} className="px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
-              {pullMutation.isPending ? "Pulling..." : "Pull"}
+            <button type="button" onClick={() => { setPullModal(false); setPullPort(""); setPullAutoRun(false); }} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+            <button type="submit" disabled={pullMutation.isPending} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
+              <Download size={14} /> {pullMutation.isPending ? "Pulling..." : (pullAutoRun && pullPort ? "Pull & Run" : "Pull")}
             </button>
           </div>
         </form>
