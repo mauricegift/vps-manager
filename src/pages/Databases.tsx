@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTheme } from "@/context/ThemeContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
@@ -29,6 +30,7 @@ interface TableInfo { name: string; rows?: number; size?: string; }
 export default function DatabasesPage() {
   const qc = useQueryClient();
   const { activeServer } = useRemoteServer();
+  const { theme } = useTheme();
 
   const [browserDb, setBrowserDb] = useState<{ type: string; name: string } | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
@@ -453,7 +455,14 @@ export default function DatabasesPage() {
       {/* Output modal */}
       {outputModal && (
         <Modal isOpen onClose={() => setOutputModal(null)} title={outputModal.title} size="lg">
-          <pre className="text-[11px] font-mono bg-[#111] text-green-400 rounded-xl p-4 overflow-auto max-h-96 whitespace-pre-wrap">
+          <pre
+            className="text-[11px] font-mono rounded-xl p-4 overflow-auto max-h-96 whitespace-pre-wrap leading-relaxed"
+            style={{
+              background: theme === "dark" ? "#111" : "#f5f5f5",
+              color: theme === "dark" ? "#4ec994" : "#16803c",
+              border: `1px solid ${theme === "dark" ? "#222" : "#d1d5db"}`,
+            }}
+          >
             {outputModal.output}
           </pre>
         </Modal>
