@@ -146,18 +146,18 @@ io.on('connection', async (socket) => {
       setTimeout(startShell, 1000);
     });
 
-    // Bootstrap color aliases — runs silently, no output
+    // Bootstrap color helpers — use functions (work in non-interactive bash, unlike aliases)
     setTimeout(() => {
       if (shellProc?.stdin?.writable) {
         shellProc.stdin.write(
-          'alias ls="ls --color=always"\n' +
-          'alias ll="ls -la --color=always"\n' +
-          'alias grep="grep --color=always"\n' +
-          'alias diff="diff --color=always"\n' +
+          'ls() { command ls --color=always "$@"; }; export -f ls\n' +
+          'll() { command ls -la --color=always "$@"; }; export -f ll\n' +
+          'grep() { command grep --color=always "$@"; }; export -f grep\n' +
+          'diff() { command diff --color=always "$@"; }; export -f diff\n' +
           'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
         );
       }
-    }, 400);
+    }, 600);
   };
 
   socket.on('command', (cmd: string) => {
