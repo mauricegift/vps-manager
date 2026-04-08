@@ -27,8 +27,9 @@ const converter = new AnsiToHtml({
   },
 });
 
-function cleanTerminal(raw: string): string {
+export function cleanTerminal(raw: string): string {
   return raw
+    .replace(/\r\n/g, "\n")
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[\?[0-9;]*[hl]/g, "")
     .replace(/\x1b\[[0-9;]*[ABCDEFGHJKLMSTfnsu]/g, "")
@@ -36,7 +37,7 @@ function cleanTerminal(raw: string): string {
     .replace(/\x1bM/g, "")
     .replace(/\x1b[@-Z\\-_]/g, "")
     .replace(/[^\n]*\r([^\n\r])/g, "$1")
-    .replace(/[^\n]*\r$/gm, "");
+    .replace(/\r/g, "");
 }
 
 interface Props {
