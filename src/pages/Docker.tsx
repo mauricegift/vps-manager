@@ -465,9 +465,16 @@ export default function DockerPage() {
                         <StatusBadge status={c.status} size="sm" />
                       </div>
                       {c.services.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mb-3">
+                        <div className="flex flex-wrap gap-1 mb-2">
                           {c.services.map(s => (
                             <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--foreground)] border border-[var(--line)] font-mono">{s}</span>
+                          ))}
+                        </div>
+                      )}
+                      {c.ports && c.ports.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-3">
+                          {c.ports.map((p, i) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-[var(--accent)] font-mono">:{p}</span>
                           ))}
                         </div>
                       )}
