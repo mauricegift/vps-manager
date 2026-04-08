@@ -49,11 +49,27 @@ router.get('/', async (_req, res) => {
 
 router.post('/start', async (req, res) => {
   try {
-    const { name, script, cwd } = req.body;
+    const { name, script, cwd, port, interpreter, envVars, pkgManager, installDeps } = req.body;
+    const isSh = (script as string).trim().endsWith('.sh');
     let cmd = `pm2 start "${script}" --name "${name}"`;
+    if (isSh || interpreter === 'bash') cmd += ' --interpreter bash';
     if (cwd) cmd += ` --cwd "${cwd}"`;
+    if (port) cmd += ` --env PORT=${port}`;
+    if (Array.isArray(envVars)) {
+      for (const { key, value } of envVars) {
+        if (key && key.trim()) cmd += ` --env ${key.trim()}=${value || ''}`;
+      }
+    }
+    if (installDeps && cwd) {
+      const pm = pkgManager === 'bun' ? 'bun' : 'npm';
+      const installCmd = pm === 'bun'
+        ? `(command -v bun >/dev/null 2>&1 || npm install -g bun) && cd "${cwd}" && bun install 2>&1`
+        : `cd "${cwd}" && npm install 2>&1`;
+      await execAsync(installCmd).catch(() => {});
+    }
     await execAsync(cmd);
-    await execAsync('pm2 save');
+    await execAsync('pm2 save').catch(() => {});
+    await execAsync('pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null').catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -72,6 +88,7 @@ router.post('/:id/stop', async (req, res) => {
 router.post('/:id/start', async (req, res) => {
   try {
     await runPM2(`start ${req.params.id}`);
+    execAsync('pm2 save').catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -81,6 +98,7 @@ router.post('/:id/start', async (req, res) => {
 router.post('/:id/restart', async (req, res) => {
   try {
     await runPM2(`restart ${req.params.id}`);
+    execAsync('pm2 save').catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
