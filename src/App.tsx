@@ -9,6 +9,7 @@ import FileManagerPage from "@/pages/FileManager";
 import TerminalPage from "@/pages/Terminal";
 import ServersPage from "@/pages/Servers";
 import ExtrasPage from "@/pages/Extras";
+import NginxPage from "@/pages/Nginx";
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/terminal" element={<TerminalPage />} />
           <Route path="/servers" element={<ServersPage />} />
           <Route path="/extras" element={<ExtrasPage />} />
+          <Route path="/nginx" element={<NginxPage />} />
         </Route>
       </Routes>
     </>
