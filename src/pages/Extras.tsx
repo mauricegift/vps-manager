@@ -27,7 +27,7 @@ interface Tool {
 }
 
 interface User {
-  username: string; uid: number; displayName?: string; home?: string; shell?: string;
+  username: string; uid: number; displayName?: string; home?: string; shell?: string; isCurrent?: boolean;
 }
 
 const SOFTWARE_GROUPS: { id: SoftwareSubTab; label: string; icon: React.ElementType; ids: string[] }[] = [
@@ -256,11 +256,11 @@ export default function ExtrasPage() {
     }
   }, [tools.length]);
 
-  const usersQuery = useQuery<User[]>({
+  const usersQuery = useQuery<{ users: User[]; currentUser: string }>({
     queryKey: ["system-users", activeServer?.id ?? "local"],
     queryFn: () => {
       const url = activeServer ? `/remote/${activeServer.id}/users` : `/extras/users`;
-      return api.get(url).then(r => r.data.data);
+      return api.get(url).then(r => ({ users: r.data.data, currentUser: r.data.currentUser || "" }));
     },
     staleTime: 10000,
     enabled: mainTab === "users",
@@ -360,7 +360,8 @@ export default function ExtrasPage() {
     setUserModal("edit");
   };
 
-  const userList = usersQuery.data || [];
+  const userList = usersQuery.data?.users || [];
+  const currentUser = usersQuery.data?.currentUser || "";
 
   const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
     { id: "system", label: "System", icon: RefreshCcw },
@@ -517,7 +518,14 @@ export default function ExtrasPage() {
       {mainTab === "users" && (
         <div data-aos="fade-up" className="space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-[var(--muted)]">System users with UID 1000+</p>
+            <div>
+              <p className="text-xs text-[var(--muted)]">System users on this server</p>
+              {currentUser && (
+                <p className="text-[11px] text-[var(--accent)] mt-0.5 font-mono">
+                  Connected as: <span className="font-bold">{currentUser}</span>
+                </p>
+              )}
+            </div>
             <button
               onClick={() => { setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false }); setUserModal("create"); }}
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 transition-opacity"
@@ -534,7 +542,7 @@ export default function ExtrasPage() {
             ) : userList.length === 0 ? (
               <div className="p-10 text-center text-[var(--muted)]">
                 <Users size={36} className="mx-auto mb-3 opacity-30" />
-                <p className="text-sm">No system users found (UID 1000+)</p>
+                <p className="text-sm">No system users found</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -544,13 +552,20 @@ export default function ExtrasPage() {
                   </thead>
                   <tbody>
                     {userList.map(user => (
-                      <tr key={user.username}>
+                      <tr key={user.username} className={user.isCurrent ? "bg-[var(--accent)]/5" : ""}>
                         <td>
                           <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center text-[10px] font-bold text-[var(--accent)]">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                              user.isCurrent
+                                ? "bg-[var(--accent)] text-white"
+                                : "bg-[var(--accent)]/10 border border-[var(--accent)]/20 text-[var(--accent)]"
+                            }`}>
                               {user.username[0]?.toUpperCase()}
                             </div>
                             <span className="font-medium text-sm">{user.username}</span>
+                            {user.isCurrent && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent)] text-white uppercase tracking-wide">you</span>
+                            )}
                             {user.displayName && <span className="text-xs text-[var(--muted)]">({user.displayName})</span>}
                           </div>
                         </td>
