@@ -16,7 +16,11 @@ type Tab = "configs" | "certs";
 
 interface NginxConfig { name: string; enabled: boolean; }
 interface NginxCert { name: string; domains: string[]; expiry?: string; valid: boolean; certPath?: string; keyPath?: string; }
-interface NginxStatus { installed: boolean; configOk: boolean; running: boolean; version: string; testOutput: string; }
+interface NginxStatus {
+  installed: boolean; configOk: boolean; running: boolean; version: string; testOutput: string;
+  nginxUpdateAvailable: boolean;
+  certbotInstalled: boolean; certbotVersion: string; certbotUpdateAvailable: boolean;
+}
 
 const inp = "px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none transition-colors w-full";
 
@@ -83,6 +87,48 @@ export default function NginxPage() {
     enabled: tab === "certs",
   });
   const certs = certsData?.data ?? [];
+
+  const installNginxMutation = useMutation({
+    mutationFn: () => api.post(`${base}/install`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Install Nginx", output: r.data.output });
+      if (r.data.ok) toast.success("Nginx installed and enabled!");
+      else toast.warning("Check output for details");
+      refetchStatus();
+    },
+    onError: () => toast.error("Install failed"),
+  });
+
+  const updateNginxMutation = useMutation({
+    mutationFn: () => api.post(`${base}/update`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Update Nginx", output: r.data.output });
+      toast.success("Nginx updated");
+      refetchStatus();
+    },
+    onError: () => toast.error("Update failed"),
+  });
+
+  const installCertbotMutation = useMutation({
+    mutationFn: () => api.post(`${base}/certbot/install`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Install Certbot", output: r.data.output });
+      if (r.data.ok) toast.success("Certbot installed!");
+      else toast.warning("Check output for details");
+      refetchStatus();
+    },
+    onError: () => toast.error("Certbot install failed"),
+  });
+
+  const updateCertbotMutation = useMutation({
+    mutationFn: () => api.post(`${base}/certbot/update`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Update Certbot", output: r.data.output });
+      toast.success("Certbot updated");
+      refetchStatus();
+    },
+    onError: () => toast.error("Certbot update failed"),
+  });
 
   const testMutation = useMutation({
     mutationFn: () => api.post(`${base}/test`),
@@ -267,36 +313,105 @@ export default function NginxPage() {
 
       {/* Status Bar */}
       {status && (
-        <div className="card p-4 flex flex-wrap gap-4">
-          <div className="flex items-center gap-2">
-            {status.installed
-              ? <CheckCircle size={15} className="text-green-500" />
-              : <XCircle size={15} className="text-red-500" />}
-            <span className="text-sm font-medium">
-              {status.installed ? "Nginx installed" : "Nginx not installed"}
-            </span>
-            {status.version && (
-              <span className="text-xs text-[var(--muted)] font-mono">
-                {status.version.match(/[\d]+\.[\d.]+/)?.[0]}
+        <div className="card p-4 space-y-3">
+          {/* Nginx row */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              {status.installed
+                ? <CheckCircle size={15} className="text-green-500" />
+                : <XCircle size={15} className="text-red-500" />}
+              <span className="text-sm font-medium">
+                {status.installed ? "Nginx installed" : "Nginx not installed"}
               </span>
+              {status.version && (
+                <span className="text-xs text-[var(--muted)] font-mono">
+                  {status.version.match(/[\d]+\.[\d.]+/)?.[0]}
+                </span>
+              )}
+            </div>
+            {status.installed && (
+              <>
+                <div className="flex items-center gap-2">
+                  {status.running
+                    ? <CheckCircle size={15} className="text-green-500" />
+                    : <XCircle size={15} className="text-red-500" />}
+                  <span className="text-sm font-medium">{status.running ? "Running" : "Stopped"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {status.configOk
+                    ? <CheckCircle size={15} className="text-green-500" />
+                    : <AlertTriangle size={15} className="text-amber-500" />}
+                  <span className="text-sm font-medium">{status.configOk ? "Config OK" : "Config error"}</span>
+                  {!status.configOk && status.testOutput && (
+                    <button
+                      onClick={() => setOutputModal({ title: "Config Error Details", output: status.testOutput })}
+                      className="text-xs text-[var(--accent)] hover:underline"
+                    >view</button>
+                  )}
+                </div>
+              </>
+            )}
+            {/* Install button if nginx not present */}
+            {!status.installed && (
+              <button
+                onClick={() => installNginxMutation.mutate()}
+                disabled={installNginxMutation.isPending}
+                className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5 ml-auto"
+              >
+                <Plus size={12} />
+                {installNginxMutation.isPending ? "Installing…" : "Install Nginx"}
+              </button>
+            )}
+            {/* Update button if update available */}
+            {status.installed && status.nginxUpdateAvailable && (
+              <button
+                onClick={() => updateNginxMutation.mutate()}
+                disabled={updateNginxMutation.isPending}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ml-auto"
+              >
+                <RefreshCw size={11} />
+                {updateNginxMutation.isPending ? "Updating…" : "Update Available"}
+              </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {status.running
-              ? <CheckCircle size={15} className="text-green-500" />
-              : <XCircle size={15} className="text-red-500" />}
-            <span className="text-sm font-medium">{status.running ? "Running" : "Stopped"}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {status.configOk
-              ? <CheckCircle size={15} className="text-green-500" />
-              : <AlertTriangle size={15} className="text-amber-500" />}
-            <span className="text-sm font-medium">{status.configOk ? "Config OK" : "Config error"}</span>
-            {!status.configOk && status.testOutput && (
+
+          {/* Certbot row */}
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-[var(--line)]">
+            <div className="flex items-center gap-2">
+              {status.certbotInstalled
+                ? <CheckCircle size={15} className="text-green-500" />
+                : <XCircle size={15} className="text-[var(--muted)]" />}
+              <span className="text-sm font-medium">
+                {status.certbotInstalled ? "Certbot installed" : "Certbot not installed"}
+              </span>
+              {status.certbotInstalled && status.certbotVersion && (
+                <span className="text-xs text-[var(--muted)] font-mono">
+                  {status.certbotVersion.match(/[\d]+\.[\d.]+/)?.[0]}
+                </span>
+              )}
+              {!status.certbotInstalled && (
+                <span className="text-xs text-[var(--muted)]">— needed for free SSL certificates</span>
+              )}
+            </div>
+            {!status.certbotInstalled && (
               <button
-                onClick={() => setOutputModal({ title: "Config Error Details", output: status.testOutput })}
-                className="text-xs text-[var(--accent)] hover:underline"
-              >view</button>
+                onClick={() => installCertbotMutation.mutate()}
+                disabled={installCertbotMutation.isPending}
+                className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5 ml-auto"
+              >
+                <Lock size={12} />
+                {installCertbotMutation.isPending ? "Installing…" : "Install Certbot"}
+              </button>
+            )}
+            {status.certbotInstalled && status.certbotUpdateAvailable && (
+              <button
+                onClick={() => updateCertbotMutation.mutate()}
+                disabled={updateCertbotMutation.isPending}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ml-auto"
+              >
+                <RefreshCw size={11} />
+                {updateCertbotMutation.isPending ? "Updating…" : "Update Certbot"}
+              </button>
             )}
           </div>
         </div>
