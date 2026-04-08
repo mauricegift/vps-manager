@@ -302,6 +302,7 @@ if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin google-chrome-stable); fi
 if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium-browser); fi
 if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium); fi
 emit chrome "$CHROME_P" "--version"
+emit wrangler "$(find_bin wrangler)"
 systemctl is-active nginx 2>/dev/null || echo "svc_nginx_inactive"
 systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "svc_apache_inactive"
 `;
@@ -356,6 +357,7 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
       { id: 'jq', name: 'jq', icon: '🔍', category: 'tool', description: 'Lightweight JSON processor', latestVersion: null, updateAvailable: false, ...t('jq') },
       { id: 'unzip', name: 'unzip', icon: '📂', category: 'tool', description: 'ZIP extraction utility', latestVersion: null, updateAvailable: false, ...t('unzip') },
       { id: 'chrome', name: 'Google Chrome', icon: '🌐', category: 'browser', description: 'Google Chrome web browser with headless support', latestVersion: null, updateAvailable: false, ...t('chrome') },
+      { id: 'wrangler', name: 'Wrangler', icon: '☁️', category: 'tool', description: 'Cloudflare Workers CLI for deploying to the edge', latestVersion: null, updateAvailable: false, ...t('wrangler') },
     ];
     res.json({ success: true, data });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
@@ -391,6 +393,7 @@ const INSTALL_CMDS: Record<string, (opts: any) => string> = {
   jq:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y jq`,
   unzip:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y unzip`,
   chrome: () => `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable && DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb`,
+  wrangler: () => `npm install -g wrangler`,
 };
 
 const UPDATE_CMDS: Record<string, string> = {
@@ -421,7 +424,45 @@ const UPDATE_CMDS: Record<string, string> = {
   jq:     'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade jq',
   unzip:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade unzip',
   chrome: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade google-chrome-stable',
+  wrangler: 'npm install -g wrangler@latest',
 };
+
+// ── Cloudflare credentials (persist to ~/.bashrc + creds file) ────────────────
+const CF_CREDS_FILE = path.join(HOME, '.vpsm_cloudflare.json');
+
+router.get('/cloudflare/creds', async (_req, res) => {
+  try {
+    if (fs.existsSync(CF_CREDS_FILE)) {
+      const creds = JSON.parse(fs.readFileSync(CF_CREDS_FILE, 'utf-8'));
+      res.json({ success: true, data: creds });
+    } else {
+      res.json({ success: true, data: { apiToken: '', accountId: '' } });
+    }
+  } catch { res.json({ success: true, data: { apiToken: '', accountId: '' } }); }
+});
+
+router.post('/cloudflare/creds', async (req, res) => {
+  const { apiToken = '', accountId = '' } = req.body;
+  try {
+    fs.writeFileSync(CF_CREDS_FILE, JSON.stringify({ apiToken, accountId }, null, 2));
+    // Persist to ~/.bashrc for shell sessions
+    const bashrcPath = path.join(HOME, '.bashrc');
+    let bashrc = fs.existsSync(bashrcPath) ? fs.readFileSync(bashrcPath, 'utf-8') : '';
+    // Remove old managed block
+    bashrc = bashrc.replace(/\n# --- Cloudflare \(VPS Manager\) ---[\s\S]*?# --- end Cloudflare ---\n?/g, '');
+    if (apiToken) {
+      const block = `\n# --- Cloudflare (VPS Manager) ---\nexport CLOUDFLARE_API_TOKEN="${apiToken}"\n${accountId ? `export CLOUDFLARE_ACCOUNT_ID="${accountId}"\n` : ''}# --- end Cloudflare ---\n`;
+      bashrc += block;
+    }
+    fs.writeFileSync(bashrcPath, bashrc);
+    // Set for current process so wrangler works immediately
+    if (apiToken) process.env.CLOUDFLARE_API_TOKEN = apiToken;
+    else delete process.env.CLOUDFLARE_API_TOKEN;
+    if (accountId) process.env.CLOUDFLARE_ACCOUNT_ID = accountId;
+    else delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
 
 router.post('/:tool/install', async (req, res) => {
   const { tool } = req.params;
