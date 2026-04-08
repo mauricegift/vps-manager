@@ -272,9 +272,12 @@ export default function FileManagerPage() {
           ? `https://${ghToken}@github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`
           : `https://github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`;
         const { data } = await api.post(`/remote/${activeServer.id}/exec`, {
-          command: `mkdir -p "${ghTargetDir}" && git clone "${cloneUrl}" "${ghTargetDir}" 2>&1`,
+          command: `mkdir -p "$(dirname "${ghTargetDir}")" && git clone "${cloneUrl}" "${ghTargetDir}" 2>&1`,
         });
-        setGhCloneOutput(data.data || "Cloned successfully");
+        const execOut = typeof data.data === "string"
+          ? data.data
+          : ((data.data?.stdout || "") + (data.data?.stderr || "")) || "Cloned successfully";
+        setGhCloneOutput(execOut);
         toast.success("Repository cloned");
       } else {
         const { data } = await api.post("/github/clone", {
