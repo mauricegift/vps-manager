@@ -294,9 +294,13 @@ router.post('/:type/:dbname/change-password', async (req, res) => {
       ].join(' ');
       await execAsync(`mysql -u root -e "${sql}" 2>&1`, { timeout: 15000 });
     } else if (type === 'postgresql') {
-      // Create/update a role scoped to this database
-      const sql = `DO $$BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${safeUser}') THEN CREATE USER "${safeUser}" WITH PASSWORD '${safePwd}'; ELSE ALTER USER "${safeUser}" WITH PASSWORD '${safePwd}'; END IF; END$$; GRANT ALL PRIVILEGES ON DATABASE "${dbname}" TO "${safeUser}";`;
-      await execAsync(`su - postgres -c "psql -c \\"${sql.replace(/"/g, '\\"')}\\""`, { timeout: 15000 });
+      // Try ALTER first (user exists), fall back to CREATE, then GRANT
+      try {
+        await execAsync(`su - postgres -c "psql -c \\"ALTER USER ${safeUser} WITH PASSWORD '${safePwd}';\\""`, { timeout: 10000 });
+      } catch {
+        await execAsync(`su - postgres -c "psql -c \\"CREATE USER ${safeUser} WITH PASSWORD '${safePwd}';\\""`, { timeout: 10000 });
+      }
+      await execAsync(`su - postgres -c "psql -c \\"GRANT ALL PRIVILEGES ON DATABASE ${dbname} TO ${safeUser};\\""`, { timeout: 10000 });
     } else if (type === 'redis') {
       const safePwdRedis = password.replace(/'/g, "\\'");
       await execAsync(`redis-cli CONFIG SET requirepass '${safePwdRedis}' 2>&1`, { timeout: 10000 });
