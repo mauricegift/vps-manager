@@ -341,8 +341,8 @@ router.post('/:id/exec', async (req, res) => {
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
     const { command } = req.body;
     if (!command) return res.status(400).json({ success: false, error: 'command required' });
-    const { stdout, stderr } = await runSSHCommand(conn, command);
-    res.json({ success: true, data: { stdout, stderr } });
+    const { stdout, stderr, code } = await runSSHCommand(conn, command);
+    res.json({ success: true, data: { stdout, stderr, code } });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
