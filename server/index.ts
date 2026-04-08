@@ -18,19 +18,40 @@ import serversRouter from './routes/vps-connections.js';
 import remoteRouter from './routes/remote.js';
 import extrasRouter from './routes/extras.js';
 import nginxRouter from './routes/nginx.js';
+import githubRouter from './routes/github.js';
 import { initDB } from './db.js';
 import pool from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const CUSTOM_DOMAIN = (process.env.ALLOWED_ORIGIN || '').trim();
+const ALLOWED_ORIGINS = [
+  'http://localhost:5758',
+  'http://127.0.0.1:5758',
+  'http://localhost:5000',
+  ...(CUSTOM_DOMAIN ? [CUSTOM_DOMAIN, CUSTOM_DOMAIN.replace(/^https?/, 'http'), CUSTOM_DOMAIN.replace(/^http:/, 'https:')] : []),
+];
+
+const corsOpts: cors.CorsOptions = {
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o)) || CUSTOM_DOMAIN === '*') {
+      cb(null, true);
+    } else {
+      cb(null, true); // permissive in dev; tighten by removing this and uncommenting below
+      // cb(new Error(`CORS: origin ${origin} not allowed`));
+    }
+  },
+  credentials: true,
+};
+
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIO(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: CUSTOM_DOMAIN || '*', methods: ['GET', 'POST'], credentials: true },
 });
 
-app.use(cors());
+app.use(cors(corsOpts));
 app.use(express.json());
 
 app.use('/api/system', systemRouter);
@@ -43,6 +64,7 @@ app.use('/api/servers', serversRouter);
 app.use('/api/remote', remoteRouter);
 app.use('/api/extras', extrasRouter);
 app.use('/api/nginx', nginxRouter);
+app.use('/api/github', githubRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
@@ -77,6 +99,27 @@ io.on('connection', async (socket) => {
                 socket.emit('system', '✗ SSH session ended');
                 sshClient?.end();
               });
+
+              // ── Silent init ──────────────────────────────────────────────
+              // Step 1: disable terminal echo (this one line will be echoed, then echo goes off)
+              setTimeout(() => {
+                if (stream.writable) stream.write('stty -echo 2>/dev/null\n');
+              }, 250);
+              // Step 2: setup commands — echo is off, nothing appears in output
+              setTimeout(() => {
+                if (stream.writable) {
+                  stream.write(
+                    'export FORCE_COLOR=3 COLORTERM=truecolor CLICOLOR=1 CLICOLOR_FORCE=1; ' +
+                    "alias ls='ls --color=always'; alias ll='ls -la --color=always'; " +
+                    "alias grep='grep --color=always'; alias diff='diff --color=always'; " +
+                    'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
+                  );
+                }
+              }, 500);
+              // Step 3: re-enable echo then clear screen — frontend will detect \x1b[2J and wipe display
+              setTimeout(() => {
+                if (stream.writable) stream.write('stty echo 2>/dev/null; clear\n');
+              }, 800);
 
               socket.on('command', (cmd: string) => {
                 if (stream.writable) stream.write(cmd + '\n');
