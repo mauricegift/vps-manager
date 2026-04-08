@@ -7,6 +7,7 @@ export default function Footer() {
       style={{
         background: "var(--secondary)",
         borderTop: "1px solid var(--line)",
+        borderRadius: "18px 18px 0 0",
       }}
     >
       <div className="main py-3">
@@ -20,7 +21,15 @@ export default function Footer() {
           <div className="flex items-center gap-1 text-[11px] text-[var(--muted)]">
             <span>Built with</span>
             <Heart size={10} className="text-red-400 fill-red-400 mx-0.5" />
-            <span>for server admins · port 5756</span>
+            <span>by</span>
+            <a
+              href="https://me.giftedtech.co.ke"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-[var(--accent)] hover:underline"
+            >
+              Gifted Tech
+            </a>
           </div>
           <div className="text-[11px] text-[var(--muted)]">&copy; {new Date().getFullYear()} VPS Manager</div>
         </div>
