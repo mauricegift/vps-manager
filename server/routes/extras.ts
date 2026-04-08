@@ -53,7 +53,22 @@ function extraPaths(): string[] {
   ];
 }
 
+async function getNvmBin(): Promise<string> {
+  const active = (await run('ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1')).trim();
+  return active ? `${HOME}/.nvm/versions/node/${active}/bin` : '';
+}
+
 async function getNpmGlobalBin(): Promise<string> {
+  const nvmBin = await getNvmBin();
+  if (nvmBin) {
+    const nvmNpm = path.join(nvmBin, 'npm');
+    const exists = await run(`test -x "${nvmNpm}" && echo yes || echo no`);
+    if (exists.trim() === 'yes') {
+      const p = await run(`"${nvmNpm}" config get prefix 2>/dev/null`);
+      if (p && !p.includes('undefined') && p.trim()) return path.join(p.trim(), 'bin');
+      return nvmBin;
+    }
+  }
   const p = await run('npm config get prefix 2>/dev/null');
   return p && !p.includes('undefined') ? path.join(p.trim(), 'bin') : `${HOME}/.npm-global/bin`;
 }
@@ -151,8 +166,9 @@ async function getDenoInfo() {
 }
 
 async function getPm2Info() {
-  const npmBin = await getNpmGlobalBin();
-  const { found, binPath } = await findBin('pm2', [npmBin, `${HOME}/.npm-global/bin`, `${HOME}/.local/bin`]);
+  const [nvmBin, npmBin] = await Promise.all([getNvmBin(), getNpmGlobalBin()]);
+  const searchPaths = [nvmBin, npmBin, `${HOME}/.npm-global/bin`, `${HOME}/.local/bin`].filter(Boolean);
+  const { found, binPath } = await findBin('pm2', searchPaths);
   if (!found || !binPath) return { id: 'pm2', name: 'PM2', icon: '⚙️', category: 'runtime', description: 'Production process manager for Node.js', installed: false, version: null, path: null, latestVersion: null, updateAvailable: false };
   const version = await getVersion(binPath);
   const latest = await npmLatest('pm2');
