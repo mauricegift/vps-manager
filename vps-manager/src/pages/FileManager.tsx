@@ -4,7 +4,8 @@ import {
   Folder, File, ChevronRight, Home, RefreshCw,
   Scissors, Copy, Trash2, Eye, ArrowUp, FolderOpen,
   Plus, Upload, FilePlus, FolderPlus, Edit3, Save, X, ClipboardCopy, Code,
-  CheckSquare, Square as SquareIcon, ArchiveIcon, Download, Loader2
+  CheckSquare, Square as SquareIcon, ArchiveIcon, Download, Loader2,
+  Github, Key, Eye as EyeIcon, EyeOff, XCircle, PackageOpen
 } from "lucide-react";
 import api from "@/lib/api";
 import type { FileItem } from "@/types";
@@ -63,6 +64,19 @@ export default function FileManagerPage() {
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkZipping, setBulkZipping] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // GitHub import
+  const [ghModal, setGhModal] = useState(false);
+  const [ghRepoUrl, setGhRepoUrl] = useState("");
+  const [ghToken, setGhToken] = useState("");
+  const [ghShowToken, setGhShowToken] = useState(false);
+  const [ghSaveToken, setGhSaveToken] = useState(false);
+  const [ghTokenLabel, setGhTokenLabel] = useState("");
+  const [ghSavedTokens, setGhSavedTokens] = useState<{ label: string; token: string }[]>([]);
+  const [ghTargetDir, setGhTargetDir] = useState("");
+  const [ghRunInstall, setGhRunInstall] = useState(true);
+  const [ghCloning, setGhCloning] = useState(false);
+  const [ghCloneOutput, setGhCloneOutput] = useState("");
 
   // Reset path when active server changes
   useEffect(() => {
@@ -215,6 +229,74 @@ export default function FileManagerPage() {
     document.body.removeChild(link);
   };
 
+  // ── GitHub import helpers ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (ghModal) {
+      try {
+        const saved = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]");
+        setGhSavedTokens(saved);
+      } catch { /* ignore */ }
+      setGhTargetDir(path);
+      setGhCloneOutput("");
+    }
+  }, [ghModal, path]);
+
+  const persistGhToken = (label: string, token: string) => {
+    const existing: { label: string; token: string }[] = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]");
+    if (!existing.find((t) => t.token === token)) {
+      const updated = [...existing, { label: label || `Token ${existing.length + 1}`, token }];
+      localStorage.setItem("vps_gh_tokens", JSON.stringify(updated));
+      setGhSavedTokens(updated);
+    }
+  };
+
+  const deleteGhToken = (token: string) => {
+    const updated: { label: string; token: string }[] = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]").filter((t: any) => t.token !== token);
+    localStorage.setItem("vps_gh_tokens", JSON.stringify(updated));
+    setGhSavedTokens(updated);
+    if (ghToken === token) setGhToken("");
+  };
+
+  const importFromGitHub = async () => {
+    if (!ghRepoUrl.trim() || !ghTargetDir.trim()) {
+      toast.error("Repo URL and target directory are required");
+      return;
+    }
+    setGhCloning(true);
+    setGhCloneOutput("");
+    try {
+      if (ghSaveToken && ghToken) persistGhToken(ghTokenLabel, ghToken);
+      if (activeServer) {
+        // For remote: use exec endpoint to run git clone
+        const cloneUrl = ghToken
+          ? `https://${ghToken}@github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`
+          : `https://github.com/${ghRepoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")}.git`;
+        const { data } = await api.post(`/remote/${activeServer.id}/exec`, {
+          command: `mkdir -p "${ghTargetDir}" && git clone "${cloneUrl}" "${ghTargetDir}" 2>&1`,
+        });
+        setGhCloneOutput(data.data || "Cloned successfully");
+        toast.success("Repository cloned");
+      } else {
+        const { data } = await api.post("/github/clone", {
+          repoUrl: ghRepoUrl,
+          token: ghToken || undefined,
+          dir: ghTargetDir,
+          runInstall: ghRunInstall,
+        });
+        if (data.success) {
+          setGhCloneOutput(data.data.output || "Cloned successfully");
+          toast.success(`Repository cloned to ${ghTargetDir}`);
+        } else {
+          toast.error(data.error || "Clone failed");
+        }
+      }
+      qc.invalidateQueries({ queryKey: ["files"] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Clone failed");
+    }
+    setGhCloning(false);
+  };
+
   const breadcrumbs = ["", ...path.split("/").filter(Boolean)];
   const navigate = (parts: string[]) => { setPath(parts.join("/") || "/"); setSelected(null); setBulkSelected(new Set()); };
 
@@ -241,6 +323,12 @@ export default function FileManagerPage() {
             className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm transition-colors ${selectMode ? "bg-[var(--accent)]/10 border-[var(--accent)]/50 text-[var(--accent)]" : "border-[var(--line)] hover:bg-[var(--foreground)]"}`}
           >
             {selectMode ? <CheckSquare size={14} /> : <SquareIcon size={14} />} Select
+          </button>
+          <button
+            onClick={() => setGhModal(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors"
+          >
+            <Github size={14} /> From GitHub
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -570,6 +658,130 @@ export default function FileManagerPage() {
                 </button>
               </div>
             </>
+          )}
+        </div>
+      </Modal>
+
+      {/* GitHub Import Modal */}
+      <Modal isOpen={ghModal} onClose={() => { setGhModal(false); setGhCloneOutput(""); setGhRepoUrl(""); setGhToken(""); }}
+        title="Import from GitHub" size="lg">
+        <div className="space-y-4">
+          {!ghCloneOutput ? (
+            <>
+              {/* Repo URL */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5">Repository URL or <span className="font-mono">owner/repo</span></label>
+                <input value={ghRepoUrl} onChange={e => setGhRepoUrl(e.target.value)}
+                  placeholder="github.com/user/my-app  or  user/my-app"
+                  className={`w-full ${inp} font-mono text-xs`} />
+              </div>
+
+              {/* Saved tokens */}
+              {ghSavedTokens.length > 0 && (
+                <div>
+                  <label className="block text-xs text-[var(--muted)] mb-1.5">Saved Tokens</label>
+                  <div className="flex flex-wrap gap-2">
+                    {ghSavedTokens.map((t, i) => (
+                      <div key={i}
+                        className={`flex items-center gap-1.5 pl-2.5 pr-1 py-1 rounded-lg border text-xs cursor-pointer transition-colors ${ghToken === t.token ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--line)] hover:bg-[var(--foreground)]"}`}
+                        onClick={() => setGhToken(t.token)}>
+                        <Key size={10} /> {t.label}
+                        <button onClick={e => { e.stopPropagation(); deleteGhToken(t.token); }}
+                          className="ml-1 p-0.5 rounded hover:text-red-400 transition-colors" title="Remove">
+                          <XCircle size={10} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Token input */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5">
+                  <Key size={10} className="inline mr-1" />
+                  GitHub Token <span className="opacity-60">(leave empty for public repos)</span>
+                </label>
+                <div className="relative">
+                  <input value={ghToken} onChange={e => setGhToken(e.target.value)}
+                    type={ghShowToken ? "text" : "password"}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    className={`w-full ${inp} font-mono text-xs pr-9`} />
+                  <button type="button" onClick={() => setGhShowToken(s => !s)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--main)] transition-colors">
+                    {ghShowToken ? <EyeOff size={13} /> : <EyeIcon size={13} />}
+                  </button>
+                </div>
+                {ghToken && (
+                  <div className="flex items-center gap-3 mt-2">
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                      <input type="checkbox" checked={ghSaveToken} onChange={e => setGhSaveToken(e.target.checked)} className="rounded accent-[var(--accent)]" />
+                      Save this token
+                    </label>
+                    {ghSaveToken && (
+                      <input value={ghTokenLabel} onChange={e => setGhTokenLabel(e.target.value)}
+                        placeholder="Label (e.g. personal, work)"
+                        className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none transition-colors" />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Target directory */}
+              <div>
+                <label className="block text-xs text-[var(--muted)] mb-1.5">Clone into directory</label>
+                <input value={ghTargetDir} onChange={e => setGhTargetDir(e.target.value)}
+                  placeholder="/root/apps/my-repo"
+                  className={`w-full ${inp} font-mono text-xs`} />
+                <p className="text-[10px] text-[var(--muted)] mt-1">Current location: <span className="font-mono text-[var(--accent)]">{path}</span></p>
+              </div>
+
+              {/* Auto install */}
+              {!activeServer && (
+                <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                  <input type="checkbox" checked={ghRunInstall} onChange={e => setGhRunInstall(e.target.checked)} className="rounded accent-[var(--accent)]" />
+                  <PackageOpen size={12} className="text-[var(--muted)]" />
+                  Auto-install dependencies (npm install / pip install / install.sh)
+                </label>
+              )}
+
+              <div className="flex gap-2 justify-end pt-1">
+                <button onClick={() => setGhModal(false)}
+                  className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
+                  Cancel
+                </button>
+                <button onClick={importFromGitHub} disabled={ghCloning || !ghRepoUrl.trim() || !ghTargetDir.trim()}
+                  className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50">
+                  {ghCloning
+                    ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Cloning...</>
+                    : <><Github size={14} /> Clone Repository</>}
+                </button>
+              </div>
+            </>
+          ) : (
+            /* Clone complete */
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 p-3 rounded-xl border border-green-500/30 bg-green-500/5">
+                <Github size={16} className="text-green-400 shrink-0" />
+                <div>
+                  <div className="text-sm font-medium text-green-400">Repository cloned!</div>
+                  <div className="text-xs text-[var(--muted)] mt-0.5 font-mono">{ghTargetDir}</div>
+                </div>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--foreground)] p-3 max-h-40 overflow-y-auto">
+                <pre className="text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap">{ghCloneOutput}</pre>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => { setGhCloneOutput(""); setGhRepoUrl(""); setGhToken(""); }}
+                  className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
+                  Clone Another
+                </button>
+                <button onClick={() => { setGhModal(false); setGhCloneOutput(""); setPath(ghTargetDir); }}
+                  className="px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">
+                  Navigate There
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </Modal>
