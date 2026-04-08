@@ -919,4 +919,191 @@ router.delete('/:id/users/:username', async (req, res) => {
   }
 });
 
+// ── Nginx & Certbot (Remote) ──────────────────────────────────────────────────
+
+router.get('/:id/nginx/status', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const version = (await runSSHCommand(conn, 'nginx -v 2>&1')).stdout + (await runSSHCommand(conn, 'nginx -v 2>&1')).stderr;
+    const installed = /nginx/i.test(version);
+    const test = (await runSSHCommand(conn, 'nginx -t 2>&1')).stdout + (await runSSHCommand(conn, 'nginx -t 2>&1')).stderr;
+    const configOk = test.includes('syntax is ok');
+    const running = (await runSSHCommand(conn, 'systemctl is-active nginx 2>/dev/null || service nginx status 2>/dev/null | grep -c running || echo inactive')).stdout.trim() === 'active';
+    res.json({ installed, configOk, running, version: version.trim(), testOutput: test.trim() });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/:id/nginx/configs', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const avail = (await runSSHCommand(conn, 'ls /etc/nginx/sites-available/ 2>/dev/null || echo ""')).stdout.trim();
+    const enabled = (await runSSHCommand(conn, 'ls /etc/nginx/sites-enabled/ 2>/dev/null || echo ""')).stdout.trim();
+    const enabledSet = new Set(enabled.split('\n').filter(Boolean));
+    const configs = avail.split('\n').filter(Boolean).map(name => ({ name, enabled: enabledSet.has(name) }));
+    res.json({ data: configs });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/:id/nginx/configs/:name', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, '');
+    const { stdout } = await runSSHCommand(conn, `cat /etc/nginx/sites-available/${name} 2>/dev/null`);
+    res.json({ content: stdout });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/:id/nginx/configs/:name', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, '');
+    const b64 = Buffer.from(req.body.content || '').toString('base64');
+    await runSSHCommand(conn, `printf '%s' '${b64}' | base64 -d | tee /etc/nginx/sites-available/${name} > /dev/null`);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/configs', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const name = (req.body.name || '').replace(/[^a-zA-Z0-9._-]/g, '');
+    if (!name) return res.status(400).json({ error: 'name required' });
+    const check = (await runSSHCommand(conn, `test -f /etc/nginx/sites-available/${name} && echo exists || echo ok`)).stdout.trim();
+    if (check === 'exists') return res.status(409).json({ error: 'Config already exists' });
+    const b64 = Buffer.from(req.body.content || '').toString('base64');
+    await runSSHCommand(conn, `printf '%s' '${b64}' | base64 -d | tee /etc/nginx/sites-available/${name} > /dev/null`);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/:id/nginx/configs/:name', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, '');
+    const { stdout, stderr } = await runSSHCommand(conn, `rm -f /etc/nginx/sites-enabled/${name} /etc/nginx/sites-available/${name} 2>&1; echo done`);
+    res.json({ ok: true, output: stdout + stderr });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/configs/:name/enable', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, '');
+    const { stdout: out1, stderr: err1 } = await runSSHCommand(conn,
+      `ln -sf /etc/nginx/sites-available/${name} /etc/nginx/sites-enabled/${name} 2>&1`
+    );
+    const { stdout: out2, stderr: err2 } = await runSSHCommand(conn, 'nginx -t 2>&1 && nginx -s reload 2>&1');
+    res.json({ ok: true, output: out1 + err1 + out2 + err2 });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/configs/:name/disable', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, '');
+    const { stdout, stderr } = await runSSHCommand(conn, `rm -f /etc/nginx/sites-enabled/${name} 2>&1 && nginx -s reload 2>&1`);
+    res.json({ ok: true, output: stdout + stderr });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/test', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn, 'nginx -t 2>&1');
+    const out = stdout + stderr;
+    res.json({ output: out, ok: out.includes('syntax is ok') });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/reload', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn, 'nginx -s reload 2>&1');
+    const out = stdout + stderr;
+    res.json({ output: out, ok: !out.toLowerCase().includes('error') });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/restart', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn, 'systemctl restart nginx 2>&1');
+    const out = stdout + stderr;
+    res.json({ output: out, ok: !out.toLowerCase().includes('failed') });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/:id/nginx/certs', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn, 'certbot certificates 2>&1');
+    const raw = stdout + stderr;
+    const certs: any[] = [];
+    const blocks = raw.split(/\n(?=\s*Certificate Name:)/);
+    for (const block of blocks) {
+      const name    = block.match(/Certificate Name:\s*(.+)/)?.[1]?.trim();
+      const domains = block.match(/Domains:\s*(.+)/)?.[1]?.trim().split(/\s+/) ?? [];
+      const expiry  = block.match(/Expiry Date:\s*(.+?)(?:\s*\()/)?.[1]?.trim();
+      const valid   = /VALID/i.test(block);
+      const certPath = block.match(/Certificate Path:\s*(.+)/)?.[1]?.trim();
+      const keyPath  = block.match(/Private Key Path:\s*(.+)/)?.[1]?.trim();
+      if (name) certs.push({ name, domains, expiry, valid, certPath, keyPath });
+    }
+    res.json({ data: certs, raw });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/certs/issue', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { domains, email, method, webrootPath } = req.body;
+    if (!domains?.length || !email) return res.status(400).json({ error: 'domains and email required' });
+    const domainFlags = (Array.isArray(domains) ? domains : [domains]).map((d: string) => `-d ${d}`).join(' ');
+    const methodFlag  = method === 'standalone'
+      ? '--standalone --preferred-challenges http'
+      : `--webroot -w ${webrootPath || '/var/www/html'}`;
+    const cmd = `certbot certonly ${methodFlag} --non-interactive --agree-tos --email ${email} ${domainFlags} 2>&1`;
+    const { stdout, stderr } = await runSSHCommand(conn, cmd);
+    const out = stdout + stderr;
+    res.json({ output: out, ok: /Congratulations|Successfully received/i.test(out) });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/:id/nginx/certs/renew', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { name } = req.body;
+    const cmd = name
+      ? `certbot renew --cert-name ${name} --non-interactive 2>&1`
+      : 'certbot renew --non-interactive 2>&1';
+    const { stdout, stderr } = await runSSHCommand(conn, cmd);
+    const out = stdout + stderr;
+    res.json({ output: out, ok: !out.toLowerCase().includes('failed') });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/:id/nginx/certs/:name', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn, `certbot delete --cert-name ${req.params.name} --non-interactive 2>&1`);
+    const out = stdout + stderr;
+    res.json({ output: out, ok: !out.toLowerCase().includes('failed') });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 export default router;
