@@ -6,7 +6,7 @@ import {
   Server, FileText, Plus, ChevronRight, TerminalIcon, Send, Trash, List, RefreshCcw,
   ArrowUpCircle, Download, Copy, Check, Minus, SearchCheck, XCircle, Loader2,
   Github, HardDrive, Folder, File, ArrowUp, Eye, EyeOff, Key, Globe, Star,
-  PackageOpen, PackageCheck, CornerDownRight
+  PackageOpen, PackageCheck, CornerDownRight, PlusCircle, MinusCircle, Package2
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -95,10 +95,17 @@ export default function PM2Page() {
   const [ghDetecting, setGhDetecting] = useState(false);
   const [ghRepoInfo, setGhRepoInfo] = useState<any>(null);
   const [ghSelectedSuggestion, setGhSelectedSuggestion] = useState<any>(null);
-  const [ghCloneDir, setGhCloneDir] = useState("/root/apps");
+  const [ghCloneDir, setGhCloneDir] = useState(() => {
+    const su = localStorage.getItem("vpsm_active_user");
+    return su && su !== "root" ? `/home/${su}/apps` : "/root/apps";
+  });
   const [ghRunInstall, setGhRunInstall] = useState(true);
   const [ghCloning, setGhCloning] = useState(false);
   const [ghCloneOutput, setGhCloneOutput] = useState("");
+
+  const [startEnvVars, setStartEnvVars] = useState<{ key: string; value: string }[]>([]);
+  const [pkgManager, setPkgManager] = useState<"npm" | "bun">("npm");
+  const [installDepsBeforeStart, setInstallDepsBeforeStart] = useState(false);
 
   const [termCmd, setTermCmd] = useState("");
   const [termHistory, setTermHistory] = useState<TermLine[]>([
@@ -110,6 +117,7 @@ export default function PM2Page() {
   );
   const [installingPM2, setInstallingPM2] = useState(false);
   const termEndRef = useRef<HTMLDivElement>(null);
+  const termContainerRef = useRef<HTMLDivElement>(null);
 
   const { activeServer } = useRemoteServer();
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
@@ -178,19 +186,39 @@ export default function PM2Page() {
 
   const startMutation = useMutation({
     mutationFn: (body: typeof startForm) => {
+      const isSh = body.script.trim().endsWith(".sh");
+      const envPairs = startEnvVars.filter(e => e.key.trim());
       if (activeServer) {
-        let cmd = `pm2 start "${body.script}" --name "${body.name}"`;
-        if (body.cwd) cmd += ` --cwd "${body.cwd}"`;
-        if (body.port) cmd += ` --env PORT=${body.port}`;
-        return api.post(`/remote/${activeServer.id}/exec`, { command: cmd });
+        let pm2Cmd = `pm2 start "${body.script}" --name "${body.name}"`;
+        if (isSh) pm2Cmd += ` --interpreter bash`;
+        if (body.cwd) pm2Cmd += ` --cwd "${body.cwd}"`;
+        if (body.port) pm2Cmd += ` --env PORT=${body.port}`;
+        envPairs.forEach(({ key, value }) => { pm2Cmd += ` --env ${key.trim()}=${value}`; });
+        let fullCmd = pm2Cmd;
+        if (installDepsBeforeStart && body.cwd) {
+          const installCmd = pkgManager === "bun"
+            ? `(command -v bun >/dev/null 2>&1 || npm install -g bun) && cd "${body.cwd}" && bun install`
+            : `cd "${body.cwd}" && npm install`;
+          fullCmd = `${installCmd} 2>&1 && ${pm2Cmd}`;
+        }
+        return api.post(`/remote/${activeServer.id}/exec`, { command: fullCmd });
       }
-      return api.post("/pm2/start", body);
+      return api.post("/pm2/start", {
+        ...body,
+        interpreter: isSh ? "bash" : undefined,
+        envVars: envPairs,
+        pkgManager,
+        installDeps: installDepsBeforeStart,
+      });
     },
     onSuccess: () => {
       toast.success("Process started");
       qc.invalidateQueries({ queryKey: ["pm2"] });
       setStartModal(false);
       setStartForm({ name: "", script: "", cwd: "", port: "" });
+      setStartEnvVars([]);
+      setPkgManager("npm");
+      setInstallDepsBeforeStart(false);
       setScriptCheck(null);
       setEnvCheck(null);
     },
@@ -235,7 +263,11 @@ export default function PM2Page() {
       setTermHistory(prev => [...prev, { type: "error", text: e.response?.data?.error || "Command failed" }]);
     }
     setTermLoading(false);
-    setTimeout(() => termEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    setTimeout(() => {
+      if (termContainerRef.current) {
+        termContainerRef.current.scrollTop = termContainerRef.current.scrollHeight;
+      }
+    }, 0);
   };
 
   const installPM2 = async () => {
@@ -279,8 +311,12 @@ export default function PM2Page() {
   // ── Reset start modal ─────────────────────────────────────────────────────
   const resetStartModal = () => {
     setStartModal(false);
+    setStartForm({ name: "", script: "", cwd: "", port: "" });
     setScriptCheck(null);
     setEnvCheck(null);
+    setStartEnvVars([]);
+    setPkgManager("npm");
+    setInstallDepsBeforeStart(false);
     setGhSource("fs");
     setGhRepoUrl("");
     setGhToken("");
@@ -293,7 +329,9 @@ export default function PM2Page() {
 
   // ── File browser ──────────────────────────────────────────────────────────
   const openBrowse = async (target: "script" | "cwd", startPath?: string) => {
-    const initPath = startPath || (activeServer ? `/home/${activeServer.username}` : "/root");
+    const storedUser = localStorage.getItem("vpsm_active_user");
+    const localHome = storedUser && storedUser !== "root" ? `/home/${storedUser}` : "/root";
+    const initPath = startPath || (activeServer ? `/home/${activeServer.username}` : localHome);
     setBrowseTarget(target);
     setBrowsePath(initPath);
     setBrowseModal(true);
@@ -320,7 +358,12 @@ export default function PM2Page() {
 
   const selectBrowseFile = (filePath: string) => {
     if (browseTarget === "script") {
-      setStartForm(s => ({ ...s, script: filePath }));
+      const dir = filePath.substring(0, filePath.lastIndexOf("/")) || "/";
+      setStartForm(s => ({
+        ...s,
+        script: filePath,
+        cwd: s.cwd || dir,
+      }));
       setScriptCheck(null);
     } else {
       setStartForm(s => ({ ...s, cwd: filePath.substring(0, filePath.lastIndexOf("/")) || "/" }));
@@ -348,7 +391,11 @@ export default function PM2Page() {
         setGhRepoInfo(data.data);
         if (data.data.suggestions?.length) setGhSelectedSuggestion(data.data.suggestions[0]);
         const repoName = data.data.repo || "myapp";
-        setGhCloneDir(`/root/apps/${repoName}`);
+        const storedUser = localStorage.getItem("vpsm_active_user");
+        const appsBase = activeServer
+          ? `/home/${activeServer.username}/apps`
+          : (storedUser && storedUser !== "root" ? `/home/${storedUser}/apps` : "/root/apps");
+        setGhCloneDir(`${appsBase}/${repoName}`);
         if (!startForm.name) setStartForm(s => ({ ...s, name: repoName }));
       } else { toast.error(data.error || "Failed to detect repo"); }
     } catch (e: any) { toast.error(e.response?.data?.error || "Detect failed"); }
@@ -648,6 +695,7 @@ export default function PM2Page() {
 
               {/* Output */}
               <div
+                ref={termContainerRef}
                 className="font-mono p-4 h-72 overflow-y-auto leading-relaxed"
                 style={{ background: T.bg, color: T.text, fontSize: `${fontSize}px` }}
               >
@@ -761,7 +809,7 @@ export default function PM2Page() {
 
       {/* Start Process Modal */}
       <Modal isOpen={startModal} onClose={resetStartModal} title="Start New Process" size="xl">
-        <form onSubmit={(e) => { e.preventDefault(); startMutation.mutate(startForm); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); startMutation.mutate(startForm); }} className="space-y-4 overflow-y-auto max-h-[80vh] pr-1">
 
           {/* Source selector tabs */}
           <div className="flex gap-1 p-1 rounded-xl bg-[var(--foreground)] border border-[var(--line)]">
@@ -1011,6 +1059,76 @@ export default function PM2Page() {
             <input value={startForm.port} onChange={(e) => setStartForm(s => ({ ...s, port: e.target.value }))}
               placeholder="3000" className={`w-full ${inp}`} type="number" min="1" max="65535" />
             <p className="text-[10px] text-[var(--muted)] mt-1">Sets PORT environment variable for the process</p>
+          </div>
+
+          {/* Environment Variables */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs text-[var(--muted)]">Environment Variables <span className="opacity-60">(optional)</span></label>
+              <button type="button"
+                onClick={() => setStartEnvVars(v => [...v, { key: "", value: "" }])}
+                className="flex items-center gap-1 text-xs text-[var(--accent)] hover:opacity-80 transition-opacity">
+                <PlusCircle size={12} /> Add Variable
+              </button>
+            </div>
+            {startEnvVars.length === 0 ? (
+              <p className="text-[10px] text-[var(--muted)] italic">No env vars — click "Add Variable" to add KEY=VALUE pairs</p>
+            ) : (
+              <div className="space-y-2">
+                {startEnvVars.map((ev, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <input
+                      value={ev.key}
+                      onChange={e => setStartEnvVars(v => v.map((x, j) => j === i ? { ...x, key: e.target.value } : x))}
+                      placeholder="KEY"
+                      className={`flex-1 ${inp} font-mono text-xs`}
+                    />
+                    <span className="text-[var(--muted)] text-xs">=</span>
+                    <input
+                      value={ev.value}
+                      onChange={e => setStartEnvVars(v => v.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                      placeholder="value"
+                      className={`flex-1 ${inp} font-mono text-xs`}
+                    />
+                    <button type="button" onClick={() => setStartEnvVars(v => v.filter((_, j) => j !== i))}
+                      className="shrink-0 p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors">
+                      <MinusCircle size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Package Manager + Install Dependencies */}
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--foreground)] p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <Package2 size={13} className="text-[var(--accent)] shrink-0" />
+              <span className="text-xs font-medium">Dependencies</span>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={installDepsBeforeStart} onChange={e => setInstallDepsBeforeStart(e.target.checked)} className="rounded accent-[var(--accent)]" />
+              <span className="text-xs">Install dependencies before starting (requires Working Directory)</span>
+            </label>
+            {installDepsBeforeStart && (
+              <div>
+                <p className="text-[10px] text-[var(--muted)] mb-2">Package manager to use:</p>
+                <div className="flex gap-2">
+                  {(["npm", "bun"] as const).map(pm => (
+                    <button key={pm} type="button"
+                      onClick={() => setPkgManager(pm)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${pkgManager === pm ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)]"}`}>
+                      {pm === "bun" ? "🍞" : "📦"} {pm === "bun" ? "bun install" : "npm install"}
+                    </button>
+                  ))}
+                </div>
+                {pkgManager === "bun" && (
+                  <p className="text-[10px] text-[var(--muted)] mt-1.5">
+                    If bun is not installed, it will be auto-installed via <span className="font-mono">npm install -g bun</span> first.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2 justify-end pt-2">
