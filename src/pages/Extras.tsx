@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import AOS from "aos";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   Download, RefreshCw, ArrowUpCircle, CheckCircle2, XCircle,
   UserPlus, Edit3, Trash2, Eye, EyeOff, Users, Package, ShieldAlert, Save,
-  RefreshCcw, Layers
+  RefreshCcw, Layers, Server, Cpu, Wrench, Globe, MonitorSmartphone
 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -13,6 +14,9 @@ import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 
 const NODE_VERSIONS = ["18", "20", "22", "24"];
+
+type MainTab = "system" | "software" | "users";
+type SoftwareSubTab = "runtimes" | "servers" | "devtools" | "systools" | "browsers";
 
 interface Tool {
   id: string; name: string; icon: string; description: string;
@@ -25,6 +29,16 @@ interface Tool {
 interface User {
   username: string; uid: number; displayName?: string; home?: string; shell?: string;
 }
+
+const SOFTWARE_GROUPS: { id: SoftwareSubTab; label: string; icon: React.ElementType; ids: string[] }[] = [
+  { id: "runtimes", label: "Runtimes", icon: Cpu, ids: ["nodejs", "npm", "bun", "deno", "pm2", "pnpm", "yarn", "python", "go", "rust"] },
+  { id: "servers", label: "Servers & SSL", icon: Server, ids: ["nginx", "apache", "certbot"] },
+  { id: "devtools", label: "Dev Tools", icon: Wrench, ids: ["git", "curl", "wget", "rsync", "vim", "nvim"] },
+  { id: "systools", label: "System Tools", icon: Layers, ids: ["htop", "tmux", "screen", "ufw", "fail2ban-client", "jq", "unzip"] },
+  { id: "browsers", label: "Browsers", icon: Globe, ids: ["chrome"] },
+];
+
+const ALL_KNOWN_IDS = SOFTWARE_GROUPS.flatMap(g => g.ids);
 
 function VersionChip({ version, label }: { version: string | null; label?: string }) {
   if (!version) return null;
@@ -44,8 +58,6 @@ function ToolCard({
   loading: boolean;
 }) {
   const [nodeVer, setNodeVer] = useState("20");
-  const nginxRunning = tool.id === "nginx" && tool.running;
-  const apacheRunning = tool.id === "apache" && tool.running;
 
   return (
     <div className="glass-card p-5 flex flex-col gap-3">
@@ -76,7 +88,6 @@ function ToolCard({
         </div>
       </div>
 
-      {/* Version + path */}
       {tool.installed && (
         <div className="space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -99,8 +110,6 @@ function ToolCard({
         </div>
       )}
 
-      {/* Conflict warning */}
-      {(tool.id === "apache" && nginxRunning) || (tool.id === "nginx" && apacheRunning) ? null : null}
       {tool.id === "apache" && !tool.installed && (
         <div className="flex items-start gap-1.5 text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-2.5 py-1.5">
           <ShieldAlert size={11} className="shrink-0 mt-0.5" />
@@ -114,7 +123,6 @@ function ToolCard({
         </div>
       )}
 
-      {/* Node version select */}
       {tool.canSelectVersion && !tool.installed && (
         <div>
           <label className="text-[10px] text-[var(--muted)] mb-1 block">Select Node.js version</label>
@@ -130,7 +138,6 @@ function ToolCard({
         </div>
       )}
 
-      {/* Actions */}
       <div className="flex gap-2 mt-auto pt-1">
         {!tool.installed ? (
           <button
@@ -170,12 +177,7 @@ function ToolCard({
   );
 }
 
-function SysUpdateCard({
-  onRun, loading
-}: {
-  onRun: (action: 'update' | 'upgrade') => void;
-  loading: string | null;
-}) {
+function SysUpdateCard({ onRun, loading }: { onRun: (action: 'update' | 'upgrade') => void; loading: string | null }) {
   return (
     <div className="glass-card p-5 flex flex-col gap-3 border-l-4 border-[var(--accent)]">
       <div className="flex items-start gap-3">
@@ -220,11 +222,19 @@ export default function ExtrasPage() {
   const { activeServer } = useRemoteServer();
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mainTab = (searchParams.get("tab") as MainTab) || "system";
+  const subTab = (searchParams.get("sub") as SoftwareSubTab) || "runtimes";
+
+  const setMainTab = (t: MainTab) =>
+    setSearchParams(p => { p.set("tab", t); if (t !== "software") p.delete("sub"); return p; }, { replace: true });
+  const setSubTab = (s: SoftwareSubTab) =>
+    setSearchParams(p => { p.set("tab", "software"); p.set("sub", s); return p; }, { replace: true });
+
   const [opLoading, setOpLoading] = useState<string | null>(null);
   const [sysUpdLoading, setSysUpdLoading] = useState<string | null>(null);
   const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
 
-  // User management state
   const [userModal, setUserModal] = useState<"create" | "edit" | null>(null);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
@@ -239,7 +249,6 @@ export default function ExtrasPage() {
     gcTime: 120000,
   });
 
-  // Refresh AOS after dynamic content loads so fade-up cards are visible
   useEffect(() => {
     if (tools.length > 0) {
       const t = setTimeout(() => AOS.refresh(), 50);
@@ -254,6 +263,7 @@ export default function ExtrasPage() {
       return api.get(url).then(r => r.data.data);
     },
     staleTime: 10000,
+    enabled: mainTab === "users",
   });
 
   const handleInstall = async (tool: Tool, nodeVersion?: string) => {
@@ -352,8 +362,18 @@ export default function ExtrasPage() {
 
   const userList = usersQuery.data || [];
 
+  const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
+    { id: "system", label: "System", icon: RefreshCcw },
+    { id: "software", label: "Software", icon: Package },
+    { id: "users", label: "Users", icon: Users },
+  ];
+
+  const currentGroup = SOFTWARE_GROUPS.find(g => g.id === subTab) || SOFTWARE_GROUPS[0];
+  const groupTools = tools.filter(t => currentGroup.ids.includes(t.id));
+  const extraTools = tools.filter(t => !ALL_KNOWN_IDS.includes(t.id));
+
   return (
-    <section className="main space-y-8">
+    <section className="main space-y-6">
       {/* Header */}
       <div data-aos="fade-down" className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -361,167 +381,201 @@ export default function ExtrasPage() {
           <p className="text-sm text-[var(--muted)] mt-1">
             {activeServer
               ? `Software management · ${activeServer.username}@${activeServer.ip}`
-              : "Manage software and system users"}
+              : "Manage software, system updates and users"}
           </p>
         </div>
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
-        >
-          <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} /> Refresh
-        </button>
+        {mainTab === "software" && (
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} /> Refresh
+          </button>
+        )}
       </div>
 
-      {/* System Update */}
-      <div data-aos="fade-up">
-        <div className="flex items-center gap-2 mb-4">
-          <RefreshCcw size={16} className="text-[var(--accent)]" />
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-[var(--muted)]">System</h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
-        </div>
+      {/* Main Tabs */}
+      <div className="flex gap-1 p-1 rounded-xl bg-[var(--foreground)] border border-[var(--line)] w-fit">
+        {MAIN_TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setMainTab(id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              mainTab === id
+                ? "bg-[var(--accent)] text-white shadow-sm"
+                : "text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--secondary)]"
+            }`}
+          >
+            <Icon size={14} />
+            {label}
+          </button>
+        ))}
       </div>
 
-      {/* Software section */}
-      <div>
-        <div className="flex items-center gap-2 mb-4">
-          <Package size={16} className="text-[var(--accent)]" />
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-[var(--muted)]">Software</h2>
-        </div>
-        {isLoading ? (
+      {/* ── SYSTEM TAB ── */}
+      {mainTab === "system" && (
+        <div data-aos="fade-up" className="space-y-4">
+          <p className="text-xs text-[var(--muted)]">Run system package updates and upgrades via apt.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div key={i} className="glass-card p-5 h-36 animate-pulse">
-                <div className="flex gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-[var(--line)]" />
-                  <div className="flex-1 space-y-2">
-                    <div className="h-3 w-24 rounded bg-[var(--line)]" />
-                    <div className="h-2 w-32 rounded bg-[var(--line)]" />
-                  </div>
-                </div>
-              </div>
-            ))}
+            <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
           </div>
-        ) : (() => {
-          const groups: { label: string; ids: string[] }[] = [
-            { label: "Runtimes & Package Managers", ids: ["nodejs","npm","bun","deno","pm2","pnpm","yarn","python","go","rust"] },
-            { label: "Servers & SSL", ids: ["nginx","apache","certbot"] },
-            { label: "Dev Tools", ids: ["git","curl","wget","rsync","vim","nvim"] },
-            { label: "System Tools", ids: ["htop","tmux","screen","ufw","fail2ban-client","jq","unzip"] },
-            { label: "Browsers", ids: ["chrome"] },
-          ];
-          return (
-            <div className="space-y-6">
-              {groups.map(g => {
-                const groupTools = tools.filter(t => g.ids.includes(t.id));
-                if (groupTools.length === 0) return null;
+        </div>
+      )}
+
+      {/* ── SOFTWARE TAB ── */}
+      {mainTab === "software" && (
+        <div className="space-y-5">
+          {/* Sub-tabs */}
+          <div className="overflow-x-auto hide-scrollbar">
+            <div className="flex gap-1 p-1 rounded-xl bg-[var(--secondary)] border border-[var(--line)] w-fit min-w-full sm:min-w-0">
+              {SOFTWARE_GROUPS.map(({ id, label, icon: Icon }) => {
+                const groupCount = tools.filter(t => id === subTab
+                  ? SOFTWARE_GROUPS.find(g => g.id === id)!.ids.includes(t.id)
+                  : false).length;
+                const installed = tools.filter(t => SOFTWARE_GROUPS.find(g => g.id === id)!.ids.includes(t.id) && t.installed).length;
+                const total = tools.filter(t => SOFTWARE_GROUPS.find(g => g.id === id)!.ids.includes(t.id)).length;
+                const hasUpdate = tools.some(t => SOFTWARE_GROUPS.find(g => g.id === id)!.ids.includes(t.id) && t.updateAvailable);
                 return (
-                  <div key={g.label}>
-                    <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mb-3">{g.label}</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {groupTools.map(tool => (
-                        <ToolCard
-                          key={tool.id}
-                          tool={tool}
-                          loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
-                          onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
-                          onUpdate={() => handleUpdate(tool)}
-                        />
-                      ))}
-                    </div>
-                  </div>
+                  <button
+                    key={id}
+                    onClick={() => setSubTab(id)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap relative ${
+                      subTab === id
+                        ? "bg-[var(--accent)] text-white shadow-sm"
+                        : "text-[var(--muted)] hover:text-[var(--main)]"
+                    }`}
+                  >
+                    <Icon size={13} />
+                    {label}
+                    {total > 0 && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${subTab === id ? "bg-white/20" : "bg-[var(--foreground)]"}`}>
+                        {installed}/{total}
+                      </span>
+                    )}
+                    {hasUpdate && (
+                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
+                    )}
+                  </button>
                 );
               })}
-              {/* Any tools not in groups (future additions) */}
-              {(() => {
-                const knownIds = ["nodejs","npm","bun","deno","pm2","pnpm","yarn","python","go","rust","nginx","apache","certbot","git","curl","wget","rsync","vim","nvim","htop","tmux","screen","ufw","fail2ban-client","jq","unzip","chrome"];
-                const extra = tools.filter(t => !knownIds.includes(t.id));
-                if (!extra.length) return null;
-                return (
-                  <div>
-                    <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mb-3">Other</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {extra.map(tool => (
-                        <ToolCard key={tool.id} tool={tool}
-                          loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
-                          onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
-                          onUpdate={() => handleUpdate(tool)} />
-                      ))}
+            </div>
+          </div>
+
+          {/* Software cards */}
+          {isLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="glass-card p-5 h-36 animate-pulse">
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-[var(--line)]" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3 w-24 rounded bg-[var(--line)]" />
+                      <div className="h-2 w-32 rounded bg-[var(--line)]" />
                     </div>
                   </div>
-                );
-              })()}
+                </div>
+              ))}
             </div>
-          );
-        })()}
-      </div>
-
-      {/* User Management */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Users size={16} className="text-[var(--accent)]" />
-            <h2 className="text-sm font-semibold uppercase tracking-widest text-[var(--muted)]">System Users</h2>
-          </div>
-          <button
-            onClick={() => { setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false }); setUserModal("create"); }}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 transition-opacity"
-          >
-            <UserPlus size={14} /> New User
-          </button>
-        </div>
-
-        <div className="glass-card overflow-hidden">
-          {usersQuery.isLoading ? (
-            <div className="p-8 text-center">
-              <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto" />
-            </div>
-          ) : userList.length === 0 ? (
-            <div className="p-10 text-center text-[var(--muted)]">
-              <Users size={36} className="mx-auto mb-3 opacity-30" />
-              <p className="text-sm">No system users found (UID 1000+)</p>
+          ) : groupTools.length === 0 && extraTools.length === 0 ? (
+            <div className="glass-card p-10 text-center text-[var(--muted)]">
+              <MonitorSmartphone size={36} className="mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No tools in this category</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="vps-table">
-                <thead>
-                  <tr><th>Username</th><th>UID</th><th>Home</th><th>Shell</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                  {userList.map(user => (
-                    <tr key={user.username}>
-                      <td>
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center text-[10px] font-bold text-[var(--accent)]">
-                            {user.username[0]?.toUpperCase()}
-                          </div>
-                          <span className="font-medium text-sm">{user.username}</span>
-                          {user.displayName && <span className="text-xs text-[var(--muted)]">({user.displayName})</span>}
-                        </div>
-                      </td>
-                      <td className="font-mono text-xs text-[var(--muted)]">{user.uid}</td>
-                      <td className="font-mono text-xs text-[var(--muted)] max-w-[120px] truncate">{user.home}</td>
-                      <td className="font-mono text-xs text-[var(--muted)]">{user.shell?.split('/').pop()}</td>
-                      <td>
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => openEdit(user)} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Edit">
-                            <Edit3 size={13} />
-                          </button>
-                          <button onClick={() => { setDeleteTarget(user); setKeepHome(false); }} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete">
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {groupTools.map(tool => (
+                  <ToolCard
+                    key={tool.id}
+                    tool={tool}
+                    loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
+                    onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
+                    onUpdate={() => handleUpdate(tool)}
+                  />
+                ))}
+              </div>
+              {subTab === "runtimes" && extraTools.length > 0 && (
+                <>
+                  <p className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-widest mt-4">Other</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {extraTools.map(tool => (
+                      <ToolCard key={tool.id} tool={tool}
+                        loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
+                        onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
+                        onUpdate={() => handleUpdate(tool)} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
-      </div>
+      )}
+
+      {/* ── USERS TAB ── */}
+      {mainTab === "users" && (
+        <div data-aos="fade-up" className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-[var(--muted)]">System users with UID 1000+</p>
+            <button
+              onClick={() => { setUserForm({ username: "", password: "", shell: "/bin/bash", sudo: false }); setUserModal("create"); }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 transition-opacity"
+            >
+              <UserPlus size={14} /> New User
+            </button>
+          </div>
+
+          <div className="glass-card overflow-hidden">
+            {usersQuery.isLoading ? (
+              <div className="p-8 text-center">
+                <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto" />
+              </div>
+            ) : userList.length === 0 ? (
+              <div className="p-10 text-center text-[var(--muted)]">
+                <Users size={36} className="mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No system users found (UID 1000+)</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="vps-table">
+                  <thead>
+                    <tr><th>Username</th><th>UID</th><th>Home</th><th>Shell</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody>
+                    {userList.map(user => (
+                      <tr key={user.username}>
+                        <td>
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20 flex items-center justify-center text-[10px] font-bold text-[var(--accent)]">
+                              {user.username[0]?.toUpperCase()}
+                            </div>
+                            <span className="font-medium text-sm">{user.username}</span>
+                            {user.displayName && <span className="text-xs text-[var(--muted)]">({user.displayName})</span>}
+                          </div>
+                        </td>
+                        <td className="font-mono text-xs text-[var(--muted)]">{user.uid}</td>
+                        <td className="font-mono text-xs text-[var(--muted)] max-w-[120px] truncate">{user.home}</td>
+                        <td className="font-mono text-xs text-[var(--muted)]">{user.shell?.split('/').pop()}</td>
+                        <td>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => openEdit(user)} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Edit">
+                              <Edit3 size={13} />
+                            </button>
+                            <button onClick={() => { setDeleteTarget(user); setKeepHome(false); }} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Create/Edit User Modal */}
       <Modal
@@ -627,11 +681,13 @@ export default function ExtrasPage() {
       />
 
       {/* Output Modal */}
-      <Modal isOpen={!!outputModal} onClose={() => setOutputModal(null)} title={outputModal?.title || ""} size="xl">
-        <pre className="text-[11px] font-mono bg-[#1e1e2e] text-[#cdd6f4] p-4 rounded-xl overflow-auto max-h-[60vh] whitespace-pre-wrap leading-relaxed">
-          {outputModal?.output}
-        </pre>
-      </Modal>
+      {outputModal && (
+        <Modal isOpen={!!outputModal} onClose={() => setOutputModal(null)} title={outputModal.title} size="xl">
+          <pre className="code-block text-[11px] max-h-96 overflow-y-auto whitespace-pre-wrap break-all leading-relaxed">
+            {outputModal.output}
+          </pre>
+        </Modal>
+      )}
     </section>
   );
 }
