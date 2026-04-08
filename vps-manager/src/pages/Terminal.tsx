@@ -93,7 +93,11 @@ export default function TerminalPage() {
         : "✓ Shell ready");
     });
     s.on("disconnect", () => { setConnected(false); addLine("system", "✗ Disconnected"); });
-    s.on("output", (data: string) => addLine("output", data));
+    s.on("output", (data: string) => {
+      // Detect clear-screen escape (\x1b[2J or \x1b[3J) — wipe frontend display too
+      if (/\x1b\[[23]J/.test(data)) { setLines([]); return; }
+      addLine("output", data);
+    });
     s.on("error", (data: string) => addLine("error", data));
     s.on("system", (data: string) => addLine("system", data));
     s.on("cwd", (data: string) => setCwd(data));
@@ -123,7 +127,10 @@ export default function TerminalPage() {
         addLine("system", activeServer ? `✓ Reconnected via SSH → ${activeServer.username}@${activeServer.ip}` : "✓ Shell ready");
       });
       newSock.on("disconnect", () => { setConnected(false); addLine("system", "✗ Disconnected"); });
-      newSock.on("output", (data: string) => addLine("output", data));
+      newSock.on("output", (data: string) => {
+        if (/\x1b\[[23]J/.test(data)) { setLines([]); return; }
+        addLine("output", data);
+      });
       newSock.on("error", (data: string) => addLine("error", data));
       newSock.on("system", (data: string) => addLine("system", data));
       newSock.on("cwd", (data: string) => setCwd(data));
