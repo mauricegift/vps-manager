@@ -44,14 +44,24 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="https://unpkg.com/aos@2.3.4/dist/aos.css" />
-  </head>
-  <body>
+    <!-- Apply theme immediately to prevent white flash -->
     <script>
       (function () {
-        var t = localStorage.getItem('vps-theme') || 'dark';
-        document.documentElement.className = t;
+        try {
+          var t = localStorage.getItem('vps-theme');
+          var migrated = localStorage.getItem('vps-theme-v2');
+          if (!migrated) {
+            localStorage.setItem('vps-theme-v2', '1');
+            if (t === 'light') { t = 'dark'; localStorage.setItem('vps-theme', 'dark'); }
+          }
+          document.documentElement.className = t || 'dark';
+        } catch (e) {
+          document.documentElement.className = 'dark';
+        }
       })();
     </script>
+  </head>
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
