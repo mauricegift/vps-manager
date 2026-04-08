@@ -24,6 +24,7 @@ export interface PM2Process {
   mode?: string;
   watching?: boolean;
   created_at?: number;
+  port?: string | null;
 }
 
 export interface DockerContainer {
@@ -49,6 +50,7 @@ export interface DockerCompose {
   path: string;
   services: string[];
   status: string;
+  ports?: string[];
 }
 
 export interface Database {
