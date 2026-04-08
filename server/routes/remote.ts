@@ -267,18 +267,32 @@ router.get('/:id/files/zip-download', async (req, res) => {
     const baseName = targetPath.split('/').filter(Boolean).pop() || 'download';
     const parentDir = targetPath.split('/').slice(0, -1).join('/') || '/';
 
-    // Create zip on remote (zip the target relative to its parent so paths are clean)
-    const { stderr: zipErr, code: zipCode } = await runSSHCommand(conn,
-      `cd ${JSON.stringify(parentDir)} && zip -r ${JSON.stringify(tmpZip)} ${JSON.stringify(baseName)} 2>&1; echo "_EXIT_$?"`
+    const EXCLUDE = [
+      '*/node_modules/*', '*/.git/*', '*/.npm/*', '*/.agents/*',
+      '*/attached_assets/*', '*/replit.md', '*/replit.nix', '*/.replit',
+      '*/bun.lock', '*/package-lock.json',
+    ].map(p => `-x ${JSON.stringify(p)}`).join(' ');
+
+    // Ensure zip is installed, create zip on remote
+    const zipCheckCmd = `command -v zip >/dev/null 2>&1 || (apt-get install -y zip -qq 2>&1)`;
+    await runSSHCommand(conn, zipCheckCmd);
+
+    const { stdout: zipOut, code: zipCode } = await runSSHCommand(conn,
+      `cd ${JSON.stringify(parentDir)} && zip -r ${JSON.stringify(tmpZip)} ${JSON.stringify(baseName)} ${EXCLUDE} 2>&1; echo "_ZIPCODE_$?"`
     );
+    const actualZipCode = parseInt((zipOut.match(/_ZIPCODE_(\d+)/) || ['', '1'])[1]);
+    if (actualZipCode !== 0 && actualZipCode !== 12) {
+      const errMsg = zipOut.replace(/_ZIPCODE_\d+/, '').trim().slice(-300);
+      return res.status(500).json({ success: false, error: `Failed to create zip: ${errMsg}` });
+    }
 
     // Read zip as base64 then delete temp file
     const { stdout: b64, code: readCode } = await runSSHCommand(conn,
-      `base64 ${JSON.stringify(tmpZip)} && rm -f ${JSON.stringify(tmpZip)}`
+      `base64 ${JSON.stringify(tmpZip)} 2>&1; rm -f ${JSON.stringify(tmpZip)}`
     );
 
     if (readCode !== 0 || !b64.trim()) {
-      return res.status(500).json({ success: false, error: 'Failed to create zip on remote server' });
+      return res.status(500).json({ success: false, error: 'Failed to read zip from remote server' });
     }
 
     const zipBuffer = Buffer.from(b64.trim(), 'base64');
@@ -806,6 +820,7 @@ const REMOTE_INSTALL: Record<string, (opts: any) => string> = {
   jq:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y jq`,
   unzip:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y unzip`,
   chrome: () => `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable && DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb`,
+  wrangler: () => `npm install -g wrangler`,
 };
 
 const REMOTE_UPDATE: Record<string, string> = {
@@ -836,6 +851,7 @@ const REMOTE_UPDATE: Record<string, string> = {
   jq:     'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade jq',
   unzip:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade unzip',
   chrome: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade google-chrome-stable',
+  wrangler: 'npm install -g wrangler@latest',
 };
 
 router.post('/:id/extras/system-update', async (req, res) => {
