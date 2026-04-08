@@ -592,7 +592,7 @@ export default function PM2Page() {
                     <table className="vps-table">
                       <thead>
                         <tr>
-                          <th>ID</th><th>Name</th><th>Status</th><th>CPU</th>
+                          <th>ID</th><th>Name</th><th>Status</th><th>Port</th><th>CPU</th>
                           <th>Memory</th><th>Uptime</th><th>Restarts</th><th>Actions</th>
                         </tr>
                       </thead>
@@ -607,6 +607,15 @@ export default function PM2Page() {
                               )}
                             </td>
                             <td><StatusBadge status={p.status} /></td>
+                            <td>
+                              {p.port ? (
+                                <span className="text-[11px] font-mono px-2 py-0.5 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20">
+                                  :{p.port}
+                                </span>
+                              ) : (
+                                <span className="text-[var(--muted)] text-xs">—</span>
+                              )}
+                            </td>
                             <td className="font-mono text-sm">{(p.cpu || 0).toFixed(1)}%</td>
                             <td className="font-mono text-sm">{fmtMem(p.memory || 0)}</td>
                             <td className="text-sm text-[var(--muted)]">{p.uptime ? fmtUptime(p.uptime) : "—"}</td>
