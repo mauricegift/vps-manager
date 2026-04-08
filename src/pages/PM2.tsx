@@ -40,7 +40,7 @@ const TERM_TEXT = "#cdd6f4";
 const TERM_INPUT = "#a6e22e";
 const TERM_ERR = "#f38ba8";
 
-const MIN_FONT = 8;
+const MIN_FONT = 5;
 const MAX_FONT = 22;
 
 export default function PM2Page() {
@@ -60,7 +60,9 @@ export default function PM2Page() {
     { type: "output", text: "PM2 Terminal ready — type pm2 commands (e.g. list, logs myapp, restart 0)" }
   ]);
   const [termLoading, setTermLoading] = useState(false);
-  const [fontSize, setFontSize] = useState(10);
+  const [fontSize, setFontSize] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth < 640 ? 5 : 10
+  );
   const [installingPM2, setInstallingPM2] = useState(false);
   const termEndRef = useRef<HTMLDivElement>(null);
 
