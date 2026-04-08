@@ -42,21 +42,42 @@ for pkg in git curl unzip zip build-essential nginx sshpass; do
   fi
 done
 
-# ── Step 2: Node.js ───────────────────────────────────────────────────────────
+# ── Step 2: Node.js via NVM ───────────────────────────────────────────────────
 step "Checking Node.js"
+
+install_node_nvm() {
+  warn "Installing NVM and Node.js 24..."
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+  export NVM_DIR="$HOME/.nvm"
+  # shellcheck disable=SC1091
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+  nvm install 24
+  nvm use 24
+  nvm alias default 24
+  log "Node.js $(node --version) installed via NVM"
+}
+
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
 if ! command -v node &>/dev/null; then
-  warn "Node.js not found — installing Node.js 20 LTS..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &>/dev/null
-  apt-get install -y -qq nodejs 2>/dev/null
-  log "Node.js $(node --version) installed"
+  install_node_nvm
 else
   NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
-  if [[ $NODE_MAJOR -lt 18 ]]; then
-    warn "Node.js $(node --version) is too old — upgrading to 20 LTS..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - &>/dev/null
-    apt-get install -y -qq nodejs 2>/dev/null
+  if [[ $NODE_MAJOR -lt 24 ]]; then
+    warn "Node.js $(node --version) is too old — upgrading to 24 via NVM..."
+    # Install NVM if not already present
+    if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+      [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    fi
+    nvm install 24
+    nvm use 24
+    nvm alias default 24
+    log "Node.js $(node --version) upgraded via NVM"
+  else
+    log "Node.js $(node --version)"
   fi
-  log "Node.js $(node --version)"
 fi
 
 # ── Step 3: PM2 ───────────────────────────────────────────────────────────────
@@ -67,6 +88,34 @@ if ! command -v pm2 &>/dev/null; then
   log "PM2 $(pm2 --version) installed"
 else
   log "PM2 $(pm2 --version) already installed"
+fi
+
+# ── Step 3b: Python3 + ffmpeg ─────────────────────────────────────────────────
+step "Checking Python & ffmpeg"
+if ! command -v python3 &>/dev/null; then
+  warn "python3 not found — installing..."
+  apt-get install -y -qq python3 python3-pip 2>/dev/null
+fi
+log "Python $(python3 --version 2>&1 | grep -oE '[0-9.]+' | head -1)"
+
+# Create ~/bin/python symlink so 'python' resolves to python3
+mkdir -p "$HOME/bin"
+if ! grep -q 'export PATH="$HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
+  echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+fi
+if [[ ! -e "$HOME/bin/python" ]]; then
+  ln -sf "$(which python3)" "$HOME/bin/python"
+  log "Created ~/bin/python → $(which python3)"
+else
+  log "~/bin/python already exists"
+fi
+
+if ! command -v ffmpeg &>/dev/null; then
+  warn "ffmpeg not found — installing..."
+  apt-get install -y -qq ffmpeg 2>/dev/null
+  log "ffmpeg $(ffmpeg -version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1) installed"
+else
+  log "ffmpeg already installed"
 fi
 
 # ── Step 4: Clone / update repo ───────────────────────────────────────────────
@@ -117,11 +166,10 @@ step "Configuring firewall (UFW)"
 if command -v ufw &>/dev/null; then
   ufw allow ssh >/dev/null 2>&1 || true
   ufw allow "$APP_PORT"/tcp >/dev/null 2>&1 || true
-  ufw allow "$FRONTEND_PORT"/tcp >/dev/null 2>&1 || true
   ufw allow 80/tcp >/dev/null 2>&1 || true
   ufw allow 443/tcp >/dev/null 2>&1 || true
   ufw --force enable >/dev/null 2>&1 || true
-  log "UFW rules set: SSH, HTTP(80), HTTPS(443), API($APP_PORT), Frontend($FRONTEND_PORT)"
+  log "UFW rules set: SSH, HTTP(80), HTTPS(443), App($APP_PORT)"
 else
   warn "UFW not found — skipping firewall configuration"
 fi
@@ -137,8 +185,7 @@ pm2 start npm --name "$APP_NAME" -- run dev
 pm2 startup systemd -u root --hp /root 2>/dev/null | grep -E '^sudo|^env' | bash || true
 pm2 save
 log "VPS Manager started via PM2 (name: $APP_NAME)"
-log "  API backend → http://localhost:$APP_PORT"
-log "  Frontend     → http://localhost:$FRONTEND_PORT"
+log "  App running → http://localhost:$APP_PORT  (proxied via nginx on port 80)"
 
 # ── Step 9: Nginx reverse proxy ───────────────────────────────────────────────
 step "Configuring Nginx reverse proxy"
