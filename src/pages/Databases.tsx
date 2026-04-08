@@ -4,7 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
   ChevronRight, X, Download, Trash2, FolderOpen,
-  Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle, LayoutGrid
+  Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle, LayoutGrid,
+  Search, Copy, Globe, Wifi, WifiOff, Check
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -59,6 +60,14 @@ export default function DatabasesPage() {
   const [installTarget, setInstallTarget] = useState<DB | null>(null);
   const [installPort, setInstallPort] = useState("");
   const [installPassword, setInstallPassword] = useState("");
+
+  // Browser search
+  const [tableSearch, setTableSearch] = useState("");
+  const [rowSearch, setRowSearch] = useState("");
+
+  // Connection string modal
+  const [connectionModal, setConnectionModal] = useState<DB | null>(null);
+  const [connCopied, setConnCopied] = useState<string | null>(null);
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
@@ -198,6 +207,8 @@ export default function DatabasesPage() {
     setQueryText("");
     setQueryResult(null);
     setPage(0);
+    setTableSearch("");
+    setRowSearch("");
     setLoadingTables(true);
     try {
       const r = await api.get(`${dbApiBase(db.type, dbName)}/tables`);
@@ -213,6 +224,7 @@ export default function DatabasesPage() {
     setSelectedTable(table);
     setLoadingTable(true);
     setPage(pg);
+    setRowSearch("");
     try {
       const r = await api.get(`${dbApiBase(browserDb.type, browserDb.name)}/${encodeURIComponent(table)}/data?offset=${pg * 50}`);
       setTableData(r.data.data);
@@ -466,6 +478,7 @@ export default function DatabasesPage() {
                     onUninstall={() => setConfirmUninstall(db)}
                     onDeleteDb={(name) => setDeleteDbModal({ type: db.type, name })}
                     onCreateDb={() => { setCreateDbType(db.type); setNewDbName(""); setCreateDbModal(true); }}
+                    onConnect={() => setConnectionModal(db)}
                   />
                 ))}
               </div>
@@ -613,10 +626,22 @@ export default function DatabasesPage() {
           <div className="flex flex-col md:flex-row gap-3" style={{ minHeight: 0 }}>
 
             {/* Table/Collection/Key list — horizontal scroll on mobile, vertical sidebar on desktop */}
-            <div className="md:w-44 shrink-0 md:border-r border-[var(--line)] md:pr-3 flex flex-col">
-              <p className="text-[10px] text-[var(--muted)] uppercase font-semibold mb-2 tracking-wider">
+            <div className="md:w-44 shrink-0 md:border-r border-[var(--line)] md:pr-3 flex flex-col gap-2">
+              <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider">
                 {browserDb.type === "mongodb" ? "Collections" : browserDb.type === "redis" ? "Keys" : "Tables"}
               </p>
+              {/* Search box */}
+              {tableList.length > 3 && (
+                <div className="relative">
+                  <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                  <input
+                    value={tableSearch}
+                    onChange={e => setTableSearch(e.target.value)}
+                    placeholder="Filter..."
+                    className="w-full pl-6 pr-2 py-1 text-[11px] rounded-lg border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                  />
+                </div>
+              )}
               {loadingTables ? (
                 <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-x-visible pb-1 md:pb-0 hide-scrollbar">
                   {Array.from({ length: 5 }).map((_, i) => (
@@ -629,7 +654,7 @@ export default function DatabasesPage() {
                 </p>
               ) : (
                 <div className="flex gap-1.5 overflow-x-auto pb-2 hide-scrollbar md:hidden">
-                  {tableList.map((t) => (
+                  {tableList.filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase())).map((t) => (
                     <button
                       key={t.name}
                       onClick={() => loadTable(t.name, 0)}
@@ -647,7 +672,7 @@ export default function DatabasesPage() {
               {/* Desktop vertical list */}
               {tableList.length > 0 && !loadingTables && (
                 <div className="hidden md:flex flex-col gap-0.5 overflow-y-auto" style={{ maxHeight: '52vh' }}>
-                  {tableList.map((t) => (
+                  {tableList.filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase())).map((t) => (
                     <button
                       key={t.name}
                       onClick={() => loadTable(t.name, 0)}
@@ -664,6 +689,9 @@ export default function DatabasesPage() {
                       )}
                     </button>
                   ))}
+                  {tableSearch && tableList.filter(t => t.name.toLowerCase().includes(tableSearch.toLowerCase())).length === 0 && (
+                    <p className="text-[10px] text-[var(--muted)] italic px-2">No matches</p>
+                  )}
                 </div>
               )}
             </div>
@@ -760,6 +788,16 @@ export default function DatabasesPage() {
                       {selectedTable} {tableData && `(${tableData.total} rows)`}
                     </p>
                     <div className="flex items-center gap-2">
+                      {/* Row search */}
+                      <div className="relative">
+                        <Search size={9} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                        <input
+                          value={rowSearch}
+                          onChange={e => setRowSearch(e.target.value)}
+                          placeholder="Search rows..."
+                          className="pl-5 pr-2 py-0.5 text-[10px] rounded border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors w-28"
+                        />
+                      </div>
                       <button onClick={() => loadTable(selectedTable, Math.max(0, page - 1))} disabled={page === 0 || loadingTable} className="px-2 py-0.5 text-[10px] rounded border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-40">← Prev</button>
                       <span className="text-[10px] text-[var(--muted)]">Page {page + 1}</span>
                       <button onClick={() => loadTable(selectedTable, page + 1)} disabled={!tableData || tableData.rows.length < 50 || loadingTable} className="px-2 py-0.5 text-[10px] rounded border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-40">Next →</button>
@@ -771,12 +809,24 @@ export default function DatabasesPage() {
                     </div>
                   ) : tableData ? (
                     <EditableDataTable
-                      data={tableData}
+                      data={{
+                        ...tableData,
+                        rows: rowSearch
+                          ? tableData.rows.filter(row =>
+                              row.some(cell => String(cell ?? "").toLowerCase().includes(rowSearch.toLowerCase()))
+                            )
+                          : tableData.rows,
+                      }}
                       canEdit={true}
                       onEdit={row => setEditRowModal({ columns: tableData.columns, row: [...row], original: [...row] })}
                       onDelete={row => setDeleteRowModal({ columns: tableData.columns, row })}
                     />
                   ) : null}
+                  {rowSearch && tableData && tableData.rows.filter(row =>
+                    row.some(cell => String(cell ?? "").toLowerCase().includes(rowSearch.toLowerCase()))
+                  ).length === 0 && (
+                    <p className="text-[11px] text-[var(--muted)] italic text-center py-4">No rows match your search on this page</p>
+                  )}
                 </div>
               )}
 
@@ -1055,13 +1105,103 @@ export default function DatabasesPage() {
           </div>
         </Modal>
       )}
+      {/* Connection String Modal */}
+      {connectionModal && (
+        <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
+          {(() => {
+            const db = connectionModal;
+            const host = activeServer?.ip ?? "127.0.0.1";
+            const port = db.port;
+            const strings: { label: string; key: string; value: string }[] = [];
+            if (db.type === "postgresql") {
+              strings.push({ label: "PostgreSQL URL", key: "pg", value: `postgresql://postgres:PASSWORD@${host}:${port}/postgres` });
+              strings.push({ label: "psql CLI", key: "psql", value: `psql -h ${host} -p ${port} -U postgres` });
+            } else if (db.type === "mysql" || db.type === "mariadb") {
+              strings.push({ label: "MySQL URL", key: "mysql", value: `mysql://root:PASSWORD@${host}:${port}/` });
+              strings.push({ label: "mysql CLI", key: "mysql-cli", value: `mysql -h ${host} -P ${port} -u root -p` });
+            } else if (db.type === "mongodb") {
+              strings.push({ label: "MongoDB URI", key: "mongo", value: `mongodb://root:PASSWORD@${host}:${port}/admin?authSource=admin` });
+              strings.push({ label: "mongosh CLI", key: "mongosh", value: `mongosh "mongodb://${host}:${port}" --username root` });
+            } else if (db.type === "redis") {
+              strings.push({ label: "Redis URL", key: "redis", value: `redis://:PASSWORD@${host}:${port}/0` });
+              strings.push({ label: "redis-cli", key: "redis-cli", value: `redis-cli -h ${host} -p ${port} -a PASSWORD` });
+            }
+            const copyStr = (key: string, val: string) => {
+              navigator.clipboard.writeText(val);
+              setConnCopied(key);
+              setTimeout(() => setConnCopied(null), 2000);
+            };
+            return (
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+                  <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-[var(--muted)]">
+                    Replace <span className="font-mono font-semibold text-[var(--main)]">PASSWORD</span> with your actual credentials.
+                    {host === "127.0.0.1" ? " These strings connect from this server (local)." : ` Connecting to remote ${host}.`}
+                  </p>
+                </div>
+                {/* Port + Status */}
+                <div className="flex items-center gap-4 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Globe size={13} className="text-[var(--muted)]" />
+                    <span className="text-[var(--muted)]">Host:</span>
+                    <span className="font-mono">{host}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[var(--muted)]">Port:</span>
+                    <span className="font-mono">{port}</span>
+                  </div>
+                  {db.running ? (
+                    <div className="flex items-center gap-1.5 text-green-500"><Wifi size={13} /> Running</div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 text-red-500"><WifiOff size={13} /> Stopped</div>
+                  )}
+                </div>
+                {/* Connection strings */}
+                <div className="space-y-2">
+                  {strings.map(({ label, key, value }) => (
+                    <div key={key}>
+                      <p className="text-[10px] text-[var(--muted)] font-semibold uppercase tracking-wider mb-1">{label}</p>
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--foreground)] border border-[var(--line)] group">
+                        <code className="text-[11px] font-mono flex-1 truncate text-[var(--main)]">{value}</code>
+                        <button
+                          onClick={() => copyStr(key, value)}
+                          className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--accent)]/10 text-[var(--accent)] hover:bg-[var(--accent)]/20 transition-colors text-[10px] font-medium"
+                        >
+                          {connCopied === key ? <Check size={11} /> : <Copy size={11} />}
+                          {connCopied === key ? "Copied!" : "Copy"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* External access note */}
+                {host === "127.0.0.1" && (
+                  <div className="p-3 rounded-xl bg-[var(--foreground)] border border-[var(--line)] text-xs text-[var(--muted)]">
+                    <p className="font-semibold text-[var(--main)] mb-1">Need external access?</p>
+                    <p>To connect from outside this server, you'll need to:</p>
+                    <ol className="list-decimal list-inside mt-1 space-y-0.5">
+                      <li>Change bind-address to <code className="font-mono bg-[var(--secondary)] px-1 rounded">0.0.0.0</code> in the DB config</li>
+                      <li>Open port <code className="font-mono bg-[var(--secondary)] px-1 rounded">{port}</code> in your firewall (UFW)</li>
+                      <li>Then use your server IP: <code className="font-mono bg-[var(--secondary)] px-1 rounded">{activeServer?.ip ?? "YOUR_SERVER_IP"}</code></li>
+                    </ol>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <button onClick={() => setConnectionModal(null)} className="btn-secondary px-4 py-2 text-sm">Close</button>
+                </div>
+              </div>
+            );
+          })()}
+        </Modal>
+      )}
     </section>
   );
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb }: {
+function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb, onConnect }: {
   db: any;
   actionLoading: string | null;
   actionMutation: any;
@@ -1069,6 +1209,7 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
   onUninstall: () => void;
   onDeleteDb: (name: string) => void;
   onCreateDb: () => void;
+  onConnect: () => void;
 }) {
   const [showDbs, setShowDbs] = useState(false);
   const busy = actionLoading === `install-${db.type}` || actionLoading === `uninstall-${db.type}` || actionMutation.isPending;
@@ -1171,6 +1312,14 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
           ))}
         </div>
       )}
+
+      {/* Connect button */}
+      <button
+        onClick={onConnect}
+        className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] rounded-lg bg-[var(--foreground)] border border-[var(--line)] hover:border-[var(--accent)]/50 text-[var(--muted)] hover:text-[var(--accent)] transition-colors mb-2"
+      >
+        <Globe size={11} /> Connection Strings
+      </button>
 
       {/* Service controls */}
       <div className="flex gap-2 pt-2 border-t border-[var(--line)]">
