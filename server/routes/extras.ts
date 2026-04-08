@@ -463,12 +463,16 @@ router.post('/system-update', async (req, res) => {
 // ── User Management ───────────────────────────────────────────────────────────
 router.get('/users', async (_req, res) => {
   try {
-    const out = await run(`getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1"|"$3"|"$4"|"$5"|"$6"|"$7}'`);
+    const [out, whoamiOut] = await Promise.all([
+      run(`getent passwd | awk -F: '($3 >= 1000 && $3 < 65534) || $3 == 0 {print $1"|"$3"|"$4"|"$5"|"$6"|"$7}'`),
+      run(`whoami`).catch(() => ''),
+    ]);
+    const currentUser = whoamiOut.trim();
     const users = out.trim().split('\n').filter(Boolean).map(line => {
       const [username, uid, gid, gecos, home, shell] = line.split('|');
-      return { username, uid: parseInt(uid), gid: parseInt(gid), displayName: gecos, home, shell };
+      return { username, uid: parseInt(uid), gid: parseInt(gid), displayName: gecos, home, shell, isCurrent: username === currentUser };
     });
-    res.json({ success: true, data: users });
+    res.json({ success: true, data: users, currentUser });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
