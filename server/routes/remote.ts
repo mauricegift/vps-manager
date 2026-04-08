@@ -728,6 +728,7 @@ if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin google-chrome-stable); fi
 if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium-browser); fi
 if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium); fi
 emit chrome "$CHROME_P" "--version"
+emit wrangler "$(find_bin wrangler)"
 
 systemctl is-active nginx 2>/dev/null || echo "svc_nginx_inactive"
 systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "svc_apache_inactive"
