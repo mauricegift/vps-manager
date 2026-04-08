@@ -531,7 +531,7 @@ router.get('/:id/databases/:type/:dbName/:table/data', async (req, res) => {
       total = parseInt(cnt.trim().split('\n').pop() || '0') || rows.length;
     } else if (type === 'mongodb') {
       const { stdout } = await runSSHCommand(conn,
-        `mongosh --quiet ${JSON.stringify(db)} --eval "JSON.stringify(db.${tbl}.find().skip(${offset}).limit(50).toArray())" 2>&1`
+        `mongosh --quiet ${JSON.stringify(db)} --eval 'JSON.stringify(db.getCollection(${JSON.stringify(tbl)}).find().skip(${offset}).limit(50).toArray())' 2>&1`
       );
       try {
         const docs = JSON.parse(stdout.trim());
@@ -540,7 +540,7 @@ router.get('/:id/databases/:type/:dbName/:table/data', async (req, res) => {
           rows = docs.map((d: any) => columns.map(c => JSON.stringify(d[c])));
         }
         const { stdout: cnt } = await runSSHCommand(conn,
-          `mongosh --quiet ${JSON.stringify(db)} --eval "db.${tbl}.countDocuments()" 2>&1`
+          `mongosh --quiet ${JSON.stringify(db)} --eval 'db.getCollection(${JSON.stringify(tbl)}).countDocuments()' 2>&1`
         );
         total = parseInt(cnt.trim()) || docs.length;
       } catch { columns = ['error']; rows = [[stdout]]; }
