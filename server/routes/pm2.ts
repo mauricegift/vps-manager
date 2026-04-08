@@ -5,13 +5,19 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 const router = Router();
 
+const COLOR_ENV = { ...process.env, FORCE_COLOR: '3', COLORTERM: 'truecolor' };
+
 function runPM2(args: string) {
+  return execAsync(`pm2 ${args} 2>&1`, { env: COLOR_ENV });
+}
+
+function runPM2Json(args: string) {
   return execAsync(`pm2 ${args} --no-color 2>&1`);
 }
 
 async function listProcesses() {
   try {
-    const { stdout } = await runPM2('jlist');
+    const { stdout } = await runPM2Json('jlist');
     return JSON.parse(stdout);
   } catch {
     return [];
@@ -120,7 +126,7 @@ router.post('/terminal', async (req, res) => {
     if (!ALLOWED_PM2_CMDS.includes(firstWord)) {
       return res.status(400).json({ success: false, error: `Command not allowed: ${firstWord}` });
     }
-    const { stdout, stderr } = await execAsync(`pm2 ${args} --no-color 2>&1`, { timeout: 15000 });
+    const { stdout, stderr } = await execAsync(`pm2 ${args} 2>&1`, { timeout: 15000, env: COLOR_ENV });
     res.json({ success: true, data: stdout || stderr || '(no output)' });
   } catch (e: any) {
     res.json({ success: true, data: e.stdout || e.stderr || e.message || 'Error running command' });
