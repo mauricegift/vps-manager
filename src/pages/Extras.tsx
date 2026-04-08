@@ -5,7 +5,8 @@ import { useSearchParams } from "react-router-dom";
 import {
   Download, RefreshCw, ArrowUpCircle, CheckCircle2, XCircle,
   UserPlus, Edit3, Trash2, Eye, EyeOff, Users, Package, ShieldAlert, Save,
-  RefreshCcw, Layers, Server, Cpu, Wrench, Globe, MonitorSmartphone, Cloud, Key, Loader2
+  RefreshCcw, Layers, Server, Cpu, Wrench, Globe, MonitorSmartphone, Cloud, Key, Loader2,
+  UserCheck, LogIn
 } from "lucide-react";
 import api from "@/lib/api";
 import Modal from "@/components/ui/Modal";
@@ -395,6 +396,14 @@ export default function ExtrasPage() {
   const userList = usersQuery.data?.users || [];
   const currentUser = usersQuery.data?.currentUser || "";
 
+  const [activeUser, setActiveUser] = useState<string>(() => localStorage.getItem("vpsm_active_user") || "");
+
+  const switchToUser = (username: string) => {
+    localStorage.setItem("vpsm_active_user", username);
+    setActiveUser(username);
+    toast.success(`Switched active user context to ${username}. File browsing and paths will now use /home/${username === "root" ? "root" : username}.`);
+  };
+
   const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
     { id: "system", label: "System", icon: RefreshCcw },
     { id: "software", label: "Software", icon: Package },
@@ -402,7 +411,24 @@ export default function ExtrasPage() {
   ];
 
   const currentGroup = SOFTWARE_GROUPS.find(g => g.id === subTab) || SOFTWARE_GROUPS[0];
-  const groupTools = tools.filter(t => currentGroup.ids.includes(t.id));
+
+  const TOOL_META: Record<string, { name: string; icon: string; description: string }> = {
+    wrangler: { name: "Wrangler", icon: "☁️", description: "Cloudflare Workers CLI for deploying to the edge" },
+  };
+  const groupToolIds = currentGroup.ids;
+  const groupToolsFetched = tools.filter(t => groupToolIds.includes(t.id));
+  const fetchedIds = new Set(tools.map(t => t.id));
+  const syntheticTools: typeof tools = groupToolIds
+    .filter(id => !fetchedIds.has(id))
+    .map(id => ({
+      id,
+      name: TOOL_META[id]?.name || id,
+      icon: TOOL_META[id]?.icon || "🔧",
+      description: TOOL_META[id]?.description || id,
+      installed: false,
+      version: null,
+    }));
+  const groupTools = [...groupToolsFetched, ...syntheticTools];
   const extraTools = tools.filter(t => !ALL_KNOWN_IDS.includes(t.id));
 
   return (
@@ -619,12 +645,15 @@ export default function ExtrasPage() {
       {/* ── USERS TAB ── */}
       {mainTab === "users" && (
         <div data-aos="fade-up" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <p className="text-xs text-[var(--muted)]">System users on this server</p>
               {currentUser && (
                 <p className="text-[11px] text-[var(--accent)] mt-0.5 font-mono">
                   Connected as: <span className="font-bold">{currentUser}</span>
+                  {activeUser && activeUser !== currentUser && (
+                    <span className="ml-2 text-amber-400">· Active context: <span className="font-bold">{activeUser}</span></span>
+                  )}
                 </p>
               )}
             </div>
@@ -653,8 +682,11 @@ export default function ExtrasPage() {
                     <tr><th>Username</th><th>UID</th><th>Home</th><th>Shell</th><th>Actions</th></tr>
                   </thead>
                   <tbody>
-                    {userList.map(user => (
-                      <tr key={user.username} className={user.isCurrent ? "bg-[var(--accent)]/5" : ""}>
+                    {userList.map(user => {
+                      const isRoot = user.username === "root";
+                      const isActiveCtx = activeUser === user.username;
+                      return (
+                      <tr key={user.username} className={`${user.isCurrent ? "bg-[var(--accent)]/5" : ""} ${isActiveCtx ? "bg-amber-400/5" : ""}`}>
                         <td>
                           <div className="flex items-center gap-2">
                             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${
@@ -668,6 +700,12 @@ export default function ExtrasPage() {
                             {user.isCurrent && (
                               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent)] text-white uppercase tracking-wide">you</span>
                             )}
+                            {isRoot && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 uppercase tracking-wide">root</span>
+                            )}
+                            {isActiveCtx && !user.isCurrent && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-400/20 text-amber-400 uppercase tracking-wide">active</span>
+                            )}
                             {user.displayName && <span className="text-xs text-[var(--muted)]">({user.displayName})</span>}
                           </div>
                         </td>
@@ -676,16 +714,28 @@ export default function ExtrasPage() {
                         <td className="font-mono text-xs text-[var(--muted)]">{user.shell?.split('/').pop()}</td>
                         <td>
                           <div className="flex items-center gap-1">
+                            {isActiveCtx ? (
+                              <span className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] text-amber-400 bg-amber-400/10">
+                                <UserCheck size={11} /> Active
+                              </span>
+                            ) : (
+                              <button onClick={() => switchToUser(user.username)} className="p-1.5 rounded-lg hover:bg-amber-400/10 text-amber-400 transition-colors" title={`Switch active context to ${user.username}`}>
+                                <LogIn size={13} />
+                              </button>
+                            )}
                             <button onClick={() => openEdit(user)} className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Edit">
                               <Edit3 size={13} />
                             </button>
-                            <button onClick={() => { setDeleteTarget(user); setKeepHome(false); }} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete">
-                              <Trash2 size={13} />
-                            </button>
+                            {!isRoot && (
+                              <button onClick={() => { setDeleteTarget(user); setKeepHome(false); }} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete">
+                                <Trash2 size={13} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                    })}
                   </tbody>
                 </table>
               </div>
