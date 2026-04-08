@@ -3,15 +3,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Folder, File, ChevronRight, Home, RefreshCw,
   Scissors, Copy, Trash2, Eye, ArrowUp, FolderOpen,
-  Plus, Upload, FilePlus, FolderPlus, Edit3, Save, X, ClipboardCopy
+  Plus, Upload, FilePlus, FolderPlus, Edit3, Save, X, ClipboardCopy, Code
 } from "lucide-react";
 import api from "@/lib/api";
 import type { FileItem } from "@/types";
 import Modal from "@/components/ui/Modal";
-import CodeView from "@/components/ui/CodeView";
+import CodeView, { getLang } from "@/components/ui/CodeView";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
+import { useTheme } from "@/context/ThemeContext";
 
 function fmtSize(b: number) {
   if (!b) return "—";
@@ -32,6 +33,8 @@ export default function FileManagerPage() {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { activeServer } = useRemoteServer();
+  const { theme } = useTheme();
+  const dark = theme === "dark";
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
 
   const [path, setPath] = useState(() =>
@@ -382,13 +385,35 @@ export default function FileManagerPage() {
         <div className="space-y-3">
           {isEditing ? (
             <>
-              <textarea
-                value={editContent}
-                onChange={e => setEditContent(e.target.value)}
-                className={`${inp} font-mono text-[11px] resize-none`}
-                style={{ minHeight: "200px", maxHeight: "50vh" }}
-                spellCheck={false}
-              />
+              {/* Code language badge */}
+              {viewContent?.name && getLang(viewContent.name) && (
+                <div className="flex items-center gap-1.5">
+                  <Code size={12} className="text-[var(--accent)]" />
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--foreground)] border border-[var(--line)] text-[var(--muted)] capitalize">
+                    {getLang(viewContent.name)}
+                  </span>
+                  <span className="text-[10px] text-[var(--muted)]">syntax highlighting active</span>
+                </div>
+              )}
+              {/* Code-styled editor */}
+              <div
+                className="relative rounded-xl overflow-hidden border border-[var(--line)]"
+                style={{ background: dark ? "#1e1e2e" : "#f8fafc" }}
+              >
+                <textarea
+                  value={editContent}
+                  onChange={e => setEditContent(e.target.value)}
+                  spellCheck={false}
+                  className="w-full font-mono text-[11px] resize-none focus:outline-none bg-transparent p-4 leading-relaxed"
+                  style={{
+                    minHeight: "300px",
+                    maxHeight: "55vh",
+                    color: dark ? "#cdd6f4" : "#1e293b",
+                    caretColor: dark ? "#cdd6f4" : "#1e293b",
+                    overflowY: "auto",
+                  }}
+                />
+              </div>
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setIsEditing(false)} className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
                   <X size={13} /> Discard
