@@ -267,27 +267,43 @@ router.post('/:type/uninstall', async (req, res) => {
 // ── Change Password ───────────────────────────────────────────────────────────
 router.post('/:type/:dbname/change-password', async (req, res) => {
   const { type, dbname } = req.params;
-  const { password, username } = req.body;
+  const { password } = req.body;
   if (!password) return res.status(400).json({ success: false, error: 'Password is required' });
+  const safeUser = dbname.replace(/[^a-zA-Z0-9_]/g, '_');
   const safePwd = password.replace(/'/g, "''");
   const safePwdMongo = password.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   try {
     if (type === 'mongodb') {
-      const user = (username || 'root').replace(/[^a-zA-Z0-9_]/g, '');
-      await mongoshRun('admin', `db.updateUser("${user}", {pwd: "${safePwdMongo}"})`);
+      // Create or update a user scoped only to this database
+      const script = [
+        `db = db.getSiblingDB("${dbname}");`,
+        `try { db.updateUser("${safeUser}", { pwd: "${safePwdMongo}" }); }`,
+        `catch(e) { db.createUser({ user: "${safeUser}", pwd: "${safePwdMongo}", roles: [{ role: "dbOwner", db: "${dbname}" }] }); }`
+      ].join(' ');
+      await mongoshRun('admin', script);
     } else if (type === 'mysql' || type === 'mariadb') {
-      const user = (username || 'root').replace(/[^a-zA-Z0-9_]/g, '');
-      await execAsync(`mysql -u root -e "ALTER USER '${user}'@'%' IDENTIFIED BY '${safePwd}'; ALTER USER '${user}'@'localhost' IDENTIFIED BY '${safePwd}'; FLUSH PRIVILEGES;" 2>&1`, { timeout: 15000 });
+      // Create/update a user tied only to this database (not root)
+      const sql = [
+        `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
+        `ALTER USER '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
+        `CREATE USER IF NOT EXISTS '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
+        `ALTER USER '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
+        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'localhost';`,
+        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'%';`,
+        `FLUSH PRIVILEGES;`
+      ].join(' ');
+      await execAsync(`mysql -u root -e "${sql}" 2>&1`, { timeout: 15000 });
     } else if (type === 'postgresql') {
-      const user = (username || 'postgres').replace(/[^a-zA-Z0-9_]/g, '');
-      await execAsync(`su - postgres -c "psql -c \\"ALTER USER ${user} WITH PASSWORD '${safePwd}';\\""`, { timeout: 15000 });
+      // Create/update a role scoped to this database
+      const sql = `DO $$BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${safeUser}') THEN CREATE USER "${safeUser}" WITH PASSWORD '${safePwd}'; ELSE ALTER USER "${safeUser}" WITH PASSWORD '${safePwd}'; END IF; END$$; GRANT ALL PRIVILEGES ON DATABASE "${dbname}" TO "${safeUser}";`;
+      await execAsync(`su - postgres -c "psql -c \\"${sql.replace(/"/g, '\\"')}\\""`, { timeout: 15000 });
     } else if (type === 'redis') {
       const safePwdRedis = password.replace(/'/g, "\\'");
       await execAsync(`redis-cli CONFIG SET requirepass '${safePwdRedis}' 2>&1`, { timeout: 10000 });
     } else {
       return res.status(400).json({ success: false, error: 'Unsupported database type' });
     }
-    res.json({ success: true });
+    res.json({ success: true, username: safeUser });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message || 'Failed to change password' });
   }
