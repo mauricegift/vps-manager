@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
-import { TerminalIcon, Trash2 } from "lucide-react";
+import { TerminalIcon, Trash2, Minus, Plus } from "lucide-react";
 import AnsiText from "@/components/ui/AnsiText";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 import { useTheme } from "@/context/ThemeContext";
@@ -21,14 +21,14 @@ const DARK_THEME = {
 };
 
 const LIGHT_THEME = {
-  bg: "#ffffff",
-  inputBar: "#f4f4f5",
+  bg: "#fafafa",
+  inputBar: "#f0f0f0",
   text: "#1a1a1a",
   muted: "#888888",
   prompt: "#16803c",
   error: "#dc2626",
   system: "#6b7280",
-  border: "#e4e4e7",
+  border: "#d4d4d8",
   btn: "#e4e4e7",
   btnHover: "#d4d4d8",
 };
@@ -43,6 +43,10 @@ const CTRL_KEYS = [
   { label: "↓", title: "Next command", raw: "__HIST_DOWN__" },
 ];
 
+const MIN_FONT = 9;
+const MAX_FONT = 22;
+const DEFAULT_FONT = 12.5;
+
 export default function TerminalPage() {
   const { activeServer } = useRemoteServer();
   const { theme } = useTheme();
@@ -55,6 +59,7 @@ export default function TerminalPage() {
   const [cwd, setCwd] = useState("~");
   const [history, setHistory] = useState<string[]>([]);
   const [histIdx, setHistIdx] = useState(-1);
+  const [fontSize, setFontSize] = useState(DEFAULT_FONT);
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -105,7 +110,9 @@ export default function TerminalPage() {
     if (!input.trim() || !s || !connected) return;
     const cmd = input.trim();
     if (cmd === "clear") { setLines([]); setInput(""); return; }
-    addLine("input", `${cwd}$ ${cmd}`);
+    if (!activeServer) {
+      addLine("input", `${cwd}$ ${cmd}`);
+    }
     s.emit("command", cmd);
     setHistory(h => [cmd, ...h.slice(0, 99)]);
     setHistIdx(-1);
@@ -182,7 +189,7 @@ export default function TerminalPage() {
         </div>
       </div>
 
-      {/* Terminal window — always Monokai dark */}
+      {/* Terminal window */}
       <div className="rounded-2xl overflow-hidden shadow-2xl" style={{ border: `1px solid ${MONOKAI.border}` }}>
 
         {/* Chrome bar */}
@@ -196,15 +203,41 @@ export default function TerminalPage() {
           <div className="flex-1 text-center text-xs font-mono truncate" style={{ color: MONOKAI.muted }}>
             {chromeTitle}
           </div>
-          <TerminalIcon size={13} style={{ color: MONOKAI.muted }} />
+          {/* Font size controls */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => setFontSize(f => Math.max(MIN_FONT, +(f - 1).toFixed(1)))}
+              className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+              style={{ background: MONOKAI.btn, color: MONOKAI.muted }}
+              onMouseEnter={e => (e.currentTarget.style.background = MONOKAI.btnHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = MONOKAI.btn)}
+              title="Decrease font size"
+            >
+              <Minus size={10} />
+            </button>
+            <span className="text-[10px] font-mono w-8 text-center" style={{ color: MONOKAI.muted }}>
+              {fontSize}
+            </span>
+            <button
+              onClick={() => setFontSize(f => Math.min(MAX_FONT, +(f + 1).toFixed(1)))}
+              className="w-6 h-6 flex items-center justify-center rounded transition-colors"
+              style={{ background: MONOKAI.btn, color: MONOKAI.muted }}
+              onMouseEnter={e => (e.currentTarget.style.background = MONOKAI.btnHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = MONOKAI.btn)}
+              title="Increase font size"
+            >
+              <Plus size={10} />
+            </button>
+            <TerminalIcon size={13} style={{ color: MONOKAI.muted, marginLeft: 4 }} />
+          </div>
         </div>
 
         {/* Output */}
         <div
           ref={outputRef}
           onClick={() => inputRef.current?.focus()}
-          className="h-[52vh] min-h-[260px] overflow-y-auto p-4 font-mono text-[12.5px] leading-relaxed cursor-text"
-          style={{ background: MONOKAI.bg, color: MONOKAI.text }}
+          className="h-[52vh] min-h-[260px] overflow-y-auto p-4 font-mono leading-relaxed cursor-text"
+          style={{ background: MONOKAI.bg, color: MONOKAI.text, fontSize: `${fontSize}px` }}
         >
           {lines.map((line, i) => {
             if (line.type === "system") {
@@ -263,7 +296,7 @@ export default function TerminalPage() {
           style={{ background: MONOKAI.inputBar, borderColor: MONOKAI.border }}
         >
           <span className="font-mono text-sm shrink-0 font-bold" style={{ color: MONOKAI.prompt }}>
-            {cwd}$
+            {activeServer ? `${activeServer.username}@${activeServer.ip}` : cwd}$
           </span>
           <input
             ref={inputRef}
