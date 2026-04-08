@@ -687,7 +687,7 @@ export default function DatabasesPage() {
 
       {/* Change Password modal */}
       {changePassModal && (
-        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); }} title={`Change Password — ${changePassModal.name}`} size="sm">
+        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200}>
           <div className="space-y-4">
             <div className="p-3 rounded-xl bg-orange-500/5 border border-orange-500/20">
               <p className="text-xs text-[var(--muted)]">
