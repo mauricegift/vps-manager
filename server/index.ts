@@ -17,6 +17,7 @@ import vpsRouter from './routes/vps.js';
 import serversRouter from './routes/vps-connections.js';
 import remoteRouter from './routes/remote.js';
 import extrasRouter from './routes/extras.js';
+import nginxRouter from './routes/nginx.js';
 import { initDB } from './db.js';
 import pool from './db.js';
 
@@ -41,6 +42,7 @@ app.use('/api/vps', vpsRouter);
 app.use('/api/servers', serversRouter);
 app.use('/api/remote', remoteRouter);
 app.use('/api/extras', extrasRouter);
+app.use('/api/nginx', nginxRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
