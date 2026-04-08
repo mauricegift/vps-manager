@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
-  ChevronRight, X, Download, Trash2, FolderOpen, Terminal
+  ChevronRight, X, Download, Trash2, FolderOpen, Terminal,
+  Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -40,6 +41,14 @@ export default function DatabasesPage() {
   const [queryLoading, setQueryLoading] = useState(false);
   const [page, setPage] = useState(0);
   const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
+  const [editRowModal, setEditRowModal] = useState<{ columns: string[]; row: any[]; original: any[] } | null>(null);
+  const [deleteRowModal, setDeleteRowModal] = useState<{ columns: string[]; row: any[] } | null>(null);
+  const [addRowModal, setAddRowModal] = useState(false);
+  const [addRowValues, setAddRowValues] = useState<Record<string, string>>({});
+  const [newDbName, setNewDbName] = useState("");
+  const [createDbModal, setCreateDbModal] = useState(false);
+  const [dropTableModal, setDropTableModal] = useState<string | null>(null);
+  const [managingDb, setManagingDb] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState<DB | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [installTarget, setInstallTarget] = useState<DB | null>(null);
@@ -181,6 +190,72 @@ export default function DatabasesPage() {
       toast.error(e.response?.data?.error || "Query failed");
     }
     setQueryLoading(false);
+  };
+
+  const runSql = async (sql: string, successMsg: string) => {
+    if (!browserDb) return;
+    try {
+      await api.post(`${dbApiBase(browserDb.type, browserDb.name)}/query`, { sql });
+      toast.success(successMsg);
+      if (selectedTable) loadTable(selectedTable, page);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Operation failed");
+    }
+  };
+
+  const buildWhereClause = (columns: string[], row: any[]) =>
+    columns.map((c, i) => row[i] === null ? `"${c}" IS NULL` : `"${c}" = '${String(row[i]).replace(/'/g, "''")}'`).join(" AND ");
+
+  const saveEditRow = async () => {
+    if (!editRowModal || !selectedTable || !browserDb) return;
+    const { columns, row, original } = editRowModal;
+    const sets = columns.map((c, i) => `"${c}" = '${String(row[i] ?? "").replace(/'/g, "''")}'`).join(", ");
+    const where = buildWhereClause(columns, original);
+    await runSql(`UPDATE "${selectedTable}" SET ${sets} WHERE ${where}`, "Row updated");
+    setEditRowModal(null);
+  };
+
+  const deleteRow = async () => {
+    if (!deleteRowModal || !selectedTable || !browserDb) return;
+    const { columns, row } = deleteRowModal;
+    const where = buildWhereClause(columns, row);
+    await runSql(`DELETE FROM "${selectedTable}" WHERE ${where}`, "Row deleted");
+    setDeleteRowModal(null);
+  };
+
+  const addRow = async () => {
+    if (!tableData || !selectedTable || !browserDb) return;
+    const cols = Object.keys(addRowValues).filter(c => addRowValues[c] !== "");
+    if (!cols.length) { toast.error("Fill in at least one column"); return; }
+    const colStr = cols.map(c => `"${c}"`).join(", ");
+    const valStr = cols.map(c => `'${addRowValues[c].replace(/'/g, "''")}'`).join(", ");
+    await runSql(`INSERT INTO "${selectedTable}" (${colStr}) VALUES (${valStr})`, "Row added");
+    setAddRowModal(false);
+    setAddRowValues({});
+  };
+
+  const createDatabase = async () => {
+    if (!browserDb || !newDbName.trim()) return;
+    setManagingDb(true);
+    try {
+      await api.post(`${dbApiBase(browserDb.type, browserDb.name)}/query`, {
+        sql: browserDb.type === "postgresql" ? `CREATE DATABASE "${newDbName}"` : `CREATE DATABASE \`${newDbName}\``
+      });
+      toast.success(`Database "${newDbName}" created`);
+      setCreateDbModal(false);
+      setNewDbName("");
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to create database");
+    }
+    setManagingDb(false);
+  };
+
+  const dropTable = async (table: string) => {
+    if (!browserDb) return;
+    await runSql(`DROP TABLE IF EXISTS "${table}"`, `Table "${table}" dropped`);
+    setDropTableModal(null);
+    setTableList(prev => prev.filter(t => t.name !== table));
+    if (selectedTable === table) { setSelectedTable(null); setTableData(null); }
   };
 
   // Split databases into installed vs not-installed
@@ -421,6 +496,35 @@ export default function DatabasesPage() {
 
             {/* Main content */}
             <div className="flex-1 min-w-0 space-y-3 overflow-y-auto" style={{ maxHeight: '65vh' }}>
+
+              {/* DB Management bar */}
+              {browserDb.type !== "redis" && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => setCreateDbModal(true)}
+                    className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-[var(--foreground)] border border-[var(--line)] hover:border-[var(--accent)]/40 hover:text-[var(--accent)] transition-colors"
+                  >
+                    <PlusCircle size={11} /> New Database
+                  </button>
+                  {selectedTable && browserDb.type !== "mongodb" && (
+                    <>
+                      <button
+                        onClick={() => { setAddRowValues(tableData ? Object.fromEntries(tableData.columns.map(c => [c, ""])) : {}); setAddRowModal(true); }}
+                        className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-green-500/10 border border-green-500/20 text-green-400 hover:bg-green-500/20 transition-colors"
+                      >
+                        <Plus size={11} /> Add Row
+                      </button>
+                      <button
+                        onClick={() => setDropTableModal(selectedTable)}
+                        className="flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
+                      >
+                        <MinusCircle size={11} /> Drop Table
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2">
                 <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider">
                   {browserDb.type === "mongodb" ? "MongoDB Expression" : browserDb.type === "redis" ? "Redis Command" : "SQL Query"}
@@ -477,7 +581,12 @@ export default function DatabasesPage() {
                       <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
                     </div>
                   ) : tableData ? (
-                    <DataTable data={tableData} />
+                    <EditableDataTable
+                      data={tableData}
+                      isSql={browserDb.type !== "mongodb" && browserDb.type !== "redis"}
+                      onEdit={row => setEditRowModal({ columns: tableData.columns, row: [...row], original: [...row] })}
+                      onDelete={row => setDeleteRowModal({ columns: tableData.columns, row })}
+                    />
                   ) : null}
                 </div>
               )}
@@ -505,6 +614,132 @@ export default function DatabasesPage() {
           </div>
         )}
       </Modal>
+
+      {/* Edit Row Modal */}
+      {editRowModal && (
+        <Modal isOpen onClose={() => setEditRowModal(null)} title="Edit Row" size="lg">
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+            {editRowModal.columns.map((col, i) => (
+              <div key={col}>
+                <label className="text-[10px] text-[var(--muted)] mb-1 block font-mono">{col}</label>
+                <input
+                  value={String(editRowModal.row[i] ?? "")}
+                  onChange={e => {
+                    const updated = [...editRowModal.row];
+                    updated[i] = e.target.value;
+                    setEditRowModal({ ...editRowModal, row: updated });
+                  }}
+                  className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-end pt-4">
+            <button onClick={() => setEditRowModal(null)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+            <button onClick={saveEditRow} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90">
+              <Edit3 size={13} /> Save Changes
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Row Modal */}
+      {deleteRowModal && (
+        <Modal isOpen onClose={() => setDeleteRowModal(null)} title="Delete Row" size="sm">
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
+              <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-red-400">Delete this row?</p>
+                <p className="text-xs text-[var(--muted)] mt-0.5">This will permanently delete the row from the table.</p>
+              </div>
+            </div>
+            <div className="bg-[var(--foreground)] rounded-xl p-3 space-y-1">
+              {deleteRowModal.columns.map((c, i) => (
+                <div key={c} className="flex gap-2 text-xs">
+                  <span className="text-[var(--muted)] font-mono w-24 shrink-0">{c}:</span>
+                  <span className="font-mono truncate">{String(deleteRowModal.row[i] ?? "null")}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDeleteRowModal(null)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+              <button onClick={deleteRow} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 transition-colors">
+                <Trash size={13} /> Delete Row
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Add Row Modal */}
+      {addRowModal && tableData && (
+        <Modal isOpen onClose={() => { setAddRowModal(false); setAddRowValues({}); }} title={`Add Row to ${selectedTable}`} size="lg">
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+            {tableData.columns.map(col => (
+              <div key={col}>
+                <label className="text-[10px] text-[var(--muted)] mb-1 block font-mono">{col}</label>
+                <input
+                  value={addRowValues[col] || ""}
+                  onChange={e => setAddRowValues(prev => ({ ...prev, [col]: e.target.value }))}
+                  placeholder="NULL"
+                  className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 justify-end pt-4">
+            <button onClick={() => { setAddRowModal(false); setAddRowValues({}); }} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+            <button onClick={addRow} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90">
+              <Plus size={13} /> Insert Row
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Create Database Modal */}
+      {createDbModal && (
+        <Modal isOpen onClose={() => setCreateDbModal(false)} title="Create New Database" size="sm">
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs text-[var(--muted)] mb-1.5 block">Database Name</label>
+              <input
+                value={newDbName}
+                onChange={e => setNewDbName(e.target.value)}
+                placeholder="my_database"
+                className="w-full px-3 py-2 text-sm font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] focus:border-[var(--accent)] transition-colors"
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCreateDbModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+              <button onClick={createDatabase} disabled={managingDb || !newDbName.trim()} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
+                <PlusCircle size={13} /> {managingDb ? "Creating..." : "Create"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Drop Table Modal */}
+      {dropTableModal && (
+        <Modal isOpen onClose={() => setDropTableModal(null)} title="Drop Table" size="sm">
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
+              <AlertTriangle size={16} className="text-red-400 shrink-0 mt-0.5" />
+              <p className="text-sm text-[var(--main)]">
+                Drop table <strong className="font-mono">{dropTableModal}</strong>? This permanently deletes all data and cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDropTableModal(null)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+              <button onClick={() => dropTable(dropTableModal)} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 hover:bg-red-500/25 transition-colors">
+                <MinusCircle size={13} /> Drop Table
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }
@@ -705,9 +940,7 @@ function DataTable({ data }: { data: TableData }) {
         </thead>
         <tbody>
           {data.rows.length === 0 ? (
-            <tr>
-              <td colSpan={data.columns.length} className="text-center py-6 text-[var(--muted)] italic">No rows found</td>
-            </tr>
+            <tr><td colSpan={data.columns.length} className="text-center py-6 text-[var(--muted)] italic">No rows found</td></tr>
           ) : (
             data.rows.map((row, i) => (
               <tr key={i} className="hover:bg-[var(--foreground)] transition-colors">
@@ -716,6 +949,68 @@ function DataTable({ data }: { data: TableData }) {
                     {cell === null ? <span className="text-[var(--muted)] italic">null</span> : String(cell)}
                   </td>
                 ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EditableDataTable({ data, isSql, onEdit, onDelete }: {
+  data: TableData;
+  isSql: boolean;
+  onEdit: (row: any[]) => void;
+  onDelete: (row: any[]) => void;
+}) {
+  if (!data.columns || data.columns.length === 0) {
+    return <p className="text-xs text-[var(--muted)] italic">No data returned</p>;
+  }
+  return (
+    <div className="overflow-auto max-h-64 rounded-xl border border-[var(--line)]">
+      <table className="vps-table text-[11px] min-w-max">
+        <thead className="sticky top-0 bg-[var(--secondary)] z-10">
+          <tr>
+            {data.columns.map((col) => (
+              <th key={col} className="px-3 py-2 text-left font-semibold text-[var(--muted)] uppercase tracking-wide whitespace-nowrap border-b border-[var(--line)]">
+                {col}
+              </th>
+            ))}
+            {isSql && <th className="px-3 py-2 border-b border-[var(--line)] text-right">Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {data.rows.length === 0 ? (
+            <tr><td colSpan={data.columns.length + (isSql ? 1 : 0)} className="text-center py-6 text-[var(--muted)] italic">No rows found</td></tr>
+          ) : (
+            data.rows.map((row, i) => (
+              <tr key={i} className="hover:bg-[var(--foreground)] transition-colors group">
+                {row.map((cell, j) => (
+                  <td key={j} className="px-3 py-2 font-mono max-w-[180px] truncate" title={String(cell ?? "")}>
+                    {cell === null ? <span className="text-[var(--muted)] italic">null</span> : String(cell)}
+                  </td>
+                ))}
+                {isSql && (
+                  <td className="px-3 py-1.5 text-right">
+                    <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => onEdit(row)}
+                        className="p-1 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors"
+                        title="Edit row"
+                      >
+                        <Edit3 size={11} />
+                      </button>
+                      <button
+                        onClick={() => onDelete(row)}
+                        className="p-1 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors"
+                        title="Delete row"
+                      >
+                        <Trash size={11} />
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))
           )}
