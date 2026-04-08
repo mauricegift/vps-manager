@@ -80,25 +80,24 @@ io.on('connection', async (socket) => {
                 sshClient?.end();
               });
 
-              // Set up color aliases (same as local shell)
+              // Send all color/alias setup as ONE line → terminal echoes one line, then clear wipes it
               setTimeout(() => {
                 if (stream.writable) {
-                  stream.write(
-                    'export FORCE_COLOR=3 COLORTERM=truecolor CLICOLOR=1 CLICOLOR_FORCE=1\n' +
-                    'ls()   { command ls   --color=always "$@"; }; export -f ls\n' +
-                    'll()   { command ls -la --color=always "$@"; }; export -f ll\n' +
-                    'grep() { command grep --color=always "$@"; }; export -f grep\n' +
-                    'diff() { command diff --color=always "$@"; }; export -f diff\n' +
-                    'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
-                  );
+                  const setup = [
+                    "export FORCE_COLOR=3 COLORTERM=truecolor CLICOLOR=1 CLICOLOR_FORCE=1",
+                    "alias ls='ls --color=always'",
+                    "alias ll='ls -la --color=always'",
+                    "alias grep='grep --color=always'",
+                    "alias diff='diff --color=always'",
+                    'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "',
+                  ].join('; ');
+                  stream.write(setup + '\n');
                 }
-              }, 400);
+              }, 350);
+              // Clear the echoed init line once bash has processed it
               setTimeout(() => {
-                socket.emit('output',
-                  '\x1b[32m✓\x1b[0m Colors ready — ' +
-                  '\x1b[34mls\x1b[0m · \x1b[33mgrep\x1b[0m · \x1b[35mdiff\x1b[0m · \x1b[36mll\x1b[0m are colorized\n'
-                );
-              }, 800);
+                if (stream.writable) stream.write('clear\n');
+              }, 750);
 
               socket.on('command', (cmd: string) => {
                 if (stream.writable) stream.write(cmd + '\n');
