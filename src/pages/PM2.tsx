@@ -461,7 +461,7 @@ export default function PM2Page() {
                   onKeyDown={e => e.key === "Enter" && runTermCmd()}
                   placeholder="list · logs myapp · restart 0 · reload all"
                   className="flex-1 bg-transparent font-mono text-sm focus:outline-none disabled:opacity-50"
-                  style={{ color: TERM_TEXT, caretColor: TERM_INPUT, fontSize: `${fontSize}px` }}
+                  style={{ color: TERM_TEXT, caretColor: TERM_INPUT }}
                   disabled={termLoading}
                   autoComplete="off"
                   spellCheck={false}
