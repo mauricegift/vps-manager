@@ -691,10 +691,10 @@ export default function DatabasesPage() {
           <div className="space-y-4">
             <div className="p-3 rounded-xl bg-orange-500/5 border border-orange-500/20">
               <p className="text-xs text-[var(--muted)]">
-                {changePassModal.type === "mongodb" && "Updates the root user password in the admin database."}
-                {(changePassModal.type === "mysql" || changePassModal.type === "mariadb") && "Updates the root user password for all hosts."}
-                {changePassModal.type === "postgresql" && "Updates the postgres superuser password."}
-                {changePassModal.type === "redis" && "Sets the requirepass configuration for Redis."}
+                {changePassModal.type === "mongodb" && <>Creates or updates a dedicated user <code className="font-mono text-orange-300">{changePassModal.name.replace(/[^a-zA-Z0-9_]/g, '_')}</code> with access only to this database.</>}
+                {(changePassModal.type === "mysql" || changePassModal.type === "mariadb") && <>Creates or updates a dedicated user <code className="font-mono text-orange-300">{changePassModal.name.replace(/[^a-zA-Z0-9_]/g, '_')}</code> with access only to the <code className="font-mono text-orange-300">{changePassModal.name}</code> database.</>}
+                {changePassModal.type === "postgresql" && <>Creates or updates a dedicated role <code className="font-mono text-orange-300">{changePassModal.name.replace(/[^a-zA-Z0-9_]/g, '_')}</code> with access only to the <code className="font-mono text-orange-300">{changePassModal.name}</code> database.</>}
+                {changePassModal.type === "redis" && "Sets the global requirepass for Redis (Redis does not support per-database passwords)."}
               </p>
             </div>
             <div>
