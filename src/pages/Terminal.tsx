@@ -250,21 +250,21 @@ export default function TerminalPage() {
             if (line.type === "input") {
               return (
                 <div key={i} style={{ color: MONOKAI.prompt, fontWeight: 600 }}>
-                  <AnsiText text={line.text} />
+                  <AnsiText text={line.text} fg={MONOKAI.text} />
                 </div>
               );
             }
             if (line.type === "error") {
               return (
                 <div key={i} style={{ color: MONOKAI.error }}>
-                  <AnsiText text={line.text} />
+                  <AnsiText text={line.text} fg={MONOKAI.text} />
                 </div>
               );
             }
             /* output: no forced color — let ANSI spans shine through */
             return (
               <div key={i}>
-                <AnsiText text={line.text} />
+                <AnsiText text={line.text} fg={MONOKAI.text} />
               </div>
             );
           })}
