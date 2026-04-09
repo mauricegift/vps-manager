@@ -137,6 +137,26 @@ export default function NginxPage() {
     onError: () => toast.error("Certbot update failed"),
   });
 
+  const uninstallNginxMutation = useMutation({
+    mutationFn: () => api.post(`${base}/uninstall`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Uninstall Nginx", output: r.data.output });
+      toast.success("Nginx uninstalled");
+      refetchStatus();
+    },
+    onError: () => toast.error("Nginx uninstall failed"),
+  });
+
+  const uninstallCertbotMutation = useMutation({
+    mutationFn: () => api.post(`${base}/certbot/uninstall`),
+    onSuccess: (r) => {
+      setOutputModal({ title: "Uninstall Certbot", output: r.data.output });
+      toast.success("Certbot uninstalled");
+      refetchStatus();
+    },
+    onError: () => toast.error("Certbot uninstall failed"),
+  });
+
   const testMutation = useMutation({
     mutationFn: () => api.post(`${base}/test`),
     onSuccess: (r) => {
@@ -391,16 +411,28 @@ export default function NginxPage() {
                 {installNginxMutation.isPending ? "Installing…" : "Install Nginx"}
               </button>
             )}
-            {/* Update button if update available */}
-            {status.installed && status.nginxUpdateAvailable && (
-              <button
-                onClick={() => updateNginxMutation.mutate()}
-                disabled={updateNginxMutation.isPending}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ml-auto"
-              >
-                <RefreshCw size={11} />
-                {updateNginxMutation.isPending ? "Updating…" : "Update Available"}
-              </button>
+            {/* Update + Uninstall buttons if installed */}
+            {status.installed && (
+              <div className="flex items-center gap-2 ml-auto">
+                {status.nginxUpdateAvailable && (
+                  <button
+                    onClick={() => updateNginxMutation.mutate()}
+                    disabled={updateNginxMutation.isPending}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                  >
+                    <RefreshCw size={11} />
+                    {updateNginxMutation.isPending ? "Updating…" : "Update Available"}
+                  </button>
+                )}
+                <button
+                  onClick={() => { if (window.confirm("Uninstall Nginx? This cannot be undone.")) uninstallNginxMutation.mutate(); }}
+                  disabled={uninstallNginxMutation.isPending}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  <Trash2 size={11} />
+                  {uninstallNginxMutation.isPending ? "Uninstalling…" : "Uninstall"}
+                </button>
+              </div>
             )}
           </div>
 
@@ -432,15 +464,27 @@ export default function NginxPage() {
                 {installCertbotMutation.isPending ? "Installing…" : "Install Certbot"}
               </button>
             )}
-            {status.certbotInstalled && status.certbotUpdateAvailable && (
-              <button
-                onClick={() => updateCertbotMutation.mutate()}
-                disabled={updateCertbotMutation.isPending}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors ml-auto"
-              >
-                <RefreshCw size={11} />
-                {updateCertbotMutation.isPending ? "Updating…" : "Update Certbot"}
-              </button>
+            {status.certbotInstalled && (
+              <div className="flex items-center gap-2 ml-auto">
+                {status.certbotUpdateAvailable && (
+                  <button
+                    onClick={() => updateCertbotMutation.mutate()}
+                    disabled={updateCertbotMutation.isPending}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-amber-400/60 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                  >
+                    <RefreshCw size={11} />
+                    {updateCertbotMutation.isPending ? "Updating…" : "Update Certbot"}
+                  </button>
+                )}
+                <button
+                  onClick={() => { if (window.confirm("Uninstall Certbot? Existing SSL certificates will remain but auto-renewal will stop.")) uninstallCertbotMutation.mutate(); }}
+                  disabled={uninstallCertbotMutation.isPending}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  <Trash2 size={11} />
+                  {uninstallCertbotMutation.isPending ? "Uninstalling…" : "Uninstall"}
+                </button>
+              </div>
             )}
           </div>
         </div>
