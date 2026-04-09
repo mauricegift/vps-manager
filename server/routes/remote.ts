@@ -1699,12 +1699,16 @@ router.post('/:id/nginx/install', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
     const { stdout, stderr } = await runSSHCommand(conn,
-      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
-      'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 && ' +
-      'systemctl enable nginx 2>&1 && systemctl start nginx 2>&1'
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 || true; ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1; ' +
+      'systemctl enable nginx 2>/dev/null || true; ' +
+      'systemctl start nginx 2>/dev/null || true',
+      300000
     );
     const out = (stdout + stderr).trim();
-    const ok = /nginx/i.test(out) || !out.toLowerCase().includes('error');
+    const lower = out.toLowerCase();
+    const ok = lower.includes('setting up nginx') || lower.includes('already the newest version') ||
+      (!lower.includes('e: ') && !lower.includes('unable to locate') && !lower.includes('no installation candidate'));
     res.json({ ok, output: out });
   } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -1714,11 +1718,13 @@ router.post('/:id/nginx/update', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
     const { stdout, stderr } = await runSSHCommand(conn,
-      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
-      'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y nginx 2>&1'
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 || true; ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y nginx 2>&1',
+      300000
     );
     const out = (stdout + stderr).trim();
-    res.json({ ok: !out.toLowerCase().includes('error'), output: out });
+    const lower = out.toLowerCase();
+    res.json({ ok: !lower.includes('e: ') && !lower.includes('unable to locate'), output: out });
   } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -1727,12 +1733,15 @@ router.post('/:id/nginx/certbot/install', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
     const { stdout, stderr } = await runSSHCommand(conn,
-      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 || true; ' +
       'DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx 2>&1; ' +
-      'systemctl enable certbot.timer 2>/dev/null; true'
+      'systemctl enable certbot.timer 2>/dev/null || true',
+      300000
     );
     const out = (stdout + stderr).trim();
-    const ok = /certbot/i.test(out) || !out.toLowerCase().includes('error');
+    const lower = out.toLowerCase();
+    const ok = lower.includes('setting up certbot') || lower.includes('already the newest version') ||
+      (!lower.includes('e: ') && !lower.includes('unable to locate') && !lower.includes('no installation candidate'));
     res.json({ ok, output: out });
   } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -1742,11 +1751,13 @@ router.post('/:id/nginx/certbot/update', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
     const { stdout, stderr } = await runSSHCommand(conn,
-      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
-      'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y certbot python3-certbot-nginx 2>&1'
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 || true; ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y certbot python3-certbot-nginx 2>&1',
+      300000
     );
     const out = (stdout + stderr).trim();
-    res.json({ ok: !out.toLowerCase().includes('error'), output: out });
+    const lower = out.toLowerCase();
+    res.json({ ok: !lower.includes('e: ') && !lower.includes('unable to locate'), output: out });
   } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
