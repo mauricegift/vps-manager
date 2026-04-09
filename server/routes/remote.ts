@@ -1338,7 +1338,7 @@ const REMOTE_UNINSTALL: Record<string, string> = {
   jq:      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y jq 2>&1 && apt-get autoremove -y 2>&1',
   unzip:   'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y unzip 2>&1 && apt-get autoremove -y 2>&1',
   chrome:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y google-chrome-stable 2>&1; rm -f /usr/share/keyrings/google-chrome.gpg /etc/apt/sources.list.d/google-chrome.list 2>/dev/null; apt-get autoremove -y 2>&1',
-  docker:  'systemctl stop docker 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>&1 && apt-get autoremove -y 2>&1',
+  docker:  'systemctl stop docker 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker.io docker-compose 2>/dev/null; apt-get autoremove -y 2>&1',
   venv:    `PY_VER=$(python3 --version 2>/dev/null | grep -oP '\\d+\\.\\d+'); DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y python3-venv python3.\${PY_VER}-venv 2>/dev/null; apt-get autoremove -y 2>&1`,
   ffmpeg:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ffmpeg 2>&1 && apt-get autoremove -y 2>&1',
   libuuid: 'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y libuuid-dev uuid-runtime 2>&1 && apt-get autoremove -y 2>&1',
@@ -1687,10 +1687,66 @@ router.post('/:id/nginx/certbot/uninstall', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
     const { stdout, stderr } = await runSSHCommand(conn,
-      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y certbot python3-certbot-nginx 2>&1 && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y certbot python3-certbot-nginx 2>&1; ' +
       'apt-get autoremove -y 2>&1'
     );
     res.json({ ok: true, output: (stdout + stderr).trim() });
+  } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/:id/nginx/install', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn,
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 && ' +
+      'systemctl enable nginx 2>&1 && systemctl start nginx 2>&1'
+    );
+    const out = (stdout + stderr).trim();
+    const ok = /nginx/i.test(out) || !out.toLowerCase().includes('error');
+    res.json({ ok, output: out });
+  } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/:id/nginx/update', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn,
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y nginx 2>&1'
+    );
+    const out = (stdout + stderr).trim();
+    res.json({ ok: !out.toLowerCase().includes('error'), output: out });
+  } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/:id/nginx/certbot/install', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn,
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx 2>&1; ' +
+      'systemctl enable certbot.timer 2>/dev/null; true'
+    );
+    const out = (stdout + stderr).trim();
+    const ok = /certbot/i.test(out) || !out.toLowerCase().includes('error');
+    res.json({ ok, output: out });
+  } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/:id/nginx/certbot/update', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn,
+      'DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y certbot python3-certbot-nginx 2>&1'
+    );
+    const out = (stdout + stderr).trim();
+    res.json({ ok: !out.toLowerCase().includes('error'), output: out });
   } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
