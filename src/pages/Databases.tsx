@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useTheme } from "@/context/ThemeContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
   ChevronRight, X, Download, Trash2, FolderOpen,
   Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle, LayoutGrid,
-  Search, Copy, Globe, Wifi, WifiOff, Check, Lock, Link2
+  Search, Copy, Globe, Wifi, WifiOff, Check, Lock, Link2, ShieldCheck, ShieldOff, ShieldAlert
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -79,6 +79,9 @@ export default function DatabasesPage() {
   const [changePwdResult, setChangePwdResult] = useState<{ type: string; name: string; username: string; password: string } | null>(null);
   const [changePwdResultCopied, setChangePwdResultCopied] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
+  // Firewall status per db type (remote servers only)
+  const [firewallStatus, setFirewallStatus] = useState<Record<string, boolean>>({});
+  const [firewallToggling, setFirewallToggling] = useState<string | null>(null);
   // Track dedicated per-database users (persisted)
   const [dbUsers, setDbUsers] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem("vpsm_db_users") || "{}"); } catch { return {}; }
@@ -425,9 +428,25 @@ export default function DatabasesPage() {
     setCreatingTable(false);
   };
 
+  // ── Firewall status fetch (remote servers only) ───────────────────────────────
+  const fetchFirewallStatus = useCallback(async () => {
+    if (!activeServer) return;
+    try {
+      const { data } = await api.get(`/remote/${activeServer.id}/databases/firewall-status`);
+      setFirewallStatus(data);
+    } catch {}
+  }, [activeServer]);
+
+  useEffect(() => { fetchFirewallStatus(); }, [fetchFirewallStatus]);
+
   // ── Open external access whenever a connection string is copied ───────────────
   const openExternal = async (type: string) => {
     if (!activeServer || type === "sqlite") return;
+    // If already open, just confirm quietly
+    if (firewallStatus[type]) {
+      toast(`Port already open — ${type} is accessible externally`, { icon: "✅", duration: 2500 });
+      return;
+    }
     const isHighRisk = type === "redis" || type === "mongodb";
     toast(
       isHighRisk
@@ -438,16 +457,37 @@ export default function DatabasesPage() {
     try {
       const { data } = await api.post(`/remote/${activeServer.id}/databases/${type}/allow-external`);
       const parts: string[] = [];
-      if (data.firewallOpened) parts.push(`port ${data.port} opened`);
-      if (data.bindFixed) parts.push("bind address set to 0.0.0.0");
-      if (data.rateLimited) parts.push("rate limiting enabled (max 20 conn/min per IP)");
-      if (parts.length) toast.success(`External access active: ${parts.join(" · ")}`, { duration: 6000 });
+      if (data.alreadyOpen) {
+        toast(`Port ${data.port} was already open — ${type} accessible externally`, { icon: "✅", duration: 3000 });
+      } else {
+        if (data.firewallOpened) parts.push(`port ${data.port} opened`);
+        if (data.bindFixed) parts.push("bind address → 0.0.0.0");
+        if (data.rateLimited) parts.push("rate-limited (20 conn/min per IP)");
+        if (parts.length) toast.success(`External access active: ${parts.join(" · ")}`, { duration: 6000 });
+      }
+      setFirewallStatus(prev => ({ ...prev, [type]: true }));
       if (data.warnings?.length) {
         data.warnings.forEach((w: string) => toast(w, { icon: "⚠️", duration: 8000 }));
       }
     } catch (e: any) {
       toast.error(`External setup failed: ${e.response?.data?.error ?? e.message}`);
     }
+  };
+
+  // ── Close external firewall access ────────────────────────────────────────────
+  const closeExternal = async (type: string) => {
+    if (!activeServer) return;
+    setFirewallToggling(type);
+    try {
+      const { data } = await api.post(`/remote/${activeServer.id}/databases/${type}/close-external`);
+      if (data.success) {
+        setFirewallStatus(prev => ({ ...prev, [type]: false }));
+        toast.success(`External access disabled — port ${data.port} closed`);
+      }
+    } catch (e: any) {
+      toast.error(`Could not close port: ${e.response?.data?.error ?? e.message}`);
+    }
+    setFirewallToggling(null);
   };
 
   const createDatabase = async () => {
@@ -618,6 +658,10 @@ export default function DatabasesPage() {
                       if (storedPwd) setConnPassword(storedPwd);
                       if (db.name) setConnDbName(db.name);
                     }}
+                    firewallOpen={activeServer ? (firewallStatus[db.type] ?? false) : undefined}
+                    firewallToggling={firewallToggling === db.type}
+                    onOpenFirewall={() => openExternal(db.type)}
+                    onCloseFirewall={() => closeExternal(db.type)}
                   />
                 ))}
               </div>
@@ -1530,7 +1574,7 @@ export default function DatabasesPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb, onConnect }: {
+function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb, onConnect, firewallOpen, firewallToggling, onOpenFirewall, onCloseFirewall }: {
   db: any;
   actionLoading: string | null;
   actionMutation: any;
@@ -1539,6 +1583,10 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
   onDeleteDb: (name: string) => void;
   onCreateDb: () => void;
   onConnect: () => void;
+  firewallOpen?: boolean;
+  firewallToggling?: boolean;
+  onOpenFirewall?: () => void;
+  onCloseFirewall?: () => void;
 }) {
   const [showDbs, setShowDbs] = useState(false);
   const busy = actionLoading === `install-${db.type}` || actionLoading === `uninstall-${db.type}` || actionMutation.isPending;
@@ -1649,6 +1697,35 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
       >
         <Globe size={11} /> Connection Strings
       </button>
+
+      {/* Firewall toggle (remote servers only) */}
+      {firewallOpen !== undefined && db.type !== "sqlite" && (
+        firewallOpen ? (
+          <button
+            onClick={onCloseFirewall}
+            disabled={firewallToggling}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-colors mb-2 disabled:opacity-50 group"
+            title="External access is open — click to close firewall port"
+          >
+            {firewallToggling
+              ? <><RefreshCw size={11} className="animate-spin" /> Closing…</>
+              : <><ShieldCheck size={11} className="group-hover:hidden" /><ShieldOff size={11} className="hidden group-hover:block" /> <span className="group-hover:hidden">External Access Open</span><span className="hidden group-hover:block">Disable External Access</span></>
+            }
+          </button>
+        ) : (
+          <button
+            onClick={onOpenFirewall}
+            disabled={firewallToggling}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] rounded-lg bg-[var(--foreground)] border border-[var(--line)] border-dashed text-[var(--muted)] hover:border-green-500/40 hover:text-green-400 hover:bg-green-500/5 transition-colors mb-2 disabled:opacity-50"
+            title="External access is closed — click to open firewall port"
+          >
+            {firewallToggling
+              ? <><RefreshCw size={11} className="animate-spin" /> Opening…</>
+              : <><ShieldAlert size={11} /> Enable External Access</>
+            }
+          </button>
+        )
+      )}
 
       {/* Service controls */}
       <div className="flex gap-2 pt-2 border-t border-[var(--line)]">
