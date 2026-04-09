@@ -532,38 +532,53 @@ export default function FileManagerPage() {
       </div>
 
       {/* Breadcrumb */}
-      <div data-aos="fade-up" className="glass-card p-3 flex items-center gap-1 overflow-x-auto hide-scrollbar">
-        {breadcrumbs.map((part, i) => {
-          const parts = breadcrumbs.slice(0, i + 1);
-          const isLast = i === breadcrumbs.length - 1;
-          return (
-            <div key={i} className="flex items-center gap-1 shrink-0">
-              {i === 0 ? (
-                <button onClick={() => navigate([""])} className="p-1.5 rounded-lg hover:bg-[var(--foreground)] transition-colors">
-                  <Home size={14} className="text-[var(--accent)]" />
-                </button>
-              ) : (
-                <>
-                  <ChevronRight size={12} className="text-[var(--muted)]" />
-                  <button
-                    onClick={() => !isLast && navigate(parts)}
-                    className={`text-xs px-2 py-1 rounded-lg transition-colors ${isLast ? "text-[var(--main)] font-medium" : "text-[var(--muted)] hover:bg-[var(--foreground)]"}`}
-                  >
-                    {part}
+      <div data-aos="fade-up" className="glass-card p-3 flex items-center gap-2">
+        {/* Scrollable path — only this part scrolls horizontally */}
+        <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar flex-1 min-w-0">
+          {breadcrumbs.map((part, i) => {
+            const parts = breadcrumbs.slice(0, i + 1);
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <div key={i} className="flex items-center gap-1 shrink-0">
+                {i === 0 ? (
+                  <button onClick={() => navigate([""])} className="p-1.5 rounded-lg hover:bg-[var(--foreground)] transition-colors">
+                    <Home size={14} className="text-[var(--accent)]" />
                   </button>
-                </>
-              )}
-            </div>
-          );
-        })}
-        {activeServer && (
+                ) : (
+                  <>
+                    <ChevronRight size={12} className="text-[var(--muted)]" />
+                    <button
+                      onClick={() => !isLast && navigate(parts)}
+                      className={`text-xs px-2 py-1 rounded-lg transition-colors ${isLast ? "text-[var(--main)] font-medium" : "text-[var(--muted)] hover:bg-[var(--foreground)]"}`}
+                    >
+                      {part}
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Always-visible controls — never scrolled off screen */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {activeServer && (
+            <button
+              onClick={() => setPath(defaultPath(activeServer.username))}
+              className="text-[10px] px-2 py-1 rounded-lg border border-[var(--line)] hover:bg-[var(--foreground)] text-[var(--muted)] transition-colors"
+            >
+              Home
+            </button>
+          )}
           <button
-            onClick={() => setPath(defaultPath(activeServer.username))}
-            className="ml-auto shrink-0 text-[10px] px-2 py-1 rounded-lg border border-[var(--line)] hover:bg-[var(--foreground)] text-[var(--muted)] transition-colors"
+            onClick={() => setShowHidden(h => !h)}
+            title={showHidden ? "Hide hidden files" : "Show hidden files"}
+            className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border transition-colors ${showHidden ? "bg-[var(--accent)]/10 border-[var(--accent)]/30 text-[var(--accent)]" : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)]"}`}
           >
-            Home
+            {showHidden ? <EyeIcon size={11} /> : <EyeOff size={11} />}
+            <span className="hidden sm:inline">{showHidden ? "Hide dotfiles" : `Dotfiles${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}</span>
+            <span className="sm:hidden">{hiddenCount > 0 && !showHidden ? `(${hiddenCount})` : ""}</span>
           </button>
-        )}
+        </div>
       </div>
 
       {/* Bulk action bar */}
@@ -641,19 +656,7 @@ export default function FileManagerPage() {
                     </th>
                   )}
                   <th>Name</th><th>Size</th><th>Modified</th><th>Permissions</th>
-                  <th>
-                    <div className="flex items-center justify-between gap-2">
-                      <span>Actions</span>
-                      <button
-                        onClick={() => setShowHidden(h => !h)}
-                        title={showHidden ? "Hide hidden files" : "Show hidden files"}
-                        className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-lg border transition-colors ${showHidden ? "bg-[var(--accent)]/10 border-[var(--accent)]/30 text-[var(--accent)]" : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)]"}`}
-                      >
-                        {showHidden ? <EyeIcon size={10} /> : <EyeOff size={10} />}
-                        {showHidden ? "Hide dotfiles" : `Dotfiles${hiddenCount > 0 ? ` (${hiddenCount})` : ""}`}
-                      </button>
-                    </div>
-                  </th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
