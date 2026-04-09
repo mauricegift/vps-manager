@@ -52,11 +52,12 @@ function VersionChip({ version, label }: { version: string | null; label?: strin
 }
 
 function ToolCard({
-  tool, onInstall, onUpdate, loading
+  tool, onInstall, onUpdate, onUninstall, loading
 }: {
   tool: Tool;
   onInstall: (nodeVersion?: string) => void;
   onUpdate: () => void;
+  onUninstall: () => void;
   loading: boolean;
 }) {
   const [nodeVer, setNodeVer] = useState("20");
@@ -172,6 +173,14 @@ function ToolCard({
                 <CheckCircle2 size={12} /> Installed
               </div>
             )}
+            <button
+              onClick={onUninstall}
+              disabled={loading}
+              title={`Uninstall ${tool.name}`}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+            >
+              {loading ? <div className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" /> : <Trash2 size={12} />}
+            </button>
           </>
         )}
       </div>
@@ -252,8 +261,9 @@ export default function ExtrasPage() {
   const { data: tools = [], isLoading, refetch, isFetching } = useQuery<Tool[]>({
     queryKey: ["extras", activeServer?.id ?? "local"],
     queryFn: () => api.get(`${pfx}/extras`).then(r => r.data.data),
-    staleTime: 60000,
-    gcTime: 120000,
+    staleTime: 0,
+    gcTime: 0,
+    refetchInterval: 3000,
   });
 
   useEffect(() => {
@@ -308,11 +318,14 @@ export default function ExtrasPage() {
       const { data } = await api.post(url, nodeVersion ? { nodeVersion } : {});
       toast.success(`${tool.name} installed`);
       if (data.output) setOutputModal({ title: `Install ${tool.name}`, output: data.output });
-      qc.invalidateQueries({ queryKey: ["extras"] });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || `Failed to install ${tool.name}`);
+      const errMsg = e.response?.data?.error || `Failed to install ${tool.name}`;
+      const errOutput = e.response?.data?.output;
+      toast.error(errMsg);
+      if (errOutput) setOutputModal({ title: `Install ${tool.name} (failed)`, output: errOutput });
     }
     setOpLoading(null);
+    refetch();
   };
 
   const handleSystemUpdate = async (action: 'update' | 'upgrade') => {
@@ -339,11 +352,31 @@ export default function ExtrasPage() {
       const { data } = await api.post(url);
       toast.success(`${tool.name} updated`);
       if (data.output) setOutputModal({ title: `Update ${tool.name}`, output: data.output });
-      qc.invalidateQueries({ queryKey: ["extras"] });
     } catch (e: any) {
-      toast.error(e.response?.data?.error || `Failed to update ${tool.name}`);
+      const errMsg = e.response?.data?.error || `Failed to update ${tool.name}`;
+      const errOutput = e.response?.data?.output;
+      toast.error(errMsg);
+      if (errOutput) setOutputModal({ title: `Update ${tool.name} (failed)`, output: errOutput });
     }
     setOpLoading(null);
+    refetch();
+  };
+
+  const handleUninstall = async (tool: Tool) => {
+    if (!window.confirm(`Uninstall ${tool.name}? This cannot be undone.`)) return;
+    setOpLoading(`uninstall-${tool.id}`);
+    try {
+      const url = activeServer
+        ? `/remote/${activeServer.id}/extras/${tool.id}/uninstall`
+        : `/extras/${tool.id}/uninstall`;
+      const { data } = await api.post(url);
+      toast.success(`${tool.name} uninstalled`);
+      if (data.output) setOutputModal({ title: `Uninstall ${tool.name}`, output: data.output });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || `Failed to uninstall ${tool.name}`);
+    }
+    setOpLoading(null);
+    refetch();
   };
 
   const createUserMutation = useMutation({
@@ -548,9 +581,10 @@ export default function ExtrasPage() {
                   <ToolCard
                     key={tool.id}
                     tool={tool}
-                    loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
+                    loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}` || opLoading === `uninstall-${tool.id}`}
                     onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
                     onUpdate={() => handleUpdate(tool)}
+                    onUninstall={() => handleUninstall(tool)}
                   />
                 ))}
               </div>
@@ -560,9 +594,10 @@ export default function ExtrasPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {extraTools.map(tool => (
                       <ToolCard key={tool.id} tool={tool}
-                        loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}`}
+                        loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}` || opLoading === `uninstall-${tool.id}`}
                         onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
-                        onUpdate={() => handleUpdate(tool)} />
+                        onUpdate={() => handleUpdate(tool)}
+                        onUninstall={() => handleUninstall(tool)} />
                     ))}
                   </div>
                 </>
