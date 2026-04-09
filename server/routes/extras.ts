@@ -547,7 +547,7 @@ const UNINSTALL_CMDS: Record<string, string> = {
   unzip:   'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y unzip 2>&1 && apt-get autoremove -y 2>&1',
   chrome:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y google-chrome-stable 2>&1; rm -f /usr/share/keyrings/google-chrome.gpg /etc/apt/sources.list.d/google-chrome.list 2>/dev/null; apt-get autoremove -y 2>&1',
   wrangler:`export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; npm uninstall -g wrangler 2>&1`,
-  docker:  'systemctl stop docker 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>&1 && apt-get autoremove -y 2>&1',
+  docker:  'systemctl stop docker 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker.io docker-compose 2>/dev/null; apt-get autoremove -y 2>&1',
   venv:    `PY_VER=$(python3 --version 2>/dev/null | grep -oP '\\d+\\.\\d+'); DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y python3-venv python3.\${PY_VER}-venv 2>/dev/null; apt-get autoremove -y 2>&1`,
   ffmpeg:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ffmpeg 2>&1 && apt-get autoremove -y 2>&1',
   libuuid: 'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y libuuid-dev uuid-runtime 2>&1 && apt-get autoremove -y 2>&1',
