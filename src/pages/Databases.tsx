@@ -669,7 +669,13 @@ export default function DatabasesPage() {
                     actionLoading={actionLoading}
                     actionMutation={actionMutation}
                     onBrowse={openBrowser}
-                    onUninstall={() => setConfirmUninstall(db)}
+                    onUninstall={() => {
+                if (!activeServer && db.type === 'postgresql') {
+                  toast.warning("PostgreSQL cannot be uninstalled on the local server — it may be used by the system.");
+                  return;
+                }
+                setConfirmUninstall(db);
+              }}
                     onDeleteDb={(name) => setDeleteDbModal({ type: db.type, name })}
                     onCreateDb={() => { setCreateDbType(db.type); setNewDbName(""); setCreateDbModal(true); }}
                     onConnect={() => {
