@@ -214,7 +214,10 @@ export default function FileManagerPage() {
       if (relativePaths && relativePaths.length) {
         form.append("relativePaths", JSON.stringify(relativePaths));
       }
-      await api.post("/files/upload", form, { headers: { "Content-Type": "multipart/form-data" } });
+      const uploadUrl = activeServer
+        ? `/remote/${activeServer.id}/files/upload`
+        : "/files/upload";
+      await api.post(uploadUrl, form, { headers: { "Content-Type": "multipart/form-data" } });
       toast.success(`${filesArr.length} file${filesArr.length > 1 ? "s" : ""} uploaded`);
       await refetch();
     } catch { toast.error("Upload failed"); }
@@ -431,9 +434,10 @@ export default function FileManagerPage() {
           runInstall: ghRunInstall,
         });
         if (data.success) {
+          const actualPath = data.data.clonedTo || ghTargetDir;
           setGhCloneOutput(data.data.output || "Cloned successfully");
-          toast.success(`Repository cloned to ${ghTargetDir}`);
-          setPath(ghTargetDir);
+          toast.success(`Repository cloned to ${actualPath}`);
+          setPath(actualPath);
           await refetch();
         } else {
           setGhCloneOutput(data.error || "Clone failed");
