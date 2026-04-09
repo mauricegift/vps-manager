@@ -115,12 +115,13 @@ setInterval(() => {
 // ── Exec on pooled client (with retry) ───────────────────────────────────────
 async function execOnClient(
   client: SSH2Client,
-  command: string
+  command: string,
+  timeoutMs = 60000
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error('Command timed out after 60s')),
-      60000
+      () => reject(new Error(`Command timed out after ${timeoutMs / 1000}s`)),
+      timeoutMs
     );
     client.exec(command, (err, stream) => {
       if (err) { clearTimeout(timer); return reject(err); }
@@ -137,7 +138,8 @@ async function execOnClient(
 
 export async function runSSHCommand(
   conn: SSHConnection,
-  command: string
+  command: string,
+  timeoutMs = 60000
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   let client: SSH2Client;
   try {
@@ -145,12 +147,12 @@ export async function runSSHCommand(
   } catch (e) { throw e; }
 
   try {
-    return await execOnClient(client, command);
+    return await execOnClient(client, command, timeoutMs);
   } catch (e: any) {
     // If the channel failed, remove from pool and retry once with new connection
     removeFromPool(conn);
     client = await getPooledClient(conn);
-    return execOnClient(client, command);
+    return execOnClient(client, command, timeoutMs);
   }
 }
 
