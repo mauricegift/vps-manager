@@ -283,16 +283,23 @@ router.post('/:type/:dbname/change-password', async (req, res) => {
       await mongoshRun('admin', script);
     } else if (type === 'mysql' || type === 'mariadb') {
       // Create/update a user tied only to this database (not root)
+      // Use base64 to avoid shell backtick/quoting issues
       const sql = [
         `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
         `ALTER USER '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
         `CREATE USER IF NOT EXISTS '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
         `ALTER USER '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
-        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'localhost';`,
-        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'%';`,
+        `GRANT ALL PRIVILEGES ON ${safeUser}.* TO '${safeUser}'@'localhost';`,
+        `GRANT ALL PRIVILEGES ON ${safeUser}.* TO '${safeUser}'@'%';`,
         `FLUSH PRIVILEGES;`
-      ].join(' ');
-      await execAsync(`mysql -u root -e "${sql}" 2>&1`, { timeout: 15000 });
+      ].join('\n');
+      const b64sql = Buffer.from(sql).toString('base64');
+      await execAsync(
+        `(echo '${b64sql}' | base64 -d | mysql --defaults-file=/etc/mysql/debian.cnf 2>/dev/null` +
+        ` || echo '${b64sql}' | base64 -d | sudo mysql 2>/dev/null` +
+        ` || echo '${b64sql}' | base64 -d | mysql -uroot 2>/dev/null)`,
+        { timeout: 15000 }
+      );
     } else if (type === 'postgresql') {
       // Try ALTER first (user exists), fall back to CREATE, then GRANT
       try {
@@ -617,6 +624,65 @@ function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
+
+// ── Create Database ───────────────────────────────────────────────────────────
+router.post('/:type/create', async (req, res) => {
+  const { type } = req.params;
+  const { name, password } = req.body;
+  if (!name) return res.status(400).json({ success: false, error: 'name required' });
+  const safeName = name.replace(/[^a-zA-Z0-9_]/g, '_');
+  const safePwd = (password || '').replace(/'/g, "''");
+  const safePwdMongo = (password || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  try {
+    if (type === 'postgresql') {
+      await pgRun(`CREATE DATABASE "${safeName}"`, 'postgres');
+      let username = 'postgres';
+      if (password) {
+        try { await execAsync(`su - postgres -c "psql -c \\"ALTER USER ${safeName} WITH PASSWORD '${safePwd}';\\""`, { timeout: 10000 }); }
+        catch { await execAsync(`su - postgres -c "psql -c \\"CREATE USER ${safeName} WITH PASSWORD '${safePwd}';\\""`, { timeout: 10000 }); }
+        await execAsync(`su - postgres -c "psql -c \\"GRANT ALL PRIVILEGES ON DATABASE ${safeName} TO ${safeName};\\""`, { timeout: 10000 });
+        username = safeName;
+      }
+      return res.json({ success: true, username });
+    }
+    if (type === 'mysql' || type === 'mariadb') {
+      const sql = [
+        `CREATE DATABASE IF NOT EXISTS ${safeName};`,
+        ...(password ? [
+          `CREATE USER IF NOT EXISTS '${safeName}'@'%' IDENTIFIED BY '${safePwd}';`,
+          `ALTER USER '${safeName}'@'%' IDENTIFIED BY '${safePwd}';`,
+          `GRANT ALL PRIVILEGES ON ${safeName}.* TO '${safeName}'@'%';`,
+          `FLUSH PRIVILEGES;`
+        ] : [])
+      ].join('\n');
+      const b64sql = Buffer.from(sql).toString('base64');
+      await execAsync(
+        `(echo '${b64sql}' | base64 -d | mysql --defaults-file=/etc/mysql/debian.cnf 2>/dev/null` +
+        ` || echo '${b64sql}' | base64 -d | sudo mysql 2>/dev/null` +
+        ` || echo '${b64sql}' | base64 -d | mysql -uroot 2>/dev/null)`,
+        { timeout: 15000 }
+      );
+      return res.json({ success: true, username: password ? safeName : 'root' });
+    }
+    if (type === 'mongodb') {
+      await mongoshRun('admin', `db.getSiblingDB("${safeName}").createCollection("_init")`);
+      let username = '';
+      if (password) {
+        const script = [
+          `db = db.getSiblingDB("${safeName}");`,
+          `try { db.updateUser("${safeName}", { pwd: "${safePwdMongo}" }); }`,
+          `catch(e) { db.createUser({ user: "${safeName}", pwd: "${safePwdMongo}", roles: [{ role: "dbOwner", db: "${safeName}" }] }); }`
+        ].join(' ');
+        await mongoshRun('admin', script);
+        username = safeName;
+      }
+      return res.json({ success: true, username });
+    }
+    res.status(400).json({ success: false, error: 'Unsupported type' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 // ── Delete Database ───────────────────────────────────────────────────────────
 router.delete('/postgresql/:dbname', async (req, res) => {
