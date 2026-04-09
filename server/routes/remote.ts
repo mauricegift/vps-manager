@@ -663,6 +663,76 @@ router.delete('/:id/databases/:type/:dbName', async (req, res) => {
   }
 });
 
+// ── Remote DB: create database ────────────────────────────────────────────────
+router.post('/:id/databases/:type/create', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const { type } = req.params;
+    const { name, password } = req.body;
+    if (!name) return res.status(400).json({ success: false, error: 'name required' });
+    const safeName = (name as string).replace(/[^a-zA-Z0-9_]/g, '_');
+    const safePwd = (password || '').replace(/'/g, "''");
+    const safePwdMongo = (password || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+    if (type === 'postgresql') {
+      const createCmd = pgTry(`-c "CREATE DATABASE \\"${safeName}\\""`, 'postgres');
+      await runSSHCommand(conn, createCmd);
+      let username = 'postgres';
+      if (password) {
+        const alterCmd = `su - postgres -c "psql -c \\"ALTER USER ${safeName} WITH PASSWORD '${safePwd}';\\""  2>&1`;
+        const createUserCmd = `su - postgres -c "psql -c \\"CREATE USER ${safeName} WITH PASSWORD '${safePwd}';\\""  2>&1`;
+        const { code: ac } = await runSSHCommand(conn, alterCmd);
+        if (ac !== 0) await runSSHCommand(conn, createUserCmd);
+        await runSSHCommand(conn, `su - postgres -c "psql -c \\"GRANT ALL PRIVILEGES ON DATABASE ${safeName} TO ${safeName};\\"" 2>&1`);
+        username = safeName;
+      }
+      return res.json({ success: true, username });
+    }
+
+    if (type === 'mysql' || type === 'mariadb') {
+      const sql = [
+        `CREATE DATABASE IF NOT EXISTS ${safeName};`,
+        ...(password ? [
+          `CREATE USER IF NOT EXISTS '${safeName}'@'%' IDENTIFIED BY '${safePwd}';`,
+          `ALTER USER '${safeName}'@'%' IDENTIFIED BY '${safePwd}';`,
+          `GRANT ALL PRIVILEGES ON ${safeName}.* TO '${safeName}'@'%';`,
+          `FLUSH PRIVILEGES;`
+        ] : [])
+      ].join('\n');
+      const b64sql = Buffer.from(sql).toString('base64');
+      const cmd = `(echo '${b64sql}' | base64 -d | mysql --defaults-file=/etc/mysql/debian.cnf 2>/dev/null` +
+                  ` || echo '${b64sql}' | base64 -d | sudo mysql 2>/dev/null` +
+                  ` || echo '${b64sql}' | base64 -d | mysql -uroot 2>/dev/null) 2>&1`;
+      const { stdout: out } = await runSSHCommand(conn, cmd);
+      if (out.toLowerCase().includes('error') && !out.toLowerCase().includes('database exists')) {
+        return res.status(500).json({ success: false, error: out.trim() });
+      }
+      return res.json({ success: true, username: password ? safeName : 'root' });
+    }
+
+    if (type === 'mongodb') {
+      const initScript = `db.getSiblingDB(\\"${safeName}\\").createCollection(\\"_init\\")`;
+      await runSSHCommand(conn, `mongosh --quiet admin --eval "${initScript}" 2>&1`);
+      let username = '';
+      if (password) {
+        const script = [
+          `db = db.getSiblingDB(\\"${safeName}\\");`,
+          `try { db.updateUser(\\"${safeName}\\", { pwd: \\"${safePwdMongo}\\" }); }`,
+          `catch(e) { db.createUser({ user: \\"${safeName}\\", pwd: \\"${safePwdMongo}\\", roles: [{ role: \\"dbOwner\\", db: \\"${safeName}\\" }] }); }`
+        ].join(' ');
+        await runSSHCommand(conn, `mongosh --quiet admin --eval "${script}" 2>&1`);
+        username = safeName;
+      }
+      return res.json({ success: true, username });
+    }
+
+    res.status(400).json({ success: false, error: 'Unsupported type' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Remote DB: change password ────────────────────────────────────────────────
 router.post('/:id/databases/:type/:dbname/change-password', async (req, res) => {
   try {
@@ -686,17 +756,20 @@ router.post('/:id/databases/:type/:dbname/change-password', async (req, res) => 
       ].join(' ');
       cmd = `mongosh --quiet admin --eval "${script}" 2>&1`;
     } else if (type === 'mysql' || type === 'mariadb') {
-      // Create/update a user tied only to this database (not root)
+      // Use base64 to avoid shell backtick/quoting issues with database names
       const sql = [
         `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
         `ALTER USER '${safeUser}'@'localhost' IDENTIFIED BY '${safePwd}';`,
         `CREATE USER IF NOT EXISTS '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
         `ALTER USER '${safeUser}'@'%' IDENTIFIED BY '${safePwd}';`,
-        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'localhost';`,
-        `GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${safeUser}'@'%';`,
+        `GRANT ALL PRIVILEGES ON ${safeUser}.* TO '${safeUser}'@'localhost';`,
+        `GRANT ALL PRIVILEGES ON ${safeUser}.* TO '${safeUser}'@'%';`,
         `FLUSH PRIVILEGES;`
-      ].join(' ');
-      cmd = `mysql -u root -e "${sql}" 2>&1`;
+      ].join('\n');
+      const b64sql = Buffer.from(sql).toString('base64');
+      cmd = `(echo '${b64sql}' | base64 -d | mysql --defaults-file=/etc/mysql/debian.cnf 2>/dev/null` +
+            ` || echo '${b64sql}' | base64 -d | sudo mysql 2>/dev/null` +
+            ` || echo '${b64sql}' | base64 -d | mysql -uroot 2>/dev/null) 2>&1`;
     } else if (type === 'postgresql') {
       // Try ALTER first (user exists), fall back to CREATE, then GRANT
       const alterCmd = `su - postgres -c "psql -c \\"ALTER USER ${safeUser} WITH PASSWORD '${safePwd}';\\""  2>&1`;
