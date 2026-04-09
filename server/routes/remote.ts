@@ -663,6 +663,93 @@ router.delete('/:id/databases/:type/:dbName', async (req, res) => {
   }
 });
 
+// ── Remote DB: allow external access ─────────────────────────────────────────
+router.post('/:id/databases/:type/allow-external', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const { type } = req.params;
+    const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
+    const port = portMap[type];
+    if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
+
+    // Step 1: Open firewall port + check bind address
+    const checkScript = `
+OPENED=0
+if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw allow ${port}/tcp comment "VPS Manager: ${type} external" 2>&1; ufw reload 2>/dev/null; OPENED=1
+elif command -v firewall-cmd &>/dev/null; then
+  firewall-cmd --permanent --add-port=${port}/tcp 2>&1; firewall-cmd --reload 2>/dev/null; OPENED=1
+elif command -v iptables &>/dev/null; then
+  iptables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport ${port} -j ACCEPT 2>&1; OPENED=1
+fi
+echo "FW_OPENED=$OPENED"
+
+# Check if listening on all interfaces or only localhost
+if ss -tlnp 2>/dev/null | grep -E "\\b${port}\\b" | grep -qE "\\*:|0\\.0\\.0\\.0"; then
+  echo "BIND=all"
+else
+  echo "BIND=local"
+fi
+`.trim();
+    const checkOut = await runSSHScript(conn, checkScript);
+    const fwOpened = checkOut.includes('FW_OPENED=1');
+    const bindAll = checkOut.includes('BIND=all');
+
+    // Step 2: If only on localhost, update bind config + restart
+    let bindFixed = false;
+    let bindErr = '';
+    if (!bindAll) {
+      const fixScript = `
+case "${type}" in
+  postgresql)
+    CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
+    [ -n "$CONF" ] && sed -i "s/#\\?listen_addresses\\s*=\\s*'[^']*'/listen_addresses = '*'/" "$CONF" 2>&1 && systemctl restart postgresql 2>&1 && echo "BIND_FIXED=1"
+    ;;
+  mysql|mariadb)
+    CONF=$(grep -rl "bind-address" /etc/mysql 2>/dev/null | head -1)
+    [ -n "$CONF" ] && sed -i "s/bind-address\\s*=\\s*127\\.0\\.0\\.1/bind-address = 0.0.0.0/" "$CONF" 2>&1 && systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null && echo "BIND_FIXED=1"
+    ;;
+  mongodb)
+    CONF=/etc/mongod.conf
+    [ -f "$CONF" ] && sed -i "s/bindIp:\\s*127\\.0\\.0\\.1/bindIp: 0.0.0.0/" "$CONF" 2>&1 && systemctl restart mongod 2>&1 && echo "BIND_FIXED=1"
+    ;;
+  redis)
+    CONF=$(find /etc/redis -name "*.conf" 2>/dev/null | head -1)
+    [ -n "$CONF" ] && sed -i "s/^bind 127\\.0\\.0\\.1.*/bind 0.0.0.0/" "$CONF" 2>&1 && systemctl restart redis-server 2>/dev/null || systemctl restart redis 2>/dev/null && echo "BIND_FIXED=1"
+    ;;
+esac
+`.trim();
+      const fixOut = await runSSHScript(conn, fixScript);
+      bindFixed = fixOut.includes('BIND_FIXED=1');
+      if (!bindFixed) bindErr = 'Could not update bind address automatically — you may need to configure the database to listen on 0.0.0.0 manually.';
+    }
+
+    // Step 3: Add iptables rate limiting (max 20 new connections/min per source IP)
+    let rateLimited = false;
+    const rlScript = `
+if command -v iptables &>/dev/null; then
+  iptables -C INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || \
+    iptables -I INPUT 1 -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null
+  iptables -C INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || \
+    iptables -I INPUT 2 -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null
+  echo "RL_OK=1"
+fi
+`.trim();
+    const rlOut = await runSSHScript(conn, rlScript);
+    rateLimited = rlOut.includes('RL_OK=1');
+
+    const warnings: string[] = [];
+    if (type === 'redis') warnings.push('Redis has no per-database auth — ensure requirepass is set via Change Password.');
+    if (type === 'mongodb') warnings.push('Ensure security.authorization is enabled in /etc/mongod.conf.');
+    if (!bindFixed && !bindAll) warnings.push(bindErr || 'Database may still only accept local connections.');
+
+    res.json({ success: true, port, firewallOpened: fwOpened, bindAll: bindAll || bindFixed, bindFixed, rateLimited, warnings });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // ── Remote DB: create database ────────────────────────────────────────────────
 router.post('/:id/databases/:type/create', async (req, res) => {
   try {
