@@ -146,11 +146,21 @@ export default function DatabasesPage() {
     refetchInterval: 30000,
   });
 
+  const DB_SERVICE: Record<string, string> = {
+    postgresql: "postgresql", mysql: "mysql", mongodb: "mongod",
+    redis: "redis-server", mariadb: "mariadb",
+  };
+
   const actionMutation = useMutation({
-    mutationFn: ({ type, action }: { type: string; action: string }) =>
-      activeServer
-        ? api.post(`/remote/${activeServer.id}/exec`, { command: `apt-get ${action === 'install' ? 'install -y' : 'remove --purge -y autoremove'} ${type}` })
-        : api.post(`/databases/${type}/${action}`),
+    mutationFn: ({ type, action }: { type: string; action: string }) => {
+      if (activeServer) {
+        const svc = DB_SERVICE[type] || type;
+        return api.post(`/remote/${activeServer.id}/exec`, {
+          command: `systemctl ${action} ${svc} 2>&1`
+        });
+      }
+      return api.post(`/databases/${type}/${action}`);
+    },
     onSuccess: (_, { action }) => {
       toast.success(`Database ${action}ed`);
       qc.invalidateQueries({ queryKey: ["databases"] });
@@ -217,21 +227,32 @@ export default function DatabasesPage() {
     setActionLoading(null);
   };
 
+  const REMOTE_UNINSTALL: Record<string, string> = {
+    postgresql: "systemctl stop postgresql 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y postgresql postgresql-* 2>&1 && apt-get autoremove -y 2>&1",
+    mysql: "systemctl stop mysql 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y mysql-server mysql-client mysql-common 2>&1 && apt-get autoremove -y 2>&1",
+    mongodb: "systemctl stop mongod 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y mongodb-org 2>&1 && apt-get autoremove -y 2>&1",
+    redis: "systemctl stop redis-server 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y redis-server 2>&1 && apt-get autoremove -y 2>&1",
+    mariadb: "systemctl stop mariadb 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y mariadb-server mariadb-client 2>&1 && apt-get autoremove -y 2>&1",
+    sqlite: "DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y sqlite3 2>&1 && apt-get autoremove -y 2>&1",
+  };
+
   const runUninstall = async (db: DB) => {
     setConfirmUninstall(null);
     setActionLoading(`uninstall-${db.type}`);
     try {
       let output = "";
       if (activeServer) {
-        const pkgMap: Record<string, string> = {
-          postgresql: "postgresql", mysql: "mysql-server", mongodb: "mongodb",
-          redis: "redis-server", sqlite: "sqlite3", mariadb: "mariadb-server",
-        };
-        const pkg = pkgMap[db.type] || db.type;
-        const r = await api.post(`/remote/${activeServer.id}/exec`, {
-          command: `DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ${pkg} && apt-get autoremove -y 2>&1`
-        });
-        output = r.data.data?.stdout || r.data.data || "";
+        const cmd = REMOTE_UNINSTALL[db.type];
+        if (!cmd) { toast.error(`No uninstall command defined for ${db.name}`); setActionLoading(null); return; }
+        const r = await api.post(`/remote/${activeServer.id}/exec`, { command: cmd });
+        const d = r.data.data || {};
+        output = (d.stdout || "") + (d.stderr ? `\nSTDERR:\n${d.stderr}` : "");
+        if ((d.code ?? 0) !== 0 && d.stderr && /Error|error/.test(d.stderr)) {
+          toast.error(`${db.name} uninstall encountered errors`);
+          if (output) setOutputModal({ title: `Uninstall ${db.name} — Error`, output });
+          setActionLoading(null);
+          return;
+        }
       } else {
         const r = await api.post(`/databases/${db.type}/uninstall`);
         output = r.data.output || "";
