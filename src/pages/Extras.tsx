@@ -35,9 +35,9 @@ const SOFTWARE_GROUPS: { id: SoftwareSubTab; label: string; icon: React.ElementT
   { id: "runtimes", label: "Runtimes", icon: Cpu, ids: ["nodejs", "npm", "bun", "deno", "pm2", "pnpm", "yarn", "python", "go", "rust"] },
   { id: "servers", label: "Servers & SSL", icon: Server, ids: ["nginx", "apache", "certbot"] },
   { id: "devtools", label: "Dev Tools", icon: Wrench, ids: ["git", "curl", "wget", "rsync", "vim", "nvim"] },
-  { id: "systools", label: "System Tools", icon: Layers, ids: ["htop", "tmux", "screen", "ufw", "fail2ban-client", "jq", "unzip"] },
+  { id: "systools", label: "System Tools", icon: Layers, ids: ["htop", "tmux", "screen", "ufw", "fail2ban-client", "jq", "unzip", "venv", "ffmpeg", "libuuid"] },
   { id: "browsers", label: "Browsers", icon: Globe, ids: ["chrome"] },
-  { id: "cloud", label: "Cloud", icon: Cloud, ids: ["wrangler"] },
+  { id: "cloud", label: "Cloud", icon: Cloud, ids: ["wrangler", "cloudflared", "tailscale"] },
 ];
 
 const ALL_KNOWN_IDS = SOFTWARE_GROUPS.flatMap(g => g.ids);
@@ -252,6 +252,72 @@ export default function ExtrasPage() {
   const [cfShowToken, setCfShowToken] = useState(false);
   const [cfSaving, setCfSaving] = useState(false);
 
+  // Hostname
+  const [hostnameInput, setHostnameInput] = useState("");
+  const [hostnameSaving, setHostnameSaving] = useState(false);
+  const hostnameQuery = useQuery<{ hostname: string }>({
+    queryKey: ["hostname", activeServer?.id ?? "local"],
+    queryFn: () => {
+      const url = activeServer ? `/remote/${activeServer.id}/hostname` : `/extras/hostname`;
+      return api.get(url).then(r => r.data);
+    },
+    staleTime: 30000,
+    enabled: mainTab === "system",
+  });
+  useEffect(() => {
+    if (hostnameQuery.data?.hostname) setHostnameInput(hostnameQuery.data.hostname);
+  }, [hostnameQuery.data?.hostname]);
+
+  // Swap
+  const [swapGb, setSwapGb] = useState("2");
+  const [swapLoading, setSwapLoading] = useState<string | null>(null);
+  const [swapOutput, setSwapOutput] = useState("");
+  const swapQuery = useQuery<{ swapInfo: string; freeInfo: string }>({
+    queryKey: ["swap", activeServer?.id ?? "local"],
+    queryFn: () => {
+      const url = activeServer ? `/remote/${activeServer.id}/swap` : `/extras/swap`;
+      return api.get(url).then(r => r.data);
+    },
+    staleTime: 10000,
+    enabled: mainTab === "system",
+  });
+
+  // Tailscale / Cloudflared management
+  const [cloudOutput, setCloudOutput] = useState<Record<string, string>>({});
+  const [cloudLoading, setCloudLoading] = useState<string | null>(null);
+
+  const runCloudCmd = async (key: string, cmd: string) => {
+    setCloudLoading(key);
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/exec` : `/extras/exec`;
+      const { data } = await api.post(url, { command: cmd });
+      const out = typeof data.data === "string" ? data.data : ((data.data?.stdout || "") + (data.data?.stderr || ""));
+      setCloudOutput(prev => ({ ...prev, [key]: out || "(no output)" }));
+    } catch (e: any) {
+      setCloudOutput(prev => ({ ...prev, [key]: e.response?.data?.error || "Error" }));
+    }
+    setCloudLoading(null);
+  };
+
+  // MOTD
+  const [motdContent, setMotdContent] = useState("");
+  const [motdMode, setMotdMode] = useState<"motd" | "script">("motd");
+  const [motdSaving, setMotdSaving] = useState(false);
+  const motdQuery = useQuery<{ motd: string; custom: string }>({
+    queryKey: ["motd", activeServer?.id ?? "local"],
+    queryFn: () => {
+      const url = activeServer ? `/remote/${activeServer.id}/motd` : `/extras/motd`;
+      return api.get(url).then(r => r.data);
+    },
+    staleTime: 30000,
+    enabled: mainTab === "system",
+  });
+  useEffect(() => {
+    if (motdQuery.data) {
+      setMotdContent(motdMode === "motd" ? (motdQuery.data.motd || "") : (motdQuery.data.custom || ""));
+    }
+  }, [motdQuery.data, motdMode]);
+
   const [userModal, setUserModal] = useState<"create" | "edit" | null>(null);
   const [editTarget, setEditTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
@@ -438,6 +504,70 @@ export default function ExtrasPage() {
     toast.success(`Switched active user context to ${username}. File browsing and paths will now use /home/${username === "root" ? "root" : username}.`);
   };
 
+  const saveHostname = async () => {
+    setHostnameSaving(true);
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/hostname` : `/extras/hostname`;
+      await api.post(url, { hostname: hostnameInput });
+      toast.success("Hostname updated successfully");
+      qc.invalidateQueries({ queryKey: ["hostname"] });
+    } catch (e: any) { toast.error(e.response?.data?.error || "Failed to set hostname"); }
+    setHostnameSaving(false);
+  };
+
+  const createSwap = async () => {
+    setSwapLoading("create");
+    setSwapOutput("");
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/swap` : `/extras/swap`;
+      const { data } = await api.post(url, { sizeGb: parseInt(swapGb) });
+      setSwapOutput(data.output || "");
+      toast.success(`${swapGb}GB swap created`);
+      qc.invalidateQueries({ queryKey: ["swap"] });
+    } catch (e: any) {
+      const msg = e.response?.data?.error || "Failed to create swap";
+      setSwapOutput(e.response?.data?.output || msg);
+      toast.error(msg);
+    }
+    setSwapLoading(null);
+  };
+
+  const removeSwap = async () => {
+    if (!window.confirm("Remove the swap file? This cannot be undone.")) return;
+    setSwapLoading("remove");
+    setSwapOutput("");
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/swap` : `/extras/swap`;
+      const { data } = await api.delete(url);
+      setSwapOutput(data.output || "");
+      toast.success("Swap removed");
+      qc.invalidateQueries({ queryKey: ["swap"] });
+    } catch (e: any) { toast.error(e.response?.data?.error || "Failed to remove swap"); }
+    setSwapLoading(null);
+  };
+
+  const saveMotd = async () => {
+    setMotdSaving(true);
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/motd` : `/extras/motd`;
+      await api.post(url, { content: motdContent, mode: motdMode });
+      toast.success("MOTD saved");
+      qc.invalidateQueries({ queryKey: ["motd"] });
+    } catch (e: any) { toast.error(e.response?.data?.error || "Failed to save MOTD"); }
+    setMotdSaving(false);
+  };
+
+  const clearMotd = async () => {
+    if (!window.confirm("Clear MOTD?")) return;
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/motd` : `/extras/motd`;
+      await api.delete(url);
+      setMotdContent("");
+      toast.success("MOTD cleared");
+      qc.invalidateQueries({ queryKey: ["motd"] });
+    } catch (e: any) { toast.error(e.response?.data?.error || "Failed to clear MOTD"); }
+  };
+
   const MAIN_TABS: { id: MainTab; label: string; icon: React.ElementType }[] = [
     { id: "system", label: "System", icon: RefreshCcw },
     { id: "software", label: "Software", icon: Package },
@@ -447,7 +577,12 @@ export default function ExtrasPage() {
   const currentGroup = SOFTWARE_GROUPS.find(g => g.id === subTab) || SOFTWARE_GROUPS[0];
 
   const TOOL_META: Record<string, { name: string; icon: string; description: string }> = {
-    wrangler: { name: "Wrangler", icon: "☁️", description: "Cloudflare Workers CLI for deploying to the edge" },
+    wrangler:    { name: "Wrangler",          icon: "☁️", description: "Cloudflare Workers CLI for deploying to the edge" },
+    venv:        { name: "Python venv",       icon: "🐍", description: "Python virtual environment module (python3-venv)" },
+    ffmpeg:      { name: "FFmpeg",            icon: "🎬", description: "Multimedia framework for video/audio processing" },
+    libuuid:     { name: "libuuid-dev",       icon: "🔑", description: "UUID library dev headers (required for node-canvas)" },
+    cloudflared: { name: "Cloudflare Tunnel", icon: "🌐", description: "Cloudflare Tunnel daemon for secure tunneling" },
+    tailscale:   { name: "Tailscale",         icon: "🔒", description: "Zero-config VPN for secure mesh networking" },
   };
   const groupToolIds = currentGroup.ids;
   const groupToolsFetched = tools.filter(t => groupToolIds.includes(t.id));
@@ -508,10 +643,149 @@ export default function ExtrasPage() {
 
       {/* ── SYSTEM TAB ── */}
       {mainTab === "system" && (
-        <div data-aos="fade-up" className="space-y-4">
-          <p className="text-xs text-[var(--muted)]">Run system package updates and upgrades via apt.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
+        <div data-aos="fade-up" className="space-y-6">
+          {/* System Updates */}
+          <div className="space-y-2">
+            <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Package Management</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
+            </div>
+          </div>
+
+          {/* Hostname Management */}
+          <div className="space-y-2">
+            <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Hostname</p>
+            <div className="glass-card p-5 flex flex-col gap-3 max-w-lg">
+              <div className="flex items-start gap-3">
+                <div className="text-2xl">🖥️</div>
+                <div>
+                  <div className="font-semibold text-sm">Server Hostname</div>
+                  <div className="text-[11px] text-[var(--muted)] mt-0.5">Change this server's hostname using hostnamectl</div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={hostnameInput}
+                  onChange={e => setHostnameInput(e.target.value)}
+                  placeholder="e.g. my-server"
+                  className={inp + " flex-1"}
+                  disabled={hostnameQuery.isLoading}
+                />
+                <button
+                  onClick={saveHostname}
+                  disabled={hostnameSaving || !hostnameInput}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {hostnameSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                  {hostnameSaving ? "Saving..." : "Apply"}
+                </button>
+              </div>
+              {hostnameQuery.data?.hostname && (
+                <p className="text-[10px] text-[var(--muted)]">Current: <span className="font-mono text-[var(--main)]">{hostnameQuery.data.hostname}</span></p>
+              )}
+            </div>
+          </div>
+
+          {/* Swap RAM */}
+          <div className="space-y-2">
+            <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Swap RAM</p>
+            <div className="glass-card p-5 flex flex-col gap-3 max-w-lg">
+              <div className="flex items-start gap-3">
+                <div className="text-2xl">💾</div>
+                <div>
+                  <div className="font-semibold text-sm">Swap File</div>
+                  <div className="text-[11px] text-[var(--muted)] mt-0.5">Create or remove a swap file. Persists across reboots via /etc/fstab.</div>
+                </div>
+              </div>
+              {swapQuery.data?.swapInfo && (
+                <div className="bg-[var(--foreground)] rounded-xl p-2.5 border border-[var(--line)]">
+                  <p className="text-[10px] font-mono whitespace-pre-wrap text-[var(--muted)]">{swapQuery.data.swapInfo}</p>
+                </div>
+              )}
+              {swapQuery.data?.freeInfo && (
+                <pre className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 overflow-x-auto">{swapQuery.data.freeInfo}</pre>
+              )}
+              <div className="flex gap-2 items-center">
+                <div className="flex items-center gap-2 flex-1">
+                  <label className="text-xs text-[var(--muted)] whitespace-nowrap">Size (GB)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={256}
+                    value={swapGb}
+                    onChange={e => setSwapGb(e.target.value)}
+                    className={inp + " w-24"}
+                  />
+                </div>
+                <button
+                  onClick={createSwap}
+                  disabled={!!swapLoading}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {swapLoading === "create" ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                  {swapLoading === "create" ? "Creating..." : "Create Swap"}
+                </button>
+                <button
+                  onClick={removeSwap}
+                  disabled={!!swapLoading}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+                >
+                  {swapLoading === "remove" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  {swapLoading === "remove" ? "Removing..." : "Remove"}
+                </button>
+              </div>
+              {swapOutput && (
+                <pre className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-40 overflow-y-auto">{swapOutput}</pre>
+              )}
+            </div>
+          </div>
+
+          {/* MOTD Editor */}
+          <div className="space-y-2">
+            <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Login Banner (MOTD)</p>
+            <div className="glass-card p-5 flex flex-col gap-3 max-w-2xl">
+              <div className="flex items-start gap-3">
+                <div className="text-2xl">📋</div>
+                <div>
+                  <div className="font-semibold text-sm">Message of the Day</div>
+                  <div className="text-[11px] text-[var(--muted)] mt-0.5">Displayed when users SSH into the server</div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {(["motd", "script"] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setMotdMode(m)}
+                    className={`px-3 py-1.5 text-xs rounded-lg transition-all ${motdMode === m ? "bg-[var(--accent)] text-white" : "border border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)]"}`}
+                  >
+                    {m === "motd" ? "/etc/motd (static)" : "/etc/update-motd.d/ (script)"}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={motdContent}
+                onChange={e => setMotdContent(e.target.value)}
+                rows={6}
+                placeholder={motdMode === "motd" ? "Enter static MOTD text..." : "#!/bin/bash\necho 'Welcome to my server'"}
+                className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] transition-colors resize-y"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={saveMotd}
+                  disabled={motdSaving}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {motdSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                  {motdSaving ? "Saving..." : "Save MOTD"}
+                </button>
+                <button
+                  onClick={clearMotd}
+                  className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -603,6 +877,79 @@ export default function ExtrasPage() {
                   </div>
                 </>
               )}
+              {subTab === "cloud" && (() => {
+                const tsInstalled = tools.find(t => t.id === "tailscale")?.installed;
+                const cfdInstalled = tools.find(t => t.id === "cloudflared")?.installed;
+                if (!tsInstalled && !cfdInstalled && activeServer) return null;
+                if (!tsInstalled && !cfdInstalled && !activeServer) return null;
+                return (
+                  <div className="space-y-4">
+                    {tsInstalled && (
+                      <div className="glass-card p-5 space-y-3 border border-blue-500/20">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🔒</span>
+                          <h3 className="font-semibold text-sm">Tailscale Management</h3>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { key: "ts-status",   label: "Status",    cmd: "tailscale status 2>&1" },
+                            { key: "ts-up",       label: "Connect",   cmd: "tailscale up 2>&1" },
+                            { key: "ts-down",     label: "Disconnect",cmd: "tailscale down 2>&1" },
+                            { key: "ts-ip",       label: "Show IP",   cmd: "tailscale ip 2>&1" },
+                          ].map(({ key, label, cmd }) => (
+                            <button
+                              key={key}
+                              onClick={() => runCloudCmd(key, cmd)}
+                              disabled={cloudLoading === key}
+                              className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
+                            >
+                              {cloudLoading === key ? <Loader2 size={11} className="animate-spin" /> : null}
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        {(cloudOutput["ts-status"] || cloudOutput["ts-up"] || cloudOutput["ts-down"] || cloudOutput["ts-ip"]) && (
+                          <pre className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-40 overflow-y-auto">
+                            {cloudOutput["ts-status"] || cloudOutput["ts-up"] || cloudOutput["ts-down"] || cloudOutput["ts-ip"]}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                    {cfdInstalled && (
+                      <div className="glass-card p-5 space-y-3 border border-orange-500/20">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🌐</span>
+                          <h3 className="font-semibold text-sm">Cloudflare Tunnel Management</h3>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { key: "cfd-version",  label: "Version",      cmd: "cloudflared --version 2>&1" },
+                            { key: "cfd-tunnels",  label: "List Tunnels", cmd: "cloudflared tunnel list 2>&1" },
+                            { key: "cfd-status",   label: "Service Status",cmd: "systemctl status cloudflared 2>&1 | head -20" },
+                            { key: "cfd-start",    label: "Start Service", cmd: "systemctl start cloudflared 2>&1 && echo 'Started'" },
+                            { key: "cfd-stop",     label: "Stop Service",  cmd: "systemctl stop cloudflared 2>&1 && echo 'Stopped'" },
+                          ].map(({ key, label, cmd }) => (
+                            <button
+                              key={key}
+                              onClick={() => runCloudCmd(key, cmd)}
+                              disabled={cloudLoading === key}
+                              className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
+                            >
+                              {cloudLoading === key ? <Loader2 size={11} className="animate-spin" /> : null}
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        {Object.entries(cloudOutput).filter(([k]) => k.startsWith("cfd-")).map(([k, v]) => (
+                          v ? (
+                            <pre key={k} className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-40 overflow-y-auto">{v}</pre>
+                          ) : null
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {subTab === "cloud" && !activeServer && (
                 <div className="glass-card p-5 space-y-4 border border-[var(--accent)]/20">
                   <div className="flex items-center gap-2">
