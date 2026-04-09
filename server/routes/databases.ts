@@ -311,6 +311,13 @@ router.post('/:type/:dbname/change-password', async (req, res) => {
     } else if (type === 'redis') {
       const safePwdRedis = password.replace(/'/g, "\\'");
       await execAsync(`redis-cli CONFIG SET requirepass '${safePwdRedis}' 2>&1`, { timeout: 10000 });
+      // Persist to config file so it survives restarts
+      await execAsync(
+        `CONF=$(find /etc/redis -name "*.conf" 2>/dev/null | head -1); ` +
+        `if [ -n "$CONF" ]; then ` +
+        `  grep -q "^requirepass" "$CONF" && sed -i "s/^requirepass.*/requirepass ${safePwdRedis}/" "$CONF" || echo "requirepass ${safePwdRedis}" >> "$CONF"; ` +
+        `  grep -q "^protected-mode" "$CONF" && sed -i "s/^protected-mode.*/protected-mode no/" "$CONF" || echo "protected-mode no" >> "$CONF"; ` +
+        `fi`, { timeout: 10000 });
     } else {
       return res.status(400).json({ success: false, error: 'Unsupported database type' });
     }
