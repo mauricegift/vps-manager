@@ -1306,19 +1306,29 @@ export default function DatabasesPage() {
             const port = db.port;
             const pwd = connPassword || "PASSWORD";
             const dbName = connDbName.trim();
+            // Look up dedicated user created via Change Password
+            const dbKey = `${activeServer?.id ?? "local"}:${db.type}:${db.name || db.type}`;
+            const dedicatedUser = dbUsers[dbKey] || null;
             const strings: { label: string; key: string; value: string; hasPwd: boolean }[] = [];
             if (db.type === "postgresql") {
               const pgDb = dbName || "postgres";
-              strings.push({ label: "PostgreSQL URL", key: "pg", hasPwd: true, value: `postgresql://postgres:${pwd}@${host}:${port}/${pgDb}` });
-              strings.push({ label: "psql CLI", key: "psql", hasPwd: false, value: `psql -h ${host} -p ${port} -U postgres -d ${pgDb}` });
+              const user = dedicatedUser || "postgres";
+              strings.push({ label: "PostgreSQL URL", key: "pg", hasPwd: true, value: `postgresql://${user}:${pwd}@${host}:${port}/${pgDb}` });
+              strings.push({ label: "psql CLI", key: "psql", hasPwd: false, value: `psql -h ${host} -p ${port} -U ${user} -d ${pgDb}` });
             } else if (db.type === "mysql" || db.type === "mariadb") {
               const myDb = dbName || "";
-              strings.push({ label: "MySQL URL", key: "mysql", hasPwd: true, value: `mysql://root:${pwd}@${host}:${port}/${myDb}` });
-              strings.push({ label: "mysql CLI", key: "mysql-cli", hasPwd: true, value: `mysql -h ${host} -P ${port} -u root -p'${pwd}'${myDb ? ` ${myDb}` : ""}` });
+              const user = dedicatedUser || "root";
+              strings.push({ label: "MySQL URL", key: "mysql", hasPwd: true, value: `mysql://${user}:${pwd}@${host}:${port}/${myDb}` });
+              strings.push({ label: "mysql CLI", key: "mysql-cli", hasPwd: true, value: `mysql -h ${host} -P ${port} -u ${user} -p'${pwd}'${myDb ? ` ${myDb}` : ""}` });
             } else if (db.type === "mongodb") {
-              const mongoDb = dbName || "admin";
-              strings.push({ label: "MongoDB URI", key: "mongo", hasPwd: true, value: `mongodb://root:${pwd}@${host}:${port}/${mongoDb}?authSource=admin` });
-              strings.push({ label: "mongosh CLI", key: "mongosh", hasPwd: true, value: `mongosh "mongodb://${host}:${port}/${mongoDb}" --username root --password '${pwd}' --authenticationDatabase admin` });
+              const mongoDb = dbName || (dedicatedUser ? db.name : "admin");
+              if (dedicatedUser) {
+                strings.push({ label: "MongoDB URI", key: "mongo", hasPwd: true, value: `mongodb://${dedicatedUser}:${pwd}@${host}:${port}/${mongoDb}` });
+                strings.push({ label: "mongosh CLI", key: "mongosh", hasPwd: true, value: `mongosh "mongodb://${host}:${port}/${mongoDb}" --username ${dedicatedUser} --password '${pwd}'` });
+              } else {
+                strings.push({ label: "MongoDB URI", key: "mongo", hasPwd: true, value: `mongodb://root:${pwd}@${host}:${port}/${mongoDb}?authSource=admin` });
+                strings.push({ label: "mongosh CLI", key: "mongosh", hasPwd: true, value: `mongosh "mongodb://${host}:${port}/${mongoDb}" --username root --password '${pwd}' --authenticationDatabase admin` });
+              }
             } else if (db.type === "redis") {
               strings.push({ label: "Redis URL", key: "redis", hasPwd: true, value: `redis://:${pwd}@${host}:${port}/0` });
               strings.push({ label: "redis-cli", key: "redis-cli", hasPwd: true, value: `redis-cli -h ${host} -p ${port} -a '${pwd}'` });
