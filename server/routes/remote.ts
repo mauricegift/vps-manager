@@ -702,12 +702,8 @@ fi
     const alreadyOpen = checkOut.includes('ALREADY=1');
     const bindAll = checkOut.includes('BIND=all');
 
-    // If already open, skip bind fix and rate-limiting (they were already applied)
-    if (alreadyOpen) {
-      return res.json({ success: true, port, firewallOpened: true, alreadyOpen: true, bindAll: true, bindFixed: false, rateLimited: false, warnings: [] });
-    }
-
-    // Step 2: If only on localhost, update bind config + restart
+    // Step 2: ALWAYS fix bind address if DB is only on localhost (regardless of firewall state)
+    // alreadyOpen only means the firewall was already open — the bind may still need fixing
     let bindFixed = false;
     let bindErr = '';
     if (!bindAll) {
@@ -776,7 +772,7 @@ fi
     if (type === 'mongodb') warnings.push('Ensure security.authorization is enabled in /etc/mongod.conf.');
     if (!bindFixed && !bindAll) warnings.push(bindErr || 'Database may still only accept local connections.');
 
-    res.json({ success: true, port, firewallOpened: fwOpened, bindAll: bindAll || bindFixed, bindFixed, rateLimited, warnings });
+    res.json({ success: true, port, firewallOpened: fwOpened, alreadyOpen, bindAll: bindAll || bindFixed, bindFixed, rateLimited, warnings });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
