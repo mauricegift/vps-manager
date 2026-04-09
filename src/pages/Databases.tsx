@@ -451,6 +451,7 @@ export default function DatabasesPage() {
       // Show connection string immediately if a password was set
       if (pwd && username) {
         setChangePwdResult({ type: dbType, name: safeName, username, password: pwd });
+        setChangePassModal({ type: dbType, name: safeName });
       }
     } catch (e: any) {
       toast.error(e.response?.data?.error || "Failed to create database");
@@ -714,8 +715,8 @@ export default function DatabasesPage() {
 
       {/* Change Password modal */}
       {changePassModal && (
-        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); setChangePwdResult(null); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200}>
-          {changePwdResult ? (() => {
+        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); setChangePwdResult(null); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200} key={`${changePassModal.type}:${changePassModal.name}`}>
+          {(changePwdResult && changePwdResult.name === changePassModal.name && changePwdResult.type === changePassModal.type) ? (() => {
             const host = activeServer?.ip ?? "127.0.0.1";
             const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
             const port = portMap[changePwdResult.type] ?? 5432;
