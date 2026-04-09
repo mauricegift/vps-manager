@@ -673,17 +673,22 @@ router.post('/:id/databases/:type/allow-external', async (req, res) => {
     const port = portMap[type];
     if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
 
-    // Step 1: Open firewall port + check bind address
+    // Step 1: Pre-check if already open, then open if needed
     const checkScript = `
-OPENED=0
+OPENED=0; ALREADY=0
 if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-  ufw allow ${port}/tcp comment "VPS Manager: ${type} external" 2>&1; ufw reload 2>/dev/null; OPENED=1
+  if ufw status 2>/dev/null | grep -q "${port}/tcp"; then
+    ALREADY=1; OPENED=1
+  else
+    ufw allow ${port}/tcp comment "VPS Manager: ${type} external" 2>&1; ufw reload 2>/dev/null; OPENED=1
+  fi
 elif command -v firewall-cmd &>/dev/null; then
   firewall-cmd --permanent --add-port=${port}/tcp 2>&1; firewall-cmd --reload 2>/dev/null; OPENED=1
 elif command -v iptables &>/dev/null; then
-  iptables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport ${port} -j ACCEPT 2>&1; OPENED=1
+  iptables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null && ALREADY=1 || iptables -I INPUT -p tcp --dport ${port} -j ACCEPT 2>&1; OPENED=1
 fi
 echo "FW_OPENED=$OPENED"
+echo "ALREADY=$ALREADY"
 
 # Check if listening on all interfaces or only localhost
 if ss -tlnp 2>/dev/null | grep -E "\\b${port}\\b" | grep -qE "\\*:|0\\.0\\.0\\.0"; then
@@ -694,7 +699,13 @@ fi
 `.trim();
     const checkOut = await runSSHScript(conn, checkScript);
     const fwOpened = checkOut.includes('FW_OPENED=1');
+    const alreadyOpen = checkOut.includes('ALREADY=1');
     const bindAll = checkOut.includes('BIND=all');
+
+    // If already open, skip bind fix and rate-limiting (they were already applied)
+    if (alreadyOpen) {
+      return res.json({ success: true, port, firewallOpened: true, alreadyOpen: true, bindAll: true, bindFixed: false, rateLimited: false, warnings: [] });
+    }
 
     // Step 2: If only on localhost, update bind config + restart
     let bindFixed = false;
@@ -745,6 +756,69 @@ fi
     if (!bindFixed && !bindAll) warnings.push(bindErr || 'Database may still only accept local connections.');
 
     res.json({ success: true, port, firewallOpened: fwOpened, bindAll: bindAll || bindFixed, bindFixed, rateLimited, warnings });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── Remote DB: firewall status ────────────────────────────────────────────────
+router.get('/:id/databases/firewall-status', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ error: 'Server not found' });
+    const script = `
+check_port() {
+  local port=$1
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw status 2>/dev/null | grep -q "${port}/tcp" && echo 1 || echo 0
+  elif command -v iptables >/dev/null 2>&1; then
+    iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null && echo 1 || echo 0
+  else
+    echo 0
+  fi
+}
+echo "postgresql=$(check_port 5432)"
+echo "mysql=$(check_port 3306)"
+echo "mongodb=$(check_port 27017)"
+echo "redis=$(check_port 6379)"
+echo "mariadb=$(check_port 3306)"
+`.trim();
+    const out = await runSSHScript(conn, script);
+    const parse = (t: string) => out.includes(`${t}=1`);
+    res.json({ postgresql: parse('postgresql'), mysql: parse('mysql'), mongodb: parse('mongodb'), redis: parse('redis'), mariadb: parse('mariadb') });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Remote DB: close external access ─────────────────────────────────────────
+router.post('/:id/databases/:type/close-external', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const { type } = req.params;
+    const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
+    const port = portMap[type];
+    if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
+
+    const script = `
+# Remove UFW rule
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw delete allow ${port}/tcp 2>&1 || true
+  ufw reload 2>/dev/null || true
+  echo "FW_CLOSED=1"
+elif command -v iptables >/dev/null 2>&1; then
+  iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || true
+  echo "FW_CLOSED=1"
+fi
+# Remove rate-limiting rules added by allow-external
+iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || true
+iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || true
+echo "DONE"
+`.trim();
+    const out = await runSSHScript(conn, script);
+    const closed = out.includes('FW_CLOSED=1') || out.includes('DONE');
+    res.json({ success: true, closed, port });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
