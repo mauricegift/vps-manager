@@ -29,7 +29,7 @@ function buildConfig(conn: SSHConnection): ConnectConfig {
     host: conn.ip,
     port: conn.port || 22,
     username: conn.username,
-    readyTimeout: 20000,
+    readyTimeout: 40000,
     keepaliveInterval: 15000,
     keepaliveCountMax: 30,
   };
