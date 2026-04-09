@@ -51,7 +51,7 @@ export default function TerminalPage() {
   const { activeServer } = useRemoteServer();
   const { theme } = useTheme();
   const MONOKAI = theme === "dark" ? DARK_THEME : LIGHT_THEME;
-  const OUT = DARK_THEME;
+  const OUT = MONOKAI;
 
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -93,7 +93,11 @@ export default function TerminalPage() {
         : "✓ Shell ready");
     });
     s.on("disconnect", () => { setConnected(false); addLine("system", "✗ Disconnected"); });
-    s.on("output", (data: string) => addLine("output", data));
+    s.on("output", (data: string) => {
+      // Detect clear-screen escape (\x1b[2J or \x1b[3J) — wipe frontend display too
+      if (/\x1b\[[23]J/.test(data)) { setLines([]); return; }
+      addLine("output", data);
+    });
     s.on("error", (data: string) => addLine("error", data));
     s.on("system", (data: string) => addLine("system", data));
     s.on("cwd", (data: string) => setCwd(data));
@@ -106,11 +110,44 @@ export default function TerminalPage() {
     outputRef.current?.scrollTo(0, outputRef.current.scrollHeight);
   }, [lines]);
 
+  const reconnect = useCallback(() => {
+    const s = socketRef.current;
+    if (s) { s.disconnect(); socketRef.current = null; }
+    setConnected(false);
+    setInput("");
+    addLine("system", "Reconnecting…");
+    setTimeout(() => {
+      const query: Record<string, string> = {};
+      if (activeServer) query.serverId = String(activeServer.id);
+      const newSock = io({ path: "/socket.io", query, transports: ["websocket", "polling"] });
+      socketRef.current = newSock;
+      setSocket(newSock);
+      newSock.on("connect", () => {
+        setConnected(true);
+        addLine("system", activeServer ? `✓ Reconnected via SSH → ${activeServer.username}@${activeServer.ip}` : "✓ Shell ready");
+      });
+      newSock.on("disconnect", () => { setConnected(false); addLine("system", "✗ Disconnected"); });
+      newSock.on("output", (data: string) => {
+        if (/\x1b\[[23]J/.test(data)) { setLines([]); return; }
+        addLine("output", data);
+      });
+      newSock.on("error", (data: string) => addLine("error", data));
+      newSock.on("system", (data: string) => addLine("system", data));
+      newSock.on("cwd", (data: string) => setCwd(data));
+    }, 1200);
+  }, [activeServer, addLine]);
+
   const send = () => {
     const s = socketRef.current;
     if (!input.trim() || !s || !connected) return;
     const cmd = input.trim();
     if (cmd === "clear") { setLines([]); setInput(""); return; }
+    // Intercept 'exit' in SSH mode — don't kill the session, just reconnect
+    if (activeServer && (cmd === "exit" || cmd === "logout")) {
+      setInput("");
+      addLine("system", "⚠ 'exit' is disabled in SSH mode — use the Servers panel to disconnect.");
+      return;
+    }
     if (!activeServer) {
       addLine("input", `${cwd}$ ${cmd}`);
     }
@@ -131,6 +168,18 @@ export default function TerminalPage() {
     const next = Math.max(histIdx - 1, -1);
     setHistIdx(next);
     setInput(next === -1 ? "" : history[next]);
+  };
+
+  // Multi-line paste: join lines with "; " so they run sequentially as one command
+  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length > 1) {
+      e.preventDefault();
+      setInput(prev => prev + lines.join("; "));
+      addLine("system", `📋 Pasted ${lines.length} lines — joined with ';'. Review and press Enter.`);
+    }
+    // single-line paste: let browser handle normally
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -181,6 +230,14 @@ export default function TerminalPage() {
             <span className={`w-2 h-2 rounded-full ${connected ? "bg-green-500 animate-pulse" : "bg-red-400"}`} />
             {connected ? (activeServer ? "SSH Connected" : "Connected") : "Disconnected"}
           </div>
+          {!connected && (
+            <button
+              onClick={reconnect}
+              className="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white font-medium hover:opacity-90 transition-opacity"
+            >
+              Reconnect
+            </button>
+          )}
           <button
             onClick={() => setLines([])}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors"
@@ -304,6 +361,7 @@ export default function TerminalPage() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
             disabled={!connected}
             placeholder={connected ? "Enter command..." : "Connecting..."}
             className="flex-1 bg-transparent font-mono text-sm focus:outline-none"
