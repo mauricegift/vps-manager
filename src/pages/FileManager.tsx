@@ -410,10 +410,17 @@ export default function FileManagerPage() {
         : `https://github.com/${repoSlug}.git`;
 
       if (activeServer) {
-        const parentDir = ghTargetDir.split("/").slice(0, -1).join("/") || "/";
-        const { data } = await api.post(`/remote/${activeServer.id}/exec`, {
-          command: `mkdir -p ${JSON.stringify(parentDir)} && git clone ${JSON.stringify(cloneUrl)} ${JSON.stringify(ghTargetDir)} 2>&1`,
-        });
+        const repoName = repoSlug.split("/").pop() || "repo";
+        const cloneDest = `${ghTargetDir.replace(/\/$/, "")}/${repoName}`;
+        let cloneCmd = `mkdir -p ${JSON.stringify(ghTargetDir)} && git clone ${JSON.stringify(cloneUrl)} ${JSON.stringify(cloneDest)} 2>&1`;
+        if (ghRunInstall) {
+          cloneCmd += ` && cd ${JSON.stringify(cloneDest)} && (` +
+            `[ -f package.json ] && npm install 2>&1 || ` +
+            `[ -f requirements.txt ] && pip install -r requirements.txt 2>&1 || ` +
+            `[ -f install.sh ] && bash install.sh 2>&1 || ` +
+            `echo "No recognizable dependency file found")`;
+        }
+        const { data } = await api.post(`/remote/${activeServer.id}/exec`, { command: cloneCmd });
         const execOut = typeof data.data === "string"
           ? data.data
           : ((data.data?.stdout || "") + (data.data?.stderr || ""));
@@ -422,8 +429,8 @@ export default function FileManagerPage() {
         if (failed) {
           toast.error("Clone failed — check output above");
         } else {
-          toast.success("Repository cloned");
-          setPath(ghTargetDir);
+          toast.success(`Repository cloned to ${cloneDest}`);
+          setPath(cloneDest);
           await refetch();
         }
       } else {
@@ -980,13 +987,11 @@ export default function FileManagerPage() {
               </div>
 
               {/* Auto install */}
-              {!activeServer && (
-                <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
-                  <input type="checkbox" checked={ghRunInstall} onChange={e => setGhRunInstall(e.target.checked)} className="rounded accent-[var(--accent)]" />
-                  <PackageOpen size={12} className="text-[var(--muted)]" />
-                  Auto-install dependencies (npm install / pip install / install.sh)
-                </label>
-              )}
+              <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                <input type="checkbox" checked={ghRunInstall} onChange={e => setGhRunInstall(e.target.checked)} className="rounded accent-[var(--accent)]" />
+                <PackageOpen size={12} className="text-[var(--muted)]" />
+                Auto-install dependencies (npm install / pip install / install.sh)
+              </label>
 
               <div className="flex gap-2 justify-end pt-1">
                 <button onClick={() => setGhModal(false)}
