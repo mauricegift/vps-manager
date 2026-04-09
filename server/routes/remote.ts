@@ -1,6 +1,16 @@
 import { Router } from 'express';
 import pool from '../db.js';
-import { runSSHCommand, runSSHScript, getRemoteSystemInfo, SSHConnection } from '../ssh.js';
+import { runSSHCommand, runSSHScript, getRemoteSystemInfo, SSHConnection, getPooledClient } from '../ssh.js';
+import multer from 'multer';
+import { rm } from 'fs/promises';
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, '/tmp'),
+    filename: (_req, file, cb) => cb(null, `remote_upload_${Date.now()}_${file.originalname}`),
+  }),
+  limits: { fileSize: 200 * 1024 * 1024 },
+});
 
 const router = Router();
 
@@ -243,6 +253,59 @@ router.post('/:id/files/mkdir', async (req, res) => {
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── Remote File Upload (SFTP) ─────────────────────────────────────────────────
+router.post('/:id/files/upload', upload.array('files'), async (req, res) => {
+  const tmpFiles: string[] = [];
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+
+    const destDir = (req.body.path as string) || '/tmp';
+    const files = req.files as Express.Multer.File[];
+    if (!files || !files.length) return res.status(400).json({ success: false, error: 'No files received' });
+
+    let relativePaths: string[] = [];
+    try { relativePaths = req.body.relativePaths ? JSON.parse(req.body.relativePaths) : []; } catch {}
+
+    files.forEach(f => tmpFiles.push(f.path));
+
+    const client = await getPooledClient(conn);
+
+    // Ensure destination exists
+    await runSSHCommand(conn, `mkdir -p ${JSON.stringify(destDir)}`);
+
+    const uploaded: string[] = [];
+
+    await new Promise<void>((resolve, reject) => {
+      client.sftp((err, sftp) => {
+        if (err) return reject(err);
+
+        const tasks = files.map((f, i) => new Promise<void>(async (res2, rej2) => {
+          try {
+            const relPath = relativePaths[i] || f.originalname;
+            const remotePath = `${destDir}/${relPath}`;
+            const remoteDir = remotePath.split('/').slice(0, -1).join('/');
+            // Ensure sub-directory exists on remote
+            await runSSHCommand(conn, `mkdir -p ${JSON.stringify(remoteDir)}`);
+            sftp.fastPut(f.path, remotePath, (e) => {
+              if (e) rej2(e);
+              else { uploaded.push(relPath); res2(); }
+            });
+          } catch (e2) { rej2(e2); }
+        }));
+
+        Promise.all(tasks).then(() => resolve()).catch(reject);
+      });
+    });
+
+    res.json({ success: true, data: uploaded });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  } finally {
+    await Promise.all(tmpFiles.map(p => rm(p, { force: true }).catch(() => {})));
   }
 });
 
