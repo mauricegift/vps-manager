@@ -71,11 +71,11 @@ router.post('/start', async (req, res) => {
       const installCmd = pm === 'bun'
         ? `(command -v bun >/dev/null 2>&1 || npm install -g bun) && cd "${cwd}" && bun install 2>&1`
         : `cd "${cwd}" && npm install 2>&1`;
-      await execAsync(installCmd).catch(() => {});
+      await execAsync(installCmd, { timeout: 300000 }).catch(() => {});
     }
-    await execAsync(cmd);
-    await execAsync('pm2 save').catch(() => {});
-    await execAsync('pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null').catch(() => {});
+    await execAsync(cmd, { timeout: 30000 });
+    await execAsync('pm2 save', { timeout: 10000 }).catch(() => {});
+    await execAsync('pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null', { timeout: 15000 }).catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
