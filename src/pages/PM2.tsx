@@ -124,6 +124,8 @@ export default function PM2Page() {
   const { activeServer } = useRemoteServer();
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
 
+  const pollInterval = activeServer ? 15000 : 5000;
+
   const { data: versionInfo, isLoading: versionLoading } = useQuery({
     queryKey: ["pm2-version", activeServer?.id ?? "local"],
     queryFn: () => {
@@ -131,15 +133,17 @@ export default function PM2Page() {
       return api.get(url).then(r => r.data.data).catch(() => null);
     },
     staleTime: 0,
-    refetchInterval: 3000,
+    refetchInterval: pollInterval,
+    retry: 1,
   });
 
   const { data: processes = [], isLoading, refetch, isFetching } = useQuery<PM2Process[]>({
     queryKey: ["pm2", activeServer?.id ?? "local"],
     queryFn: () => api.get(`${pfx}/pm2`).then((r) => r.data.data),
-    refetchInterval: 3000,
+    refetchInterval: pollInterval,
     placeholderData: keepPreviousData,
     enabled: !!versionInfo?.installed,
+    retry: 1,
   });
 
   const mutation = useMutation({
