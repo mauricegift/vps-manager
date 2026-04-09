@@ -180,6 +180,7 @@ function ToolCard({
               className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
             >
               {loading ? <div className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" /> : <Trash2 size={12} />}
+              {loading ? "Removing..." : "Uninstall"}
             </button>
           </>
         )}
