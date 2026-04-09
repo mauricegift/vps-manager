@@ -84,7 +84,8 @@ export default function DockerPage() {
       const url = activeServer ? `/remote/${activeServer.id}/extras/docker-version` : "/extras/docker-version";
       return api.get(url).then(r => r.data.data).catch(() => null);
     },
-    staleTime: 60000,
+    staleTime: 0,
+    refetchInterval: 3000,
   });
 
   const dockerInstalled = versionInfo !== null && versionInfo?.docker?.version;
@@ -93,7 +94,7 @@ export default function DockerPage() {
   const containers = useQuery<DockerContainer[]>({
     queryKey: ["docker-containers"],
     queryFn: () => api.get("/docker/containers").then(r => r.data.data),
-    refetchInterval: 6000,
+    refetchInterval: 3000,
     enabled: !!dockerInstalled,
   });
 
