@@ -1,7 +1,6 @@
 #!/bin/bash
 # Push one or more files to GitHub via the API (bypasses git restrictions in Replit)
 # Usage: ./push-to-github.sh "commit message" file1 file2 ...
-# Example: ./push-to-github.sh "fix: update route" server/routes/github.ts .gitignore
 
 REPO="mauricegift/vps-manager"
 BRANCH="main"
@@ -18,33 +17,67 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
+PUSH_SCRIPT=$(mktemp /tmp/gh_push_XXXXXX.mjs)
+trap "rm -f $PUSH_SCRIPT" EXIT
+
+cat > "$PUSH_SCRIPT" << 'JSEOF'
+import https from 'https';
+import fs from 'fs';
+
+const token  = process.env.GH_TOKEN;
+const repo   = process.env.REPO;
+const branch = process.env.BRANCH;
+const msg    = process.env.MSG;
+const file   = process.env.FILE;
+
+const content = fs.readFileSync(file).toString('base64');
+
+function req(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const bodyBuf = body ? Buffer.from(body) : null;
+    const opts = {
+      hostname: 'api.github.com',
+      path,
+      method,
+      headers: {
+        'Authorization': 'token ' + token,
+        'User-Agent': 'push-script',
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github.v3+json',
+        ...(bodyBuf ? { 'Content-Length': bodyBuf.length } : {}),
+      },
+    };
+    const r = https.request(opts, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
+    });
+    r.on('error', reject);
+    if (bodyBuf) r.write(bodyBuf);
+    r.end();
+  });
+}
+
+const existing = await req('GET', `/repos/${repo}/contents/${file}?ref=${branch}`);
+const sha = existing.sha || '';
+const payload = { message: msg, content, branch };
+if (sha) payload.sha = sha;
+const result = await req('PUT', `/repos/${repo}/contents/${file}`, JSON.stringify(payload));
+if (result.commit) {
+  console.log('OK ' + result.commit.sha);
+} else {
+  console.log('ERR: ' + (result.message || JSON.stringify(result)));
+}
+JSEOF
+
 for FILE in "$@"; do
   if [ ! -f "$FILE" ]; then
     echo "SKIP: $FILE not found"
     continue
   fi
 
-  CONTENT=$(base64 -w0 "$FILE")
-
-  # Get existing SHA (if file exists on remote)
-  SHA=$(curl -s \
-    -H "Authorization: token $GITHUB_TOKEN" \
-    "https://api.github.com/repos/$REPO/contents/$FILE?ref=$BRANCH" \
-    | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);process.stdout.write(j.sha||'')}catch{}})")
-
-  # Build payload
-  if [ -n "$SHA" ]; then
-    PAYLOAD="{\"message\":\"$MSG\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\",\"branch\":\"$BRANCH\"}"
-  else
-    PAYLOAD="{\"message\":\"$MSG\",\"content\":\"$CONTENT\",\"branch\":\"$BRANCH\"}"
-  fi
-
-  RESULT=$(curl -s -X PUT \
-    -H "Authorization: token $GITHUB_TOKEN" \
-    -H "Content-Type: application/json" \
-    "https://api.github.com/repos/$REPO/contents/$FILE" \
-    -d "$PAYLOAD" \
-    | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);console.log(j.commit?'OK '+j.commit.sha:'ERR: '+j.message)}catch(e){console.log('ERR: parse failed')}})")
+  RESULT=$(GH_TOKEN="$GITHUB_TOKEN" REPO="$REPO" BRANCH="$BRANCH" MSG="$MSG" FILE="$FILE" \
+    node --input-type=module < "$PUSH_SCRIPT" 2>&1)
 
   echo "$FILE -> $RESULT"
 done
