@@ -77,7 +77,7 @@ export default function NginxPage() {
   const { data: status, refetch: refetchStatus } = useQuery<NginxStatus>({
     queryKey: ["nginx-status", serverId],
     queryFn: () => api.get(`${base}/status`).then(r => r.data),
-    refetchInterval: 30000,
+    refetchInterval: 3000,
   });
 
   // Configs
