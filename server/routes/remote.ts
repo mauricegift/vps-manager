@@ -1173,6 +1173,7 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
       { id: 'jq', name: 'jq', icon: '🔍', category: 'tool', description: 'Lightweight JSON processor', ...t('jq') },
       { id: 'unzip', name: 'unzip', icon: '📂', category: 'tool', description: 'ZIP extraction utility', ...t('unzip') },
       { id: 'chrome', name: 'Google Chrome', icon: '🌐', category: 'browser', description: 'Google Chrome web browser with headless support', ...t('chrome') },
+      { id: 'wrangler', name: 'Wrangler', icon: '☁️', category: 'tool', description: 'Cloudflare Workers CLI for deploying to the edge', ...t('wrangler') },
     ];
     res.json({ success: true, data: tools });
   } catch (e: any) {
@@ -1187,6 +1188,11 @@ const NPM_DEPENDENT_REMOTE = new Set(['pm2','pnpm','yarn','npm','wrangler','bun'
 const REMOTE_NVM_ENSURE_NODE24 = `
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
+# Always add active NVM node bin to PATH so npm-global tools are found
+_NVM_ACTIVE_NODE=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1)
+[ -n "$_NVM_ACTIVE_NODE" ] && export PATH="$HOME/.nvm/versions/node/$_NVM_ACTIVE_NODE/bin:$PATH"
+_NPM_PREFIX=$(npm config get prefix 2>/dev/null)
+[ -n "$_NPM_PREFIX" ] && export PATH="$_NPM_PREFIX/bin:$PATH"
 if ! command -v npm >/dev/null 2>&1; then
   echo "==> npm/node not found. Installing Node.js v24 via nvm..."
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash 2>&1
@@ -1232,7 +1238,11 @@ const REMOTE_INSTALL: Record<string, (opts: any) => string> = {
   'fail2ban-client': () => `DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban`,
   jq:     () => `DEBIAN_FRONTEND=noninteractive apt-get install -y jq`,
   unzip:  () => `DEBIAN_FRONTEND=noninteractive apt-get install -y unzip`,
-  chrome: () => `apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list && apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable && DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb`,
+  chrome: () =>
+    `apt-get update -qq 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg ca-certificates 2>&1 && ` +
+    `wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg 2>&1 && ` +
+    `echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list 2>&1 && ` +
+    `apt-get update -qq 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable 2>&1`,
   wrangler: () => `npm install -g wrangler`,
 };
 
@@ -1267,6 +1277,52 @@ const REMOTE_UPDATE: Record<string, string> = {
   wrangler: 'npm install -g wrangler@latest',
 };
 
+const REMOTE_UNINSTALL: Record<string, string> = {
+  nodejs:  'nvm deactivate 2>/dev/null; nvm uninstall node 2>/dev/null || DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y nodejs npm 2>&1 && apt-get autoremove -y 2>&1',
+  bun:     'rm -rf ~/.bun && rm -f ~/.local/bin/bun 2>&1',
+  deno:    'rm -rf ~/.deno && rm -f ~/.local/bin/deno 2>&1',
+  pm2:     `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; pm2 kill 2>/dev/null; npm uninstall -g pm2 2>&1`,
+  pnpm:    `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; npm uninstall -g pnpm 2>&1`,
+  yarn:    `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; npm uninstall -g yarn 2>&1`,
+  wrangler:`export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; npm uninstall -g wrangler 2>&1`,
+  python:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y python3 python3-pip 2>&1 && apt-get autoremove -y 2>&1',
+  go:      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y golang-go 2>&1 && apt-get autoremove -y 2>&1',
+  rust:    'rustup self uninstall -y 2>&1 || rm -rf ~/.cargo ~/.rustup 2>/dev/null',
+  nginx:   'systemctl stop nginx 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y nginx nginx-common nginx-full 2>&1 && apt-get autoremove -y 2>&1',
+  apache:  'systemctl stop apache2 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y apache2 apache2-utils 2>&1 && apt-get autoremove -y 2>&1',
+  certbot: 'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y certbot python3-certbot-nginx 2>&1 && apt-get autoremove -y 2>&1',
+  git:     'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y git 2>&1 && apt-get autoremove -y 2>&1',
+  curl:    'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y curl 2>&1 && apt-get autoremove -y 2>&1',
+  wget:    'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y wget 2>&1 && apt-get autoremove -y 2>&1',
+  rsync:   'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y rsync 2>&1 && apt-get autoremove -y 2>&1',
+  vim:     'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y vim 2>&1 && apt-get autoremove -y 2>&1',
+  nvim:    'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y neovim 2>&1 && apt-get autoremove -y 2>&1',
+  htop:    'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y htop 2>&1 && apt-get autoremove -y 2>&1',
+  tmux:    'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y tmux 2>&1 && apt-get autoremove -y 2>&1',
+  screen:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y screen 2>&1 && apt-get autoremove -y 2>&1',
+  ufw:     'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ufw 2>&1 && apt-get autoremove -y 2>&1',
+  'fail2ban-client': 'systemctl stop fail2ban 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y fail2ban 2>&1 && apt-get autoremove -y 2>&1',
+  jq:      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y jq 2>&1 && apt-get autoremove -y 2>&1',
+  unzip:   'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y unzip 2>&1 && apt-get autoremove -y 2>&1',
+  chrome:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y google-chrome-stable 2>&1; rm -f /usr/share/keyrings/google-chrome.gpg /etc/apt/sources.list.d/google-chrome.list 2>/dev/null; apt-get autoremove -y 2>&1',
+  docker:  'systemctl stop docker 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>&1 && apt-get autoremove -y 2>&1',
+};
+
+router.post('/:id/extras/:tool/uninstall', async (req, res) => {
+  const { tool } = req.params;
+  const cmd = REMOTE_UNINSTALL[tool];
+  if (!cmd) return res.status(400).json({ success: false, error: 'Unknown tool' });
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
+    const b64 = Buffer.from(cmd, 'utf8').toString('base64');
+    const { stdout, stderr } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`);
+    res.json({ success: true, output: (stdout + stderr).trim() });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.post('/:id/extras/system-update', async (req, res) => {
   const { action } = req.body as { action?: string };
   const cmd = action === 'upgrade'
@@ -1282,6 +1338,40 @@ router.post('/:id/extras/system-update', async (req, res) => {
   }
 });
 
+const REMOTE_NVM_PATH_PREFIX = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; _P=$(npm config get prefix 2>/dev/null); [ -n "$_P" ] && export PATH="$_P/bin:$PATH"; `;
+
+const REMOTE_VERIFY: Record<string, string> = {
+  nodejs:  `${REMOTE_NVM_PATH_PREFIX}node --version`,
+  npm:     `${REMOTE_NVM_PATH_PREFIX}npm --version`,
+  bun:     `bun --version 2>/dev/null || $HOME/.bun/bin/bun --version`,
+  deno:    `deno --version 2>/dev/null || $HOME/.deno/bin/deno --version`,
+  pm2:     `${REMOTE_NVM_PATH_PREFIX}pm2 --version`,
+  pnpm:    `${REMOTE_NVM_PATH_PREFIX}pnpm --version`,
+  yarn:    `${REMOTE_NVM_PATH_PREFIX}yarn --version`,
+  wrangler:`${REMOTE_NVM_PATH_PREFIX}wrangler --version`,
+  python:  `python3 --version`,
+  go:      `go version 2>/dev/null || /usr/local/go/bin/go version`,
+  rust:    `cargo --version 2>/dev/null || $HOME/.cargo/bin/cargo --version`,
+  nginx:   `nginx -v 2>/dev/null || which nginx`,
+  apache:  `apache2 -v 2>/dev/null || which apache2`,
+  certbot: `certbot --version 2>/dev/null || which certbot`,
+  git:     `git --version`,
+  curl:    `curl --version`,
+  wget:    `wget --version`,
+  rsync:   `rsync --version`,
+  vim:     `vim --version`,
+  nvim:    `nvim --version`,
+  htop:    `htop --version`,
+  tmux:    `tmux -V`,
+  screen:  `screen --version`,
+  ufw:     `which ufw`,
+  'fail2ban-client': `which fail2ban-client`,
+  jq:      `jq --version`,
+  unzip:   `which unzip`,
+  chrome:  `google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null || chromium-browser --version 2>/dev/null`,
+  docker:  `docker --version`,
+};
+
 router.post('/:id/extras/:tool/install', async (req, res) => {
   const { tool } = req.params;
   const cmdFn = REMOTE_INSTALL[tool];
@@ -1295,12 +1385,27 @@ router.post('/:id/extras/:tool/install', async (req, res) => {
     const aptPrefix = needsAptUpdate ? 'apt-get update -qq 2>&1\n' : '';
     const fullScript = nvmPrefix + aptPrefix + installCmd + ' 2>&1\n';
     const b64 = Buffer.from(fullScript, 'utf8').toString('base64');
-    const cmd = `bash -l -c "$(echo '${b64}' | base64 -d)"`;
-    const { stdout, stderr, code } = await runSSHCommand(conn, cmd);
-    if (code !== 0) {
-      return res.status(500).json({ success: false, error: 'Installation failed', output: stdout + stderr });
+    let output = '';
+    let execFailed = false;
+    const { stdout, stderr, code } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`);
+    output = (stdout + stderr).trim();
+    execFailed = code !== 0;
+
+    // Verify the tool is actually installed regardless of exit code
+    const verifyCmd = REMOTE_VERIFY[tool];
+    if (verifyCmd) {
+      const vb64 = Buffer.from(verifyCmd, 'utf8').toString('base64');
+      const { code: vcode } = await runSSHCommand(conn, `bash -l -c "$(echo '${vb64}' | base64 -d)" 2>/dev/null`);
+      if (vcode === 0) {
+        return res.json({ success: true, output });
+      } else if (execFailed) {
+        return res.status(500).json({ success: false, error: 'Installation failed', output });
+      }
+    } else if (execFailed) {
+      return res.status(500).json({ success: false, error: 'Installation failed', output });
     }
-    res.json({ success: true, output: stdout + stderr });
+
+    res.json({ success: true, output });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
