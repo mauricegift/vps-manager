@@ -52,13 +52,15 @@ function VersionChip({ version, label }: { version: string | null; label?: strin
 }
 
 function ToolCard({
-  tool, onInstall, onUpdate, onUninstall, loading
+  tool, onInstall, onUpdate, onUninstall, loading, hideInstall, hideUninstall
 }: {
   tool: Tool;
   onInstall: (nodeVersion?: string) => void;
   onUpdate: () => void;
   onUninstall: () => void;
   loading: boolean;
+  hideInstall?: boolean;
+  hideUninstall?: boolean;
 }) {
   const [nodeVer, setNodeVer] = useState("20");
 
@@ -143,14 +145,20 @@ function ToolCard({
 
       <div className="flex gap-2 mt-auto pt-1">
         {!tool.installed ? (
-          <button
-            onClick={() => onInstall(tool.canSelectVersion ? nodeVer : undefined)}
-            disabled={loading}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
-          >
-            {loading ? <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> : <Download size={12} />}
-            {loading ? "Installing..." : `Install ${tool.name}`}
-          </button>
+          hideInstall ? (
+            <div className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-[var(--foreground)] border border-[var(--line)] text-[var(--muted)]">
+              Install Node.js first
+            </div>
+          ) : (
+            <button
+              onClick={() => onInstall(tool.canSelectVersion ? nodeVer : undefined)}
+              disabled={loading}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+            >
+              {loading ? <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> : <Download size={12} />}
+              {loading ? "Installing..." : `Install ${tool.name}`}
+            </button>
+          )
         ) : (
           <>
             {tool.updateAvailable && (
@@ -173,15 +181,17 @@ function ToolCard({
                 <CheckCircle2 size={12} /> Installed
               </div>
             )}
-            <button
-              onClick={onUninstall}
-              disabled={loading}
-              title={`Uninstall ${tool.name}`}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
-            >
-              {loading ? <div className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" /> : <Trash2 size={12} />}
-              {loading ? "Removing..." : "Uninstall"}
-            </button>
+            {!hideUninstall && (
+              <button
+                onClick={onUninstall}
+                disabled={loading}
+                title={`Uninstall ${tool.name}`}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+              >
+                {loading ? <div className="w-3 h-3 border border-red-400 border-t-transparent rounded-full animate-spin" /> : <Trash2 size={12} />}
+                {loading ? "Removing..." : "Uninstall"}
+              </button>
+            )}
           </>
         )}
       </div>
@@ -237,11 +247,14 @@ export default function ExtrasPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mainTab = (searchParams.get("tab") as MainTab) || "system";
   const subTab = (searchParams.get("sub") as SoftwareSubTab) || "runtimes";
+  const sysSubTab = (searchParams.get("ssub") as "updates" | "hostname" | "swap" | "motd") || "updates";
 
   const setMainTab = (t: MainTab) =>
     setSearchParams(p => { p.set("tab", t); if (t !== "software") p.delete("sub"); return p; }, { replace: true });
   const setSubTab = (s: SoftwareSubTab) =>
     setSearchParams(p => { p.set("tab", "software"); p.set("sub", s); return p; }, { replace: true });
+  const setSysSubTab = (s: "updates" | "hostname" | "swap" | "motd") =>
+    setSearchParams(p => { p.set("tab", "system"); p.set("ssub", s); return p; }, { replace: true });
 
   const [opLoading, setOpLoading] = useState<string | null>(null);
   const [sysUpdLoading, setSysUpdLoading] = useState<string | null>(null);
@@ -643,16 +656,41 @@ export default function ExtrasPage() {
 
       {/* ── SYSTEM TAB ── */}
       {mainTab === "system" && (
-        <div data-aos="fade-up" className="space-y-6">
-          {/* System Updates */}
+        <div data-aos="fade-up" className="space-y-5">
+          {/* System Sub-tabs */}
+          <div className="overflow-x-auto hide-scrollbar">
+            <div className="flex gap-1 p-1 rounded-xl bg-[var(--secondary)] border border-[var(--line)] w-fit min-w-full sm:min-w-0">
+              {([
+                { id: "updates", label: "Updates" },
+                { id: "hostname", label: "Hostname" },
+                { id: "swap", label: "Swap" },
+                { id: "motd", label: "MOTD" },
+              ] as const).map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => setSysSubTab(id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                    sysSubTab === id ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--muted)] hover:text-[var(--main)]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Updates */}
+          {sysSubTab === "updates" && (
           <div className="space-y-2">
             <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Package Management</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
               <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
             </div>
           </div>
+          )}
 
           {/* Hostname Management */}
+          {sysSubTab === "hostname" && (
           <div className="space-y-2">
             <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Hostname</p>
             <div className="glass-card p-5 flex flex-col gap-3 max-w-lg">
@@ -685,8 +723,10 @@ export default function ExtrasPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* Swap RAM */}
+          {sysSubTab === "swap" && (
           <div className="space-y-2">
             <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Swap RAM</p>
             <div className="glass-card p-5 flex flex-col gap-3 max-w-lg">
@@ -739,8 +779,10 @@ export default function ExtrasPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* MOTD Editor */}
+          {sysSubTab === "motd" && (
           <div className="space-y-2">
             <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Login Banner (MOTD)</p>
             <div className="glass-card p-5 flex flex-col gap-3 max-w-2xl">
@@ -787,6 +829,7 @@ export default function ExtrasPage() {
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -860,6 +903,8 @@ export default function ExtrasPage() {
                     onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
                     onUpdate={() => handleUpdate(tool)}
                     onUninstall={() => handleUninstall(tool)}
+                    hideInstall={tool.id === "npm"}
+                    hideUninstall={tool.id === "npm"}
                   />
                 ))}
               </div>
@@ -872,7 +917,9 @@ export default function ExtrasPage() {
                         loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}` || opLoading === `uninstall-${tool.id}`}
                         onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
                         onUpdate={() => handleUpdate(tool)}
-                        onUninstall={() => handleUninstall(tool)} />
+                        onUninstall={() => handleUninstall(tool)}
+                        hideInstall={tool.id === "npm"}
+                        hideUninstall={tool.id === "npm"} />
                     ))}
                   </div>
                 </>
