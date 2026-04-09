@@ -56,6 +56,7 @@ export default function DockerPage() {
   const [pullPort, setPullPort] = useState("");
   const [pullAutoRun, setPullAutoRun] = useState(false);
   const [installingDocker, setInstallingDocker] = useState(false);
+  const [uninstallingDocker, setUninstallingDocker] = useState(false);
 
   // Compose YAML creation
   const [composeModal, setComposeModal] = useState(false);
@@ -225,6 +226,20 @@ export default function DockerPage() {
     setInstallingDocker(false);
   };
 
+  const uninstallDocker = async () => {
+    if (!window.confirm("Uninstall Docker? This will remove all containers, images and data. This cannot be undone.")) return;
+    setUninstallingDocker(true);
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/extras/docker/uninstall` : "/extras/docker/uninstall";
+      await api.post(url);
+      toast.success("Docker uninstalled");
+      qc.invalidateQueries({ queryKey: ["docker-version"] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to uninstall Docker");
+    }
+    setUninstallingDocker(false);
+  };
+
   const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
     { id: "containers", label: "Containers", icon: Container },
     { id: "images", label: "Images", icon: Image },
@@ -295,6 +310,15 @@ export default function DockerPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors"
               >
                 <RefreshCw size={14} /> Refresh
+              </button>
+              <button
+                onClick={uninstallDocker}
+                disabled={uninstallingDocker}
+                title="Uninstall Docker"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-500/30 text-red-400 text-sm hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              >
+                {uninstallingDocker ? <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" /> : <Trash2 size={14} />}
+                {uninstallingDocker ? "Uninstalling..." : "Uninstall"}
               </button>
             </>
           )}
