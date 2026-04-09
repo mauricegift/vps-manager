@@ -962,7 +962,13 @@ router.post('/:id/databases/:type/:dbname/change-password', async (req, res) => 
       if (grantCode !== 0) return res.status(500).json({ success: false, error: grantErr || 'Failed to grant privileges' });
       return res.json({ success: true, username: safeUser });
     } else if (type === 'redis') {
-      cmd = `redis-cli CONFIG SET requirepass '${safePwdShell}' 2>&1`;
+      // Set at runtime AND persist to config file (so it survives restarts)
+      cmd = `redis-cli CONFIG SET requirepass '${safePwdShell}' 2>&1; ` +
+        `CONF=$(find /etc/redis -name "*.conf" 2>/dev/null | head -1); ` +
+        `if [ -n "$CONF" ]; then ` +
+        `  grep -q "^requirepass" "$CONF" && sed -i "s/^requirepass.*/requirepass ${safePwdShell}/" "$CONF" || echo "requirepass ${safePwdShell}" >> "$CONF"; ` +
+        `  grep -q "^protected-mode" "$CONF" && sed -i "s/^protected-mode.*/protected-mode no/" "$CONF" || echo "protected-mode no" >> "$CONF"; ` +
+        `fi`;
     } else {
       return res.status(400).json({ success: false, error: 'Unsupported database type' });
     }
