@@ -116,6 +116,7 @@ export default function PM2Page() {
     typeof window !== "undefined" && window.innerWidth < 640 ? 5 : 10
   );
   const [installingPM2, setInstallingPM2] = useState(false);
+  const [uninstallingPM2, setUninstallingPM2] = useState(false);
   const [pm2InstallOutput, setPm2InstallOutput] = useState<string | null>(null);
   const termEndRef = useRef<HTMLDivElement>(null);
   const termContainerRef = useRef<HTMLDivElement>(null);
@@ -287,6 +288,21 @@ export default function PM2Page() {
       if (errOut) setPm2InstallOutput(errOut);
     }
     setInstallingPM2(false);
+  };
+
+  const uninstallPM2 = async () => {
+    if (!window.confirm("Uninstall PM2? All running processes managed by PM2 will be stopped.")) return;
+    setUninstallingPM2(true);
+    try {
+      const url = activeServer ? `/remote/${activeServer.id}/extras/pm2/uninstall` : "/extras/pm2/uninstall";
+      await api.post(url);
+      toast.success("PM2 uninstalled");
+      qc.invalidateQueries({ queryKey: ["pm2-version"] });
+      qc.invalidateQueries({ queryKey: ["pm2"] });
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "Failed to uninstall PM2");
+    }
+    setUninstallingPM2(false);
   };
 
   // ── Saved GitHub tokens (localStorage) ───────────────────────────────────
@@ -529,6 +545,15 @@ export default function PM2Page() {
               <button onClick={() => setStartModal(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--accent)] text-white text-sm hover:opacity-90 transition-opacity">
                 <Plus size={14} /> New Process
+              </button>
+              <button
+                onClick={uninstallPM2}
+                disabled={uninstallingPM2}
+                title="Uninstall PM2"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-500/30 text-red-400 text-sm hover:bg-red-500/10 transition-colors disabled:opacity-50"
+              >
+                {uninstallingPM2 ? <div className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" /> : <Trash2 size={14} />}
+                {uninstallingPM2 ? "Uninstalling..." : "Uninstall"}
               </button>
             </>
           )}
