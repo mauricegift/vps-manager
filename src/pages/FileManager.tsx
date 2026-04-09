@@ -416,7 +416,7 @@ export default function FileManagerPage() {
         if (ghRunInstall) {
           cloneCmd += ` && cd ${JSON.stringify(cloneDest)} && (` +
             `[ -f package.json ] && npm install 2>&1 || ` +
-            `[ -f requirements.txt ] && pip install -r requirements.txt 2>&1 || ` +
+            `[ -f requirements.txt ] && python3 -m venv venv 2>/dev/null && . venv/bin/activate && pip install -r requirements.txt 2>&1 || ` +
             `[ -f install.sh ] && bash install.sh 2>&1 || ` +
             `echo "No recognizable dependency file found")`;
         }
