@@ -1621,45 +1621,45 @@ router.get('/:id/nginx/status', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ error: 'Server not found' });
 
-    // Run all checks in parallel via a single SSH session
-    const [versionR, runningR, certbotR] = await Promise.all([
-      runSSHCommand(conn, 'nginx -v 2>&1 || echo "not installed"'),
-      runSSHCommand(conn, 'systemctl is-active nginx 2>/dev/null || echo inactive'),
-      runSSHCommand(conn, 'certbot --version 2>&1 || echo "not installed"'),
-    ]);
+    // Single SSH command — one round trip for all status info
+    const script = `
+NGINX_VER=$(nginx -v 2>&1 || echo "not installed")
+NGINX_RUNNING=$(systemctl is-active nginx 2>/dev/null || echo "inactive")
+CERTBOT_VER=$(certbot --version 2>&1 || echo "not installed")
+if echo "$NGINX_VER" | grep -qi "nginx" && ! echo "$NGINX_VER" | grep -qi "not installed"; then
+  NGINX_TEST=$(nginx -t 2>&1 || true)
+  NGINX_INST=$(apt-cache policy nginx 2>/dev/null | awk '/Installed:/{print $2}' | head -1 || true)
+  NGINX_CAND=$(apt-cache policy nginx 2>/dev/null | awk '/Candidate:/{print $2}' | head -1 || true)
+fi
+if echo "$CERTBOT_VER" | grep -qi "certbot" && ! echo "$CERTBOT_VER" | grep -qi "not installed"; then
+  CB_INST=$(apt-cache policy certbot 2>/dev/null | awk '/Installed:/{print $2}' | head -1 || true)
+  CB_CAND=$(apt-cache policy certbot 2>/dev/null | awk '/Candidate:/{print $2}' | head -1 || true)
+fi
+printf 'NGINX_VER=%s\n' "$NGINX_VER"
+printf 'NGINX_RUNNING=%s\n' "$NGINX_RUNNING"
+printf 'CERTBOT_VER=%s\n' "$CERTBOT_VER"
+printf 'NGINX_TEST_START\n%s\nNGINX_TEST_END\n' "$NGINX_TEST"
+printf 'NGINX_INST=%s\n' "$NGINX_INST"
+printf 'NGINX_CAND=%s\n' "$NGINX_CAND"
+printf 'CB_INST=%s\n' "$CB_INST"
+printf 'CB_CAND=%s\n' "$CB_CAND"
+`;
+    const b64 = Buffer.from(script, 'utf8').toString('base64');
+    const { stdout } = await runSSHCommand(conn, `bash -c "$(echo '${b64}' | base64 -d)"`);
 
-    const version   = (versionR.stdout + versionR.stderr).trim();
+    const get = (key: string) => stdout.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1]?.trim() ?? '';
+    const version   = get('NGINX_VER');
     const installed = /nginx/i.test(version) && !version.includes('not installed');
-    const running   = runningR.stdout.trim() === 'active';
-
-    let test = '';
-    let configOk = false;
-    if (installed) {
-      const testR = await runSSHCommand(conn, 'nginx -t 2>&1');
-      test     = (testR.stdout + testR.stderr).trim();
-      configOk = test.includes('syntax is ok');
-    }
-
-    const certbotVer      = (certbotR.stdout + certbotR.stderr).trim();
+    const running   = get('NGINX_RUNNING') === 'active';
+    const testMatch = stdout.match(/NGINX_TEST_START\n([\s\S]*?)\nNGINX_TEST_END/);
+    const test      = testMatch?.[1]?.trim() ?? '';
+    const configOk  = test.includes('syntax is ok');
+    const certbotVer       = get('CERTBOT_VER');
     const certbotInstalled = /certbot/i.test(certbotVer) && !certbotVer.includes('not installed');
-
-    // Check for available updates (best-effort)
-    let nginxUpdateAvailable   = false;
-    let certbotUpdateAvailable = false;
-    if (installed) {
-      const ng = await runSSHCommand(conn, 'apt-cache policy nginx 2>/dev/null | grep -E "Installed:|Candidate:" | head -2 || true');
-      const lines = (ng.stdout + ng.stderr).split('\n').map(l => l.trim());
-      const inst = lines.find(l => l.startsWith('Installed:'))?.replace('Installed:', '').trim() ?? '';
-      const cand = lines.find(l => l.startsWith('Candidate:'))?.replace('Candidate:', '').trim() ?? '';
-      nginxUpdateAvailable = !!inst && !!cand && inst !== cand;
-    }
-    if (certbotInstalled) {
-      const cb = await runSSHCommand(conn, 'apt-cache policy certbot 2>/dev/null | grep -E "Installed:|Candidate:" | head -2 || true');
-      const lines = (cb.stdout + cb.stderr).split('\n').map(l => l.trim());
-      const inst = lines.find(l => l.startsWith('Installed:'))?.replace('Installed:', '').trim() ?? '';
-      const cand = lines.find(l => l.startsWith('Candidate:'))?.replace('Candidate:', '').trim() ?? '';
-      certbotUpdateAvailable = !!inst && !!cand && inst !== cand;
-    }
+    const nginxInst  = get('NGINX_INST'); const nginxCand  = get('NGINX_CAND');
+    const cbInst     = get('CB_INST');    const cbCand     = get('CB_CAND');
+    const nginxUpdateAvailable   = !!nginxInst && !!nginxCand && nginxInst !== nginxCand && nginxInst !== '(none)';
+    const certbotUpdateAvailable = !!cbInst && !!cbCand && cbInst !== cbCand && cbInst !== '(none)';
 
     res.json({
       installed, configOk, running, version, testOutput: test,
@@ -1765,11 +1765,13 @@ router.get('/:id/nginx/configs', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ error: 'Server not found' });
-    const avail = (await runSSHCommand(conn, 'ls /etc/nginx/sites-available/ 2>/dev/null || echo ""')).stdout.trim();
-    const enabled = (await runSSHCommand(conn, 'ls /etc/nginx/sites-enabled/ 2>/dev/null || echo ""')).stdout.trim();
-    const enabledSet = new Set(enabled.split('\n').filter(Boolean));
-    const configs = avail.split('\n').filter(Boolean).map(name => ({ name, enabled: enabledSet.has(name) }));
-    res.json({ data: configs });
+    const { stdout } = await runSSHCommand(conn,
+      'echo "AVAIL:$(ls /etc/nginx/sites-available/ 2>/dev/null | tr "\\n" ",")"; ' +
+      'echo "ENABLED:$(ls /etc/nginx/sites-enabled/ 2>/dev/null | tr "\\n" ",")"'
+    );
+    const avail   = stdout.match(/^AVAIL:(.*)$/m)?.[1]?.split(',').filter(Boolean) ?? [];
+    const enabled = new Set(stdout.match(/^ENABLED:(.*)$/m)?.[1]?.split(',').filter(Boolean) ?? []);
+    res.json({ data: avail.map(name => ({ name, enabled: enabled.has(name) })) });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
