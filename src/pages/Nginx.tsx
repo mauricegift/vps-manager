@@ -73,11 +73,14 @@ export default function NginxPage() {
   const [addDomainInput, setAddDomainInput] = useState("");
   const [expandingCert, setExpandingCert] = useState(false);
 
+  const pollInterval = activeServer ? 15000 : 5000;
+
   // Status — refetches when active server changes
   const { data: status, refetch: refetchStatus } = useQuery<NginxStatus>({
     queryKey: ["nginx-status", serverId],
     queryFn: () => api.get(`${base}/status`).then(r => r.data),
-    refetchInterval: 3000,
+    refetchInterval: pollInterval,
+    retry: 1,
   });
 
   // Configs
@@ -85,6 +88,7 @@ export default function NginxPage() {
     queryKey: ["nginx-configs", serverId],
     queryFn: () => api.get(`${base}/configs`).then(r => r.data.data),
     enabled: tab === "configs",
+    retry: 1,
   });
 
   // Certs
@@ -92,6 +96,7 @@ export default function NginxPage() {
     queryKey: ["nginx-certs", serverId],
     queryFn: () => api.get(`${base}/certs`).then(r => r.data),
     enabled: tab === "certs",
+    retry: 1,
   });
   const certs = certsData?.data ?? [];
 
