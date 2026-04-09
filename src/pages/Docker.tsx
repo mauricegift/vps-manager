@@ -91,23 +91,25 @@ export default function DockerPage() {
   const dockerInstalled = versionInfo !== null && versionInfo?.docker?.version;
   const dockerNotInstalled = !versionLoading && versionInfo === null;
 
+  const serverId = activeServer?.id ?? "local";
+
   const containers = useQuery<DockerContainer[]>({
-    queryKey: ["docker-containers"],
+    queryKey: ["docker-containers", serverId],
     queryFn: () => api.get("/docker/containers").then(r => r.data.data),
     refetchInterval: 3000,
-    enabled: !!dockerInstalled,
+    enabled: !!dockerInstalled && !activeServer,
   });
 
   const images = useQuery<DockerImage[]>({
-    queryKey: ["docker-images"],
+    queryKey: ["docker-images", serverId],
     queryFn: () => api.get("/docker/images").then(r => r.data.data),
-    enabled: tab === "images" && !!dockerInstalled,
+    enabled: tab === "images" && !!dockerInstalled && !activeServer,
   });
 
   const compose = useQuery<DockerCompose[]>({
-    queryKey: ["docker-compose"],
+    queryKey: ["docker-compose", serverId],
     queryFn: () => api.get("/docker/compose").then(r => r.data.data),
-    enabled: tab === "compose" && !!dockerInstalled,
+    enabled: tab === "compose" && !!dockerInstalled && !activeServer,
   });
 
   const containerMutation = useMutation({
@@ -325,6 +327,14 @@ export default function DockerPage() {
           )}
         </div>
       </div>
+
+      {/* Remote server notice */}
+      {activeServer && dockerInstalled && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
+          <Container size={14} className="shrink-0 mt-0.5" />
+          <span>Container, image and compose management is only available for the <strong>local server</strong>. Use the Terminal to manage Docker on remote servers. Install and uninstall Docker work for both local and remote.</span>
+        </div>
+      )}
 
       {/* Not installed banner */}
       {dockerNotInstalled && (
