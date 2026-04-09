@@ -1626,6 +1626,31 @@ router.get('/:id/nginx/status', async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+router.post('/:id/nginx/uninstall', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn,
+      'systemctl stop nginx 2>/dev/null || true && ' +
+      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y nginx nginx-common nginx-full 2>&1 && ' +
+      'apt-get autoremove -y 2>&1'
+    );
+    res.json({ ok: true, output: (stdout + stderr).trim() });
+  } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.post('/:id/nginx/certbot/uninstall', async (req, res) => {
+  try {
+    const conn = await getServerConn(req.params.id);
+    if (!conn) return res.status(404).json({ ok: false, error: 'Server not found' });
+    const { stdout, stderr } = await runSSHCommand(conn,
+      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y certbot python3-certbot-nginx 2>&1 && ' +
+      'apt-get autoremove -y 2>&1'
+    );
+    res.json({ ok: true, output: (stdout + stderr).trim() });
+  } catch (e: any) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 router.get('/:id/nginx/configs', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
