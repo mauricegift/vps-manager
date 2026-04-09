@@ -425,6 +425,31 @@ export default function DatabasesPage() {
     setCreatingTable(false);
   };
 
+  // ── Open external access whenever a connection string is copied ───────────────
+  const openExternal = async (type: string) => {
+    if (!activeServer || type === "sqlite") return;
+    const isHighRisk = type === "redis" || type === "mongodb";
+    toast(
+      isHighRisk
+        ? `⚠️ Opening external access for ${type.toUpperCase()} — ensure a strong password is set!`
+        : `Opening firewall for external ${type} access…`,
+      { duration: 4500, icon: isHighRisk ? "🔓" : "🔐" }
+    );
+    try {
+      const { data } = await api.post(`/remote/${activeServer.id}/databases/${type}/allow-external`);
+      const parts: string[] = [];
+      if (data.firewallOpened) parts.push(`port ${data.port} opened`);
+      if (data.bindFixed) parts.push("bind address set to 0.0.0.0");
+      if (data.rateLimited) parts.push("rate limiting enabled (max 20 conn/min per IP)");
+      if (parts.length) toast.success(`External access active: ${parts.join(" · ")}`, { duration: 6000 });
+      if (data.warnings?.length) {
+        data.warnings.forEach((w: string) => toast(w, { icon: "⚠️", duration: 8000 }));
+      }
+    } catch (e: any) {
+      toast.error(`External setup failed: ${e.response?.data?.error ?? e.message}`);
+    }
+  };
+
   const createDatabase = async () => {
     const dbType = browserDb?.type || createDbType;
     if (!dbType || !newDbName.trim()) return;
@@ -746,6 +771,7 @@ export default function DatabasesPage() {
                         navigator.clipboard.writeText(connStr);
                         setChangePwdResultCopied(true);
                         setTimeout(() => setChangePwdResultCopied(false), 2000);
+                        openExternal(changePwdResult.type);
                       }}
                       className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors text-[10px] font-medium"
                     >
@@ -901,6 +927,7 @@ export default function DatabasesPage() {
                       navigator.clipboard.writeText(makeConnStr(browserDb.type, browserDb.name));
                       setBrowserConnCopied(true);
                       setTimeout(() => setBrowserConnCopied(false), 2000);
+                      openExternal(browserDb.type);
                     }}
                     className="shrink-0 text-[var(--muted)] hover:text-[var(--accent)] transition-colors"
                     title="Copy connection string"
@@ -1389,6 +1416,7 @@ export default function DatabasesPage() {
               navigator.clipboard.writeText(val);
               setConnCopied(key);
               setTimeout(() => setConnCopied(null), 2000);
+              openExternal(db.type);
             };
             return (
               <div className="space-y-4">
@@ -1463,15 +1491,21 @@ export default function DatabasesPage() {
                   ))}
                 </div>
                 {/* External access note */}
-                {host === "127.0.0.1" && (
+                {activeServer && db.type !== "sqlite" && (
+                  <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 text-xs text-[var(--muted)]">
+                    <p className="font-semibold text-amber-400 mb-1 flex items-center gap-1">
+                      <span>⚡</span> Automatic External Access
+                    </p>
+                    <p>Copying any string below will automatically open port <code className="font-mono bg-[var(--secondary)] px-1 rounded">{port}</code> in the firewall, update the bind address to <code className="font-mono bg-[var(--secondary)] px-1 rounded">0.0.0.0</code>, and enable rate limiting — so remote clients can connect immediately.</p>
+                    {(db.type === "redis" || db.type === "mongodb") && (
+                      <p className="mt-1 text-orange-400 font-medium">⚠️ {db.type === "redis" ? "Redis has no per-DB auth — set requirepass via Change Password." : "Ensure MongoDB auth is enabled in /etc/mongod.conf."}</p>
+                    )}
+                  </div>
+                )}
+                {!activeServer && host === "127.0.0.1" && (
                   <div className="p-3 rounded-xl bg-[var(--foreground)] border border-[var(--line)] text-xs text-[var(--muted)]">
                     <p className="font-semibold text-[var(--main)] mb-1">Need external access?</p>
-                    <p>To connect from outside this server, you'll need to:</p>
-                    <ol className="list-decimal list-inside mt-1 space-y-0.5">
-                      <li>Change bind-address to <code className="font-mono bg-[var(--secondary)] px-1 rounded">0.0.0.0</code> in the DB config</li>
-                      <li>Open port <code className="font-mono bg-[var(--secondary)] px-1 rounded">{port}</code> in your firewall (UFW)</li>
-                      <li>Then use your server IP: <code className="font-mono bg-[var(--secondary)] px-1 rounded">{activeServer?.ip ?? "YOUR_SERVER_IP"}</code></li>
-                    </ol>
+                    <p>Configure bind-address to <code className="font-mono bg-[var(--secondary)] px-1 rounded">0.0.0.0</code> and open port <code className="font-mono bg-[var(--secondary)] px-1 rounded">{port}</code> in UFW.</p>
                   </div>
                 )}
                 <div className="flex items-center justify-between">
