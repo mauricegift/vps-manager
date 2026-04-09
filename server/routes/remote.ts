@@ -770,7 +770,7 @@ router.get('/:id/databases/firewall-status', async (req, res) => {
 check_port() {
   local port=$1
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw status 2>/dev/null | grep -q "${port}/tcp" && echo 1 || echo 0
+    ufw status 2>/dev/null | grep -q "$port/tcp" && echo 1 || echo 0
   elif command -v iptables >/dev/null 2>&1; then
     iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null && echo 1 || echo 0
   else
