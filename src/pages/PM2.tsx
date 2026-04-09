@@ -130,13 +130,14 @@ export default function PM2Page() {
       const url = activeServer ? `/remote/${activeServer.id}/extras/pm2-version` : "/extras/pm2-version";
       return api.get(url).then(r => r.data.data).catch(() => null);
     },
-    staleTime: 60000,
+    staleTime: 0,
+    refetchInterval: 3000,
   });
 
   const { data: processes = [], isLoading, refetch, isFetching } = useQuery<PM2Process[]>({
     queryKey: ["pm2", activeServer?.id ?? "local"],
     queryFn: () => api.get(`${pfx}/pm2`).then((r) => r.data.data),
-    refetchInterval: 8000,
+    refetchInterval: 3000,
     placeholderData: keepPreviousData,
     enabled: !!versionInfo?.installed,
   });
