@@ -76,6 +76,8 @@ export default function DatabasesPage() {
   const [changePassModal, setChangePassModal] = useState<{ type: string; name: string } | null>(null);
   const [changePwdVal, setChangePwdVal] = useState("");
   const [changePwdLoading, setChangePwdLoading] = useState(false);
+  const [changePwdResult, setChangePwdResult] = useState<{ type: string; name: string; username: string; password: string } | null>(null);
+  const [changePwdResultCopied, setChangePwdResultCopied] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
   // Track dedicated per-database users created via Change Password (persisted)
   const [dbUsers, setDbUsers] = useState<Record<string, string>>(() => {
@@ -498,13 +500,14 @@ export default function DatabasesPage() {
       } else {
         resp = await api.post(`/databases/${type}/${name}/change-password`, { password: changePwdVal });
       }
+      const username = resp?.data?.username || (type === "postgresql" ? "postgres" : type === "redis" ? "" : "root");
       // Store the dedicated username so connection strings update
       if (resp?.data?.username && type !== "redis") {
         const key = `${activeServer?.id ?? "local"}:${type}:${name}`;
         setDbUsers(prev => ({ ...prev, [key]: resp.data.username }));
       }
-      toast.success("Password changed successfully");
-      setChangePassModal(null);
+      // Show success with real connection string
+      setChangePwdResult({ type, name, username, password: changePwdVal });
       setChangePwdVal("");
     } catch (e: any) {
       toast.error(e.response?.data?.error || "Failed to change password");
@@ -711,7 +714,50 @@ export default function DatabasesPage() {
 
       {/* Change Password modal */}
       {changePassModal && (
-        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200}>
+        <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); setChangePwdResult(null); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200}>
+          {changePwdResult ? (() => {
+            const host = activeServer?.ip ?? "127.0.0.1";
+            const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
+            const port = portMap[changePwdResult.type] ?? 5432;
+            const { type, name, username, password } = changePwdResult;
+            let connStr = "";
+            if (type === "postgresql") connStr = `postgresql://${username}:${password}@${host}:${port}/${name}`;
+            else if (type === "mysql" || type === "mariadb") connStr = `mysql://${username}:${password}@${host}:${port}/${name}`;
+            else if (type === "mongodb") connStr = `mongodb://${username}:${password}@${host}:${port}/${name}`;
+            else if (type === "redis") connStr = `redis://:${password}@${host}:${port}/0`;
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                  <div className="w-7 h-7 rounded-full bg-green-500/20 flex items-center justify-center shrink-0">
+                    <Check size={14} className="text-green-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-green-400">Password changed!</p>
+                    <p className="text-xs text-[var(--muted)]">Save your connection string now — the password won't be shown again.</p>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-[var(--muted)] mb-1.5 block font-semibold uppercase tracking-wide">Connection String</label>
+                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--foreground)] border border-green-500/30">
+                    <code className="text-[11px] font-mono flex-1 break-all text-[var(--main)]">{connStr}</code>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(connStr);
+                        setChangePwdResultCopied(true);
+                        setTimeout(() => setChangePwdResultCopied(false), 2000);
+                      }}
+                      className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors text-[10px] font-medium"
+                    >
+                      {changePwdResultCopied ? <><Check size={11} /> Copied!</> : <><Copy size={11} /> Copy</>}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={() => { setChangePassModal(null); setChangePwdResult(null); }} className="px-4 py-2 text-sm rounded-xl bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/25 transition-colors">Done</button>
+                </div>
+              </div>
+            );
+          })() : (
           <div className="space-y-4">
             <div className="p-3 rounded-xl bg-orange-500/5 border border-orange-500/20">
               <p className="text-xs text-[var(--muted)]">
@@ -740,6 +786,7 @@ export default function DatabasesPage() {
               </button>
             </div>
           </div>
+          )}
         </Modal>
       )}
 
