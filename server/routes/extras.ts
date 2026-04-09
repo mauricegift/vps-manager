@@ -835,7 +835,8 @@ router.post('/swap', async (req, res) => {
   const sizeGb = parseInt(req.body.sizeGb);
   if (!sizeGb || sizeGb < 1 || sizeGb > 256) return res.status(400).json({ success: false, error: 'Size must be 1–256 GB' });
   const script = `
-if swapon --show 2>/dev/null | grep -q /swapfile; then swapoff /swapfile 2>/dev/null && rm -f /swapfile; fi
+swapoff /swapfile 2>/dev/null || true
+rm -f /swapfile
 fallocate -l ${sizeGb}G /swapfile 2>&1 || dd if=/dev/zero of=/swapfile bs=1M count=${sizeGb * 1024} status=progress 2>&1
 chmod 600 /swapfile
 mkswap /swapfile 2>&1

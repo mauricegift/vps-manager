@@ -76,7 +76,7 @@ export default function NginxPage() {
   const pollInterval = activeServer ? 15000 : 5000;
 
   // Status — refetches when active server changes
-  const { data: status, refetch: refetchStatus } = useQuery<NginxStatus>({
+  const { data: status, refetch: refetchStatus, isLoading: statusLoading, isError: statusError } = useQuery<NginxStatus>({
     queryKey: ["nginx-status", serverId],
     queryFn: () => api.get(`${base}/status`).then(r => r.data),
     refetchInterval: pollInterval,
@@ -366,7 +366,19 @@ export default function NginxPage() {
       </div>
 
       {/* Status Bar */}
-      {status && (
+      {statusLoading ? (
+        <div className="card p-4 flex items-center gap-3 text-sm text-[var(--muted)] animate-pulse">
+          <div className="w-3 h-3 rounded-full bg-[var(--line)] shrink-0" />
+          <span>Checking nginx status…</span>
+        </div>
+      ) : statusError ? (
+        <div className="card p-4 flex items-center justify-between gap-3">
+          <span className="text-sm text-red-400 flex items-center gap-2">
+            <XCircle size={15} /> Could not reach server — check SSH connection
+          </span>
+          <button onClick={() => refetchStatus()} className="btn-secondary text-xs px-3 py-1.5">Retry</button>
+        </div>
+      ) : status && (
         <div className="card p-4 space-y-3">
           {/* Nginx row */}
           <div className="flex flex-wrap items-center gap-3">
@@ -840,15 +852,43 @@ export default function NginxPage() {
           </div>
           {issueForm.method === "webroot" && (
             <div>
-              <label className="block text-xs text-[var(--muted)] mb-1.5">Webroot path</label>
+              <label className="block text-xs text-[var(--muted)] mb-1.5">
+                Webroot path <span className="text-[var(--accent)]">(where Nginx serves static files)</span>
+              </label>
               <input
                 className={inp}
                 value={issueForm.webrootPath}
                 onChange={e => setIssueForm(f => ({ ...f, webrootPath: e.target.value }))}
                 placeholder="/var/www/html"
               />
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {["/var/www/html", "/var/www/letsencrypt", "/srv/www", "/usr/share/nginx/html"].map(p => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setIssueForm(f => ({ ...f, webrootPath: p }))}
+                    className={`text-[10px] font-mono px-2 py-1 rounded-lg border transition-colors ${issueForm.webrootPath === p ? "border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]" : "border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)]"}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-[var(--muted)] mt-1.5">
+                This directory must be served by Nginx on port 80. Certbot places a challenge file there to verify domain ownership.
+              </p>
             </div>
           )}
+          <div className="bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-3 space-y-2">
+            <p className="text-xs font-semibold text-[var(--main)]">📋 Setup checklist</p>
+            <ol className="text-[10px] text-[var(--muted)] space-y-1 list-decimal list-inside">
+              <li>Point your domain's <strong>A record</strong> to <code className="font-mono bg-[var(--secondary)] px-1 rounded">{activeServer ? activeServer.ip : "this server's IP"}</code> in your DNS provider</li>
+              <li>Wait for DNS propagation (use <code className="font-mono bg-[var(--secondary)] px-1 rounded">dig yourdomain.com</code> to check)</li>
+              <li>Create an Nginx config for your domain in the <strong>Configs</strong> tab (port 80 block)</li>
+              <li>Ensure Nginx is running and serving on port 80</li>
+              <li>Click <strong>Issue Certificate</strong> below — certbot will verify and install SSL</li>
+              <li>Certbot will update your Nginx config to redirect HTTP → HTTPS automatically</li>
+            </ol>
+          </div>
           <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-700 dark:text-amber-400 flex gap-2">
             <AlertTriangle size={13} className="shrink-0 mt-0.5" />
             <span>

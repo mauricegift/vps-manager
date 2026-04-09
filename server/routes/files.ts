@@ -190,6 +190,11 @@ const ZIP_EXCLUDE = [
   '*/node_modules/*', '*/.git/*', '*/.npm/*', '*/.agents/*',
   '*/attached_assets/*', '*/replit.md', '*/replit.nix', '*/.replit',
   '*/bun.lock', '*/package-lock.json',
+  '*/__pycache__/*', '*/*.pyc', '*/.mypy_cache/*',
+  '*/dist/*', '*/build/*', '*/.next/*',
+  '*/target/*', '*/vendor/*',
+  '*/venv/*', '*/.venv/*',
+  '*/*.egg-info/*',
 ].map(p => `-x "${p}"`).join(' ');
 
 router.post('/zip', async (req, res) => {

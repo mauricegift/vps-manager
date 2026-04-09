@@ -154,7 +154,7 @@ export default function PM2Page() {
     onSuccess: (_, { action }) => {
       const label = action === "delete" ? "deleted" : action + "ed";
       toast.success(`Process ${label}`);
-      qc.invalidateQueries({ queryKey: ["pm2"] });
+      qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local"] });
       setConfirm(null);
     },
     onError: () => toast.error("Action failed"),
@@ -192,15 +192,27 @@ export default function PM2Page() {
   };
 
   const startMutation = useMutation({
-    mutationFn: (body: typeof startForm) => {
+    mutationFn: async (body: typeof startForm) => {
       const isSh = body.script.trim().endsWith(".sh");
       const envPairs = startEnvVars.filter(e => e.key.trim());
       if (activeServer) {
         let pm2Cmd = `pm2 start "${body.script}" --name "${body.name}"`;
         if (isSh) pm2Cmd += ` --interpreter bash`;
         if (body.cwd) pm2Cmd += ` --cwd "${body.cwd}"`;
-        if (body.port) pm2Cmd += ` --env PORT=${body.port}`;
-        envPairs.forEach(({ key, value }) => { pm2Cmd += ` --env ${key.trim()}=${value}`; });
+        // Write port and env vars to .env file on remote when cwd is provided
+        if (body.cwd && (body.port || envPairs.length > 0)) {
+          const dotenvLines = envPairs.map(({ key, value }) => `${key.trim()}=${value}`);
+          if (body.port) dotenvLines.unshift(`PORT=${body.port}`);
+          const writeEnvCmd = `touch "${body.cwd}/.env" && ${dotenvLines.map(line => {
+            const [k, ...rest] = line.split("=");
+            const v = rest.join("=");
+            return `grep -q '^${k}=' "${body.cwd}/.env" && sed -i 's|^${k}=.*|${line}|' "${body.cwd}/.env" || echo '${line}' >> "${body.cwd}/.env"`;
+          }).join(" && ")}`;
+          await api.post(`/remote/${activeServer.id}/exec`, { command: writeEnvCmd });
+        } else {
+          if (body.port) pm2Cmd += ` --env PORT=${body.port}`;
+          envPairs.forEach(({ key, value }) => { pm2Cmd += ` --env ${key.trim()}=${value}`; });
+        }
         let fullCmd = pm2Cmd;
         if (installDepsBeforeStart && body.cwd) {
           const installCmd = pkgManager === "bun"
@@ -208,6 +220,7 @@ export default function PM2Page() {
             : `cd "${body.cwd}" && npm install`;
           fullCmd = `${installCmd} 2>&1 && ${pm2Cmd}`;
         }
+        fullCmd += ` && pm2 save`;
         return api.post(`/remote/${activeServer.id}/exec`, { command: fullCmd });
       }
       return api.post("/pm2/start", {
@@ -220,7 +233,7 @@ export default function PM2Page() {
     },
     onSuccess: () => {
       toast.success("Process started");
-      qc.invalidateQueries({ queryKey: ["pm2"] });
+      qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local"] });
       setStartModal(false);
       setStartForm({ name: "", script: "", cwd: "", port: "" });
       setStartEnvVars([]);
@@ -284,8 +297,8 @@ export default function PM2Page() {
       const { data } = await api.post(url);
       toast.success("PM2 installed successfully");
       if (data.output) setPm2InstallOutput(data.output);
-      qc.invalidateQueries({ queryKey: ["pm2-version"] });
-      qc.invalidateQueries({ queryKey: ["pm2"] });
+      await qc.refetchQueries({ queryKey: ["pm2-version", activeServer?.id ?? "local"] });
+      await qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local"] });
     } catch (e: any) {
       const errMsg = e.response?.data?.error || "Failed to install PM2";
       const errOut = e.response?.data?.output;
@@ -302,8 +315,8 @@ export default function PM2Page() {
       const url = activeServer ? `/remote/${activeServer.id}/extras/pm2/uninstall` : "/extras/pm2/uninstall";
       await api.post(url);
       toast.success("PM2 uninstalled");
-      qc.invalidateQueries({ queryKey: ["pm2-version"] });
-      qc.invalidateQueries({ queryKey: ["pm2"] });
+      await qc.refetchQueries({ queryKey: ["pm2-version", activeServer?.id ?? "local"] });
+      qc.setQueryData(["pm2", activeServer?.id ?? "local"], []);
     } catch (e: any) {
       toast.error(e.response?.data?.error || "Failed to uninstall PM2");
     }
@@ -372,7 +385,10 @@ export default function PM2Page() {
         : await api.get("/files", { params: { path: dir } });
       setBrowseItems(data.data || []);
       setBrowsePath(dir);
-    } catch { toast.error("Cannot open folder"); }
+    } catch (e: any) {
+      setBrowseItems([]);
+      toast.error(e.response?.data?.error || "Cannot open folder");
+    }
     setBrowseLoading(false);
   };
 
@@ -879,20 +895,22 @@ export default function PM2Page() {
             <>
               <div>
                 <label className="block text-xs text-[var(--muted)] mb-1.5">Script / Entry File</label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <input value={startForm.script}
                     onChange={(e) => { setStartForm(s => ({ ...s, script: e.target.value })); setScriptCheck(null); }}
-                    placeholder="/root/web/my-app/server.js" className={`flex-1 ${inp} font-mono text-xs`} required />
-                  <button type="button" onClick={() => openBrowse("script", startForm.cwd || undefined)}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors">
-                    <Folder size={13} /> Browse
-                  </button>
-                  <button type="button" onClick={checkScript} disabled={!startForm.script || checkingScript}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors disabled:opacity-40"
-                    title="Verify file exists">
-                    {checkingScript ? <Loader2 size={13} className="animate-spin" /> : <SearchCheck size={13} />}
-                    Verify
-                  </button>
+                    placeholder="/root/web/my-app/server.js" className={`flex-1 min-w-0 ${inp} font-mono text-xs`} required />
+                  <div className="flex gap-2 shrink-0">
+                    <button type="button" onClick={() => openBrowse("script", startForm.cwd || undefined)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors">
+                      <Folder size={13} /> Browse
+                    </button>
+                    <button type="button" onClick={checkScript} disabled={!startForm.script || checkingScript}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors disabled:opacity-40"
+                      title="Verify file exists">
+                      {checkingScript ? <Loader2 size={13} className="animate-spin" /> : <SearchCheck size={13} />}
+                      Verify
+                    </button>
+                  </div>
                 </div>
                 {scriptCheck !== null && (
                   <div className={`flex items-center gap-1.5 mt-1.5 text-xs ${scriptCheck.ok ? "text-green-400" : "text-red-400"}`}>
@@ -1107,16 +1125,52 @@ export default function PM2Page() {
 
           {/* Environment Variables */}
           <div>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
               <label className="text-xs text-[var(--muted)]">Environment Variables <span className="opacity-60">(optional)</span></label>
-              <button type="button"
-                onClick={() => setStartEnvVars(v => [...v, { key: "", value: "" }])}
-                className="flex items-center gap-1 text-xs text-[var(--accent)] hover:opacity-80 transition-opacity">
-                <PlusCircle size={12} /> Add Variable
-              </button>
+              <div className="flex gap-2">
+                <button type="button"
+                  onClick={() => {
+                    const text = window.prompt("Paste .env content or JSON ({\"KEY\":\"val\"}):");
+                    if (!text) return;
+                    const trimmed = text.trim();
+                    const parsed: { key: string; value: string }[] = [];
+                    if (trimmed.startsWith("{")) {
+                      try {
+                        const obj = JSON.parse(trimmed);
+                        for (const [k, v] of Object.entries(obj)) parsed.push({ key: k, value: String(v) });
+                      } catch { toast.error("Invalid JSON"); return; }
+                    } else {
+                      for (const line of trimmed.split("\n")) {
+                        const l = line.trim();
+                        if (!l || l.startsWith("#")) continue;
+                        const eqIdx = l.indexOf("=");
+                        if (eqIdx < 1) continue;
+                        parsed.push({ key: l.slice(0, eqIdx).trim(), value: l.slice(eqIdx + 1).trim() });
+                      }
+                    }
+                    if (parsed.length === 0) { toast.error("No variables parsed"); return; }
+                    setStartEnvVars(v => {
+                      const merged = [...v];
+                      for (const p of parsed) {
+                        const idx = merged.findIndex(x => x.key === p.key);
+                        if (idx >= 0) merged[idx] = p; else merged.push(p);
+                      }
+                      return merged;
+                    });
+                    toast.success(`${parsed.length} variable${parsed.length !== 1 ? "s" : ""} imported`);
+                  }}
+                  className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--main)] border border-[var(--line)] rounded-lg px-2 py-1 transition-colors">
+                  <CornerDownRight size={11} /> Import .env
+                </button>
+                <button type="button"
+                  onClick={() => setStartEnvVars(v => [...v, { key: "", value: "" }])}
+                  className="flex items-center gap-1 text-xs text-[var(--accent)] hover:opacity-80 transition-opacity">
+                  <PlusCircle size={12} /> Add Variable
+                </button>
+              </div>
             </div>
             {startEnvVars.length === 0 ? (
-              <p className="text-[10px] text-[var(--muted)] italic">No env vars — click "Add Variable" to add KEY=VALUE pairs</p>
+              <p className="text-[10px] text-[var(--muted)] italic">No env vars — click "Add Variable" or "Import .env" to add KEY=VALUE pairs</p>
             ) : (
               <div className="space-y-2">
                 {startEnvVars.map((ev, i) => (

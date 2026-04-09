@@ -60,8 +60,29 @@ router.post('/start', async (req, res) => {
     let cmd = `pm2 start "${script}" --name "${name}"`;
     if (isSh || interpreter === 'bash') cmd += ' --interpreter bash';
     if (cwd) cmd += ` --cwd "${cwd}"`;
-    if (port) cmd += ` --env PORT=${port}`;
-    if (Array.isArray(envVars)) {
+    // Write PORT and env vars to .env file in cwd instead of passing as --env flags
+    if (cwd && (port || (Array.isArray(envVars) && envVars.some((e: any) => e.key?.trim())))) {
+      const { readFileSync, writeFileSync, existsSync } = await import('fs');
+      const dotenvPath = `${cwd}/.env`;
+      let existing = '';
+      try { existing = existsSync(dotenvPath) ? readFileSync(dotenvPath, 'utf-8') : ''; } catch { existing = ''; }
+      const lines = existing ? existing.split('\n') : [];
+      const setVar = (k: string, v: string) => {
+        const idx = lines.findIndex(l => l.startsWith(`${k}=`) || l.startsWith(`${k} =`));
+        if (idx >= 0) lines[idx] = `${k}=${v}`;
+        else lines.push(`${k}=${v}`);
+      };
+      if (port) setVar('PORT', port);
+      if (Array.isArray(envVars)) {
+        for (const { key, value } of envVars) {
+          if (key && key.trim()) setVar(key.trim(), value || '');
+        }
+      }
+      writeFileSync(dotenvPath, lines.join('\n').replace(/\n+$/, '') + '\n', 'utf-8');
+    } else if (!cwd && port) {
+      cmd += ` --env PORT=${port}`;
+    }
+    if (!cwd && Array.isArray(envVars)) {
       for (const { key, value } of envVars) {
         if (key && key.trim()) cmd += ` --env ${key.trim()}=${value || ''}`;
       }

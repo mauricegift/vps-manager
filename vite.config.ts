@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5758,
+    port: 5000,
     host: true,
     allowedHosts: true,
     watch: {

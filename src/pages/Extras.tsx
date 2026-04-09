@@ -239,6 +239,71 @@ function SysUpdateCard({ onRun, loading }: { onRun: (action: 'update' | 'upgrade
 
 const inp = "w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] transition-colors";
 
+function WranglerRemotePanel({ activeServer, runCloudCmd, cloudOutput, cloudLoading }: {
+  activeServer: { id: string; ip: string; username: string };
+  runCloudCmd: (key: string, cmd: string) => void;
+  cloudOutput: Record<string, string>;
+  cloudLoading: string | null;
+}) {
+  const [cfToken, setCfToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
+
+  const run = (key: string, subCmd: string) => {
+    if (!cfToken.trim()) {
+      alert("Please enter your Cloudflare API Token first.");
+      return;
+    }
+    const cmd = `CLOUDFLARE_API_TOKEN="${cfToken.trim()}" wrangler ${subCmd} 2>&1`;
+    runCloudCmd(key, cmd);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="text-xs text-[var(--muted)] mb-1.5 block">Cloudflare API Token</label>
+        <div className="relative">
+          <input
+            type={showToken ? "text" : "password"}
+            value={cfToken}
+            onChange={e => setCfToken(e.target.value)}
+            placeholder="Enter CLOUDFLARE_API_TOKEN"
+            className="w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] transition-colors pr-10"
+          />
+          <button
+            type="button"
+            onClick={() => setShowToken(s => !s)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--main)] transition-colors"
+          >
+            {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
+        <p className="text-[10px] text-[var(--muted)] mt-1">Token is passed as env var for each command — not stored on the remote server.</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {[
+          { key: "wr-whoami",  label: "whoami",         sub: "whoami" },
+          { key: "wr-list",    label: "List Workers",   sub: "worker list" },
+          { key: "wr-pages",   label: "List Pages",     sub: "pages project list" },
+          { key: "wr-kv",      label: "List KV",        sub: "kv:namespace list" },
+        ].map(({ key, label, sub }) => (
+          <button
+            key={key}
+            onClick={() => run(key, sub)}
+            disabled={!!cloudLoading || !cfToken.trim()}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
+          >
+            {cloudLoading === key ? <Loader2 size={11} className="animate-spin" /> : null}
+            {label}
+          </button>
+        ))}
+      </div>
+      {Object.entries(cloudOutput).filter(([k]) => k.startsWith("wr-")).map(([k, v]) =>
+        v ? <pre key={k} className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-40 overflow-y-auto">{v}</pre> : null
+      )}
+    </div>
+  );
+}
+
 export default function ExtrasPage() {
   const qc = useQueryClient();
   const { activeServer } = useRemoteServer();
@@ -786,12 +851,22 @@ export default function ExtrasPage() {
           <div className="space-y-2">
             <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Login Banner (MOTD)</p>
             <div className="glass-card p-5 flex flex-col gap-3 max-w-2xl">
-              <div className="flex items-start gap-3">
-                <div className="text-2xl">📋</div>
-                <div>
-                  <div className="font-semibold text-sm">Message of the Day</div>
-                  <div className="text-[11px] text-[var(--muted)] mt-0.5">Displayed when users SSH into the server</div>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-start gap-3">
+                  <div className="text-2xl">📋</div>
+                  <div>
+                    <div className="font-semibold text-sm">Message of the Day</div>
+                    <div className="text-[11px] text-[var(--muted)] mt-0.5">Displayed when users SSH into the server</div>
+                  </div>
                 </div>
+                {motdQuery.data?.motd && (
+                  <button
+                    onClick={() => setOutputModal({ title: "Current /etc/motd", output: motdQuery.data!.motd })}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors shrink-0"
+                  >
+                    <Eye size={12} /> View Current MOTD
+                  </button>
+                )}
               </div>
               <div className="flex gap-2">
                 {(["motd", "script"] as const).map(m => (
@@ -811,7 +886,7 @@ export default function ExtrasPage() {
                 placeholder={motdMode === "motd" ? "Enter static MOTD text..." : "#!/bin/bash\necho 'Welcome to my server'"}
                 className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] transition-colors resize-y"
               />
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <button
                   onClick={saveMotd}
                   disabled={motdSaving}
@@ -819,6 +894,15 @@ export default function ExtrasPage() {
                 >
                   {motdSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
                   {motdSaving ? "Saving..." : "Save MOTD"}
+                </button>
+                <button
+                  onClick={() => {
+                    if (motdQuery.data?.motd) setMotdContent(motdQuery.data.motd);
+                  }}
+                  disabled={!motdQuery.data?.motd}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-40 transition-colors"
+                >
+                  <Eye size={12} /> Load Current
                 </button>
                 <button
                   onClick={clearMotd}
@@ -899,7 +983,7 @@ export default function ExtrasPage() {
                   <ToolCard
                     key={tool.id}
                     tool={tool}
-                    loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}` || opLoading === `uninstall-${tool.id}`}
+                    loading={!!opLoading}
                     onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
                     onUpdate={() => handleUpdate(tool)}
                     onUninstall={() => handleUninstall(tool)}
@@ -914,7 +998,7 @@ export default function ExtrasPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {extraTools.map(tool => (
                       <ToolCard key={tool.id} tool={tool}
-                        loading={opLoading === `install-${tool.id}` || opLoading === `update-${tool.id}` || opLoading === `uninstall-${tool.id}`}
+                        loading={!!opLoading}
                         onInstall={(nodeVer) => handleInstall(tool, nodeVer)}
                         onUpdate={() => handleUpdate(tool)}
                         onUninstall={() => handleUninstall(tool)}
@@ -939,15 +1023,16 @@ export default function ExtrasPage() {
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {[
-                            { key: "ts-status",   label: "Status",    cmd: "tailscale status 2>&1" },
-                            { key: "ts-up",       label: "Connect",   cmd: "tailscale up 2>&1" },
-                            { key: "ts-down",     label: "Disconnect",cmd: "tailscale down 2>&1" },
-                            { key: "ts-ip",       label: "Show IP",   cmd: "tailscale ip 2>&1" },
+                            { key: "ts-status",   label: "Status",       cmd: "tailscale status 2>&1" },
+                            { key: "ts-up",       label: "Connect",      cmd: "tailscale up --accept-routes 2>&1; echo; echo 'Tip: if you see an auth URL above, open it in a browser to authenticate this node.'" },
+                            { key: "ts-down",     label: "Disconnect",   cmd: "tailscale down 2>&1" },
+                            { key: "ts-ip",       label: "Show IP",      cmd: "tailscale ip 2>&1" },
+                            { key: "ts-routes",   label: "Routes Info",  cmd: "tailscale status --json 2>&1 | python3 -c \"import sys,json; d=json.load(sys.stdin); [print(k,':',v) for k,v in d.items() if k in ['BackendState','TailscaleIPs','Self']]\" 2>/dev/null || tailscale status 2>&1" },
                           ].map(({ key, label, cmd }) => (
                             <button
                               key={key}
                               onClick={() => runCloudCmd(key, cmd)}
-                              disabled={cloudLoading === key}
+                              disabled={!!cloudLoading}
                               className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
                             >
                               {cloudLoading === key ? <Loader2 size={11} className="animate-spin" /> : null}
@@ -955,11 +1040,23 @@ export default function ExtrasPage() {
                             </button>
                           ))}
                         </div>
-                        {(cloudOutput["ts-status"] || cloudOutput["ts-up"] || cloudOutput["ts-down"] || cloudOutput["ts-ip"]) && (
-                          <pre className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-40 overflow-y-auto">
-                            {cloudOutput["ts-status"] || cloudOutput["ts-up"] || cloudOutput["ts-down"] || cloudOutput["ts-ip"]}
-                          </pre>
+                        {Object.entries(cloudOutput).filter(([k]) => k.startsWith("ts-")).map(([k, v]) =>
+                          v ? (
+                            <div key={k}>
+                              {cloudOutput["ts-up"] && k === "ts-up" && cloudOutput["ts-up"].includes("https://") && (
+                                <div className="flex items-start gap-2 p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-300 mb-2">
+                                  <span className="shrink-0">💡</span>
+                                  <span>An auth URL was returned — open it in a browser to authenticate this node with your Tailscale account. After logging in, run <strong>Status</strong> to confirm it's connected.</span>
+                                </div>
+                              )}
+                              <pre className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-48 overflow-y-auto">{v}</pre>
+                            </div>
+                          ) : null
                         )}
+                        <div className="text-[10px] text-[var(--muted)] space-y-0.5 pt-1 border-t border-[var(--line)]">
+                          <p><strong>Tip:</strong> Use <code className="font-mono bg-[var(--foreground)] px-1 rounded">--advertise-routes=10.0.0.0/24</code> to share subnets.</p>
+                          <p>Use <code className="font-mono bg-[var(--foreground)] px-1 rounded">--accept-routes</code> to receive routes from other nodes.</p>
+                        </div>
                       </div>
                     )}
                     {cfdInstalled && (
@@ -968,18 +1065,26 @@ export default function ExtrasPage() {
                           <span className="text-lg">🌐</span>
                           <h3 className="font-semibold text-sm">Cloudflare Tunnel Management</h3>
                         </div>
+                        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 space-y-1">
+                          <p><strong>Setup required before starting:</strong></p>
+                          <p>1. Run <code className="font-mono bg-[var(--foreground)] px-1 rounded">cloudflared tunnel login</code> to authenticate</p>
+                          <p>2. Run <code className="font-mono bg-[var(--foreground)] px-1 rounded">cloudflared tunnel create &lt;name&gt;</code> to create a tunnel</p>
+                          <p>3. Configure <code className="font-mono bg-[var(--foreground)] px-1 rounded">~/.cloudflared/config.yml</code> with tunnel ID and ingress rules</p>
+                          <p>4. Then start the service below</p>
+                        </div>
                         <div className="flex flex-wrap gap-2">
                           {[
                             { key: "cfd-version",  label: "Version",      cmd: "cloudflared --version 2>&1" },
+                            { key: "cfd-login",    label: "Login",        cmd: "cloudflared tunnel login 2>&1" },
                             { key: "cfd-tunnels",  label: "List Tunnels", cmd: "cloudflared tunnel list 2>&1" },
-                            { key: "cfd-status",   label: "Service Status",cmd: "systemctl status cloudflared 2>&1 | head -20" },
-                            { key: "cfd-start",    label: "Start Service", cmd: "systemctl start cloudflared 2>&1 && echo 'Started'" },
-                            { key: "cfd-stop",     label: "Stop Service",  cmd: "systemctl stop cloudflared 2>&1 && echo 'Stopped'" },
+                            { key: "cfd-status",   label: "Service Status",cmd: "systemctl status cloudflared 2>&1 | head -30" },
+                            { key: "cfd-start",    label: "Start Service", cmd: "systemctl start cloudflared 2>&1 && echo '✓ Started' || (echo '✗ Failed — ensure tunnel is configured in ~/.cloudflared/config.yml first' && systemctl status cloudflared --no-pager 2>&1 | tail -20)" },
+                            { key: "cfd-stop",     label: "Stop Service",  cmd: "systemctl stop cloudflared 2>&1 && echo '✓ Stopped'" },
                           ].map(({ key, label, cmd }) => (
                             <button
                               key={key}
                               onClick={() => runCloudCmd(key, cmd)}
-                              disabled={cloudLoading === key}
+                              disabled={!!cloudLoading}
                               className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
                             >
                               {cloudLoading === key ? <Loader2 size={11} className="animate-spin" /> : null}
@@ -989,11 +1094,28 @@ export default function ExtrasPage() {
                         </div>
                         {Object.entries(cloudOutput).filter(([k]) => k.startsWith("cfd-")).map(([k, v]) => (
                           v ? (
-                            <pre key={k} className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-40 overflow-y-auto">{v}</pre>
+                            <pre key={k} className="text-[10px] font-mono text-[var(--muted)] bg-[var(--foreground)] border border-[var(--line)] rounded-xl p-2.5 max-h-48 overflow-y-auto">{v}</pre>
                           ) : null
                         ))}
                       </div>
                     )}
+                  </div>
+                );
+              })()}
+              {subTab === "cloud" && activeServer && (() => {
+                const wranglerInstalled = tools.find(t => t.id === "wrangler")?.installed;
+                if (!wranglerInstalled) return null;
+                return (
+                  <div className="glass-card p-5 space-y-3 border border-[var(--accent)]/20">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">☁️</span>
+                      <h3 className="font-semibold text-sm">Wrangler (Remote)</h3>
+                      <span className="text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">Requires API Token</span>
+                    </div>
+                    <p className="text-[11px] text-[var(--muted)]">
+                      Wrangler commands on a remote server require a Cloudflare API Token. Enter it below to run commands with the correct credentials.
+                    </p>
+                    <WranglerRemotePanel activeServer={activeServer} runCloudCmd={runCloudCmd} cloudOutput={cloudOutput} cloudLoading={cloudLoading} />
                   </div>
                 );
               })()}
