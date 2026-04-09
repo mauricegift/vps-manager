@@ -438,7 +438,7 @@ export default function PM2Page() {
           ? `https://${ghToken}@github.com/${ghRepoInfo.owner}/${ghRepoInfo.repo}.git`
           : `https://github.com/${ghRepoInfo.owner}/${ghRepoInfo.repo}.git`;
         const installCmd = ghRunInstall
-          ? (ghRepoInfo.hasPackageJson ? " && npm install 2>&1" : ghRepoInfo.hasRequirementsTxt ? " && pip install -r requirements.txt 2>&1" : "")
+          ? (ghRepoInfo.hasPackageJson ? " && npm install 2>&1" : ghRepoInfo.hasRequirementsTxt ? " && python3 -m venv venv 2>/dev/null && . venv/bin/activate && pip install -r requirements.txt 2>&1" : "")
           : "";
         const cmd = `mkdir -p "$(dirname "${ghCloneDir}")" && git clone "${cloneUrl}" "${ghCloneDir}" 2>&1${installCmd}`;
         const { data } = await api.post(`/remote/${activeServer.id}/exec`, { command: cmd });
