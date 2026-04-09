@@ -1354,7 +1354,7 @@ router.post('/:id/extras/:tool/uninstall', async (req, res) => {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
     const b64 = Buffer.from(cmd, 'utf8').toString('base64');
-    const { stdout, stderr } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`);
+    const { stdout, stderr } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`, 300000);
     res.json({ success: true, output: (stdout + stderr).trim() });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -1369,7 +1369,7 @@ router.post('/:id/extras/system-update', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const { stdout, stderr } = await runSSHCommand(conn, cmd);
+    const { stdout, stderr } = await runSSHCommand(conn, cmd, 300000);
     res.json({ success: true, output: stdout + stderr });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -1430,7 +1430,7 @@ router.post('/:id/extras/:tool/install', async (req, res) => {
     const b64 = Buffer.from(fullScript, 'utf8').toString('base64');
     let output = '';
     let execFailed = false;
-    const { stdout, stderr, code } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`);
+    const { stdout, stderr, code } = await runSSHCommand(conn, `bash -l -c "$(echo '${b64}' | base64 -d)"`, 300000);
     output = (stdout + stderr).trim();
     execFailed = code !== 0;
 
@@ -1461,7 +1461,7 @@ router.post('/:id/extras/:tool/update', async (req, res) => {
   try {
     const conn = await getServerConn(req.params.id);
     if (!conn) return res.status(404).json({ success: false, error: 'Server not found' });
-    const { stdout, stderr } = await runSSHCommand(conn, cmd);
+    const { stdout, stderr } = await runSSHCommand(conn, cmd, 300000);
     res.json({ success: true, output: stdout + stderr });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
