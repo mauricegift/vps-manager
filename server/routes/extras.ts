@@ -325,6 +325,22 @@ if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium-browser); fi
 if [ -z "$CHROME_P" ]; then CHROME_P=$(find_bin chromium); fi
 emit chrome "$CHROME_P" "--version"
 emit wrangler "$(find_bin wrangler)"
+# venv: check if python3 venv module is importable
+if python3 -c "import venv" >/dev/null 2>&1; then
+  emit venv "$(find_bin python3)"
+else
+  echo "MISSING:venv"
+fi
+emit ffmpeg "$(find_bin ffmpeg)"
+# libuuid-dev: dpkg check (no binary)
+if dpkg -s libuuid-dev >/dev/null 2>&1; then
+  LUUID_VER=$(dpkg -s libuuid-dev 2>/dev/null | awk '/^Version:/{print $2}' | head -1)
+  echo "TOOL:libuuid:/usr/lib/x86_64-linux-gnu/libuuid.so:\${LUUID_VER:-?}"
+else
+  echo "MISSING:libuuid"
+fi
+emit cloudflared "$(find_bin cloudflared)"
+emit tailscale "$(find_bin tailscale)"
 systemctl is-active nginx 2>/dev/null || echo "svc_nginx_inactive"
 systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null || echo "svc_apache_inactive"
 `;
@@ -380,6 +396,11 @@ systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null
       { id: 'unzip', name: 'unzip', icon: '📂', category: 'tool', description: 'ZIP extraction utility', latestVersion: null, updateAvailable: false, ...t('unzip') },
       { id: 'chrome', name: 'Google Chrome', icon: '🌐', category: 'browser', description: 'Google Chrome web browser with headless support', latestVersion: null, updateAvailable: false, ...t('chrome') },
       { id: 'wrangler', name: 'Wrangler', icon: '☁️', category: 'tool', description: 'Cloudflare Workers CLI for deploying to the edge', latestVersion: null, updateAvailable: false, ...t('wrangler') },
+      { id: 'venv', name: 'Python venv', icon: '🐍', category: 'tool', description: 'Python virtual environment module (python3-venv)', latestVersion: null, updateAvailable: false, ...t('venv') },
+      { id: 'ffmpeg', name: 'FFmpeg', icon: '🎬', category: 'tool', description: 'Multimedia framework for video/audio processing', latestVersion: null, updateAvailable: false, ...t('ffmpeg') },
+      { id: 'libuuid', name: 'libuuid-dev', icon: '🔑', category: 'tool', description: 'UUID library dev headers (required for node-canvas)', latestVersion: null, updateAvailable: false, ...t('libuuid') },
+      { id: 'cloudflared', name: 'Cloudflare Tunnel', icon: '🌐', category: 'tool', description: 'Cloudflare Tunnel daemon for secure tunneling', latestVersion: null, updateAvailable: false, ...t('cloudflared') },
+      { id: 'tailscale', name: 'Tailscale', icon: '🔒', category: 'tool', description: 'Zero-config VPN for secure mesh networking', latestVersion: null, updateAvailable: false, ...t('tailscale') },
     ];
     res.json({ success: true, data });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
@@ -450,6 +471,14 @@ const INSTALL_CMDS: Record<string, (opts: any) => string> = {
     `echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list 2>&1 && ` +
     `apt-get update -qq 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y google-chrome-stable 2>&1`,
   wrangler: () => `npm install -g wrangler`,
+  venv: () => `PY_VER=$(python3 --version 2>/dev/null | grep -oP '\\d+\\.\\d+'); DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3.\${PY_VER}-venv 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv 2>&1`,
+  ffmpeg: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg`,
+  libuuid: () => `DEBIAN_FRONTEND=noninteractive apt-get install -y libuuid-dev uuid-runtime`,
+  cloudflared: () =>
+    `curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | gpg --dearmor -o /usr/share/keyrings/cloudflare-main.gpg 2>&1 && ` +
+    `echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared \$(lsb_release -sc 2>/dev/null || echo focal) main" | tee /etc/apt/sources.list.d/cloudflared.list 2>&1 && ` +
+    `apt-get update -qq 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y cloudflared 2>&1`,
+  tailscale: () => `curl -fsSL https://tailscale.com/install.sh | sh 2>&1`,
   docker: () =>
     `curl -fsSL https://get.docker.com | sh 2>&1 && systemctl enable docker 2>&1 && systemctl start docker 2>&1`,
 };
@@ -483,6 +512,11 @@ const UPDATE_CMDS: Record<string, string> = {
   unzip:  'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade unzip',
   chrome: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade google-chrome-stable',
   wrangler: 'npm install -g wrangler@latest',
+  venv: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade python3-venv',
+  ffmpeg: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade ffmpeg',
+  libuuid: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade libuuid-dev',
+  cloudflared: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade cloudflared',
+  tailscale: 'DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade tailscale',
 };
 
 const UNINSTALL_CMDS: Record<string, string> = {
@@ -512,8 +546,13 @@ const UNINSTALL_CMDS: Record<string, string> = {
   jq:      'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y jq 2>&1 && apt-get autoremove -y 2>&1',
   unzip:   'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y unzip 2>&1 && apt-get autoremove -y 2>&1',
   chrome:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y google-chrome-stable 2>&1; rm -f /usr/share/keyrings/google-chrome.gpg /etc/apt/sources.list.d/google-chrome.list 2>/dev/null; apt-get autoremove -y 2>&1',
-  wrangler:'npm uninstall -g wrangler 2>&1',
+  wrangler:`export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true; _N=$(ls ~/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1); [ -n "$_N" ] && export PATH="$HOME/.nvm/versions/node/$_N/bin:$PATH"; npm uninstall -g wrangler 2>&1`,
   docker:  'systemctl stop docker 2>/dev/null; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>&1 && apt-get autoremove -y 2>&1',
+  venv:    `PY_VER=$(python3 --version 2>/dev/null | grep -oP '\\d+\\.\\d+'); DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y python3-venv python3.\${PY_VER}-venv 2>/dev/null; apt-get autoremove -y 2>&1`,
+  ffmpeg:  'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ffmpeg 2>&1 && apt-get autoremove -y 2>&1',
+  libuuid: 'DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y libuuid-dev uuid-runtime 2>&1 && apt-get autoremove -y 2>&1',
+  cloudflared: 'systemctl stop cloudflared 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y cloudflared 2>&1; rm -f /usr/share/keyrings/cloudflare-main.gpg /etc/apt/sources.list.d/cloudflared.list 2>/dev/null; apt-get autoremove -y 2>&1',
+  tailscale:   'systemctl stop tailscaled 2>/dev/null || true; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y tailscale 2>&1 && apt-get autoremove -y 2>&1',
 };
 
 // Post-install binary verification (NVM prefix included for npm-global tools)
@@ -549,6 +588,11 @@ const VERIFY_CMDS: Record<string, string> = {
   chrome:  `google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null || chromium-browser --version 2>/dev/null || chromium --version`,
   wrangler:`${NVM_PATH_PREFIX}wrangler --version`,
   docker:  `docker --version`,
+  venv:    `python3 -m venv --help >/dev/null 2>&1`,
+  ffmpeg:  `ffmpeg -version 2>/dev/null`,
+  libuuid: `dpkg -s libuuid-dev 2>/dev/null | grep -q 'Status: install ok'`,
+  cloudflared: `cloudflared --version 2>/dev/null || which cloudflared`,
+  tailscale:   `tailscale --version 2>/dev/null || which tailscale`,
 };
 
 router.post('/:tool/uninstall', async (req, res) => {
@@ -618,7 +662,7 @@ router.post('/:tool/install', async (req, res) => {
   const cmdFn = INSTALL_CMDS[tool];
   if (!cmdFn) return res.status(400).json({ success: false, error: 'Unknown tool' });
   try {
-    const needsAptUpdate = tool.startsWith('python') || ['nginx','apache','certbot','git','curl','wget','rsync','vim','nvim','htop','tmux','screen','ufw','fail2ban-client','jq','unzip','go'].includes(tool);
+    const needsAptUpdate = tool.startsWith('python') || ['venv','ffmpeg','libuuid','nginx','apache','certbot','git','curl','wget','rsync','vim','nvim','htop','tmux','screen','ufw','fail2ban-client','jq','unzip','go'].includes(tool);
     const aptPrefix = needsAptUpdate ? 'apt-get update -qq 2>&1\n' : '';
     const nvmPrefix = NPM_DEPENDENT_LOCAL.has(tool) ? NVM_ENSURE_NODE24 : '';
     const fullScript = nvmPrefix + aptPrefix + cmdFn(req.body) + '\n';
@@ -746,6 +790,111 @@ router.delete('/users/:username', async (req, res) => {
     const flag = keepHome ? '' : '-r';
     const output = await run(`userdel ${flag} ${safeUser} 2>&1`);
     res.json({ success: true, output });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Generic exec ─────────────────────────────────────────────────────────────
+router.post('/exec', async (req, res) => {
+  const { command } = req.body;
+  if (!command) return res.status(400).json({ success: false, error: 'command required' });
+  try {
+    const { stdout, stderr } = await execAsync(command, { timeout: 30000, env: { ...process.env, HOME }, shell: '/bin/bash' });
+    res.json({ success: true, data: { stdout, stderr } });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message, data: { stdout: e.stdout || '', stderr: e.stderr || '' } });
+  }
+});
+
+// ── Hostname ──────────────────────────────────────────────────────────────────
+router.get('/hostname', async (_req, res) => {
+  const h = await run('hostname 2>/dev/null || cat /etc/hostname 2>/dev/null');
+  res.json({ success: true, hostname: h.trim() });
+});
+
+router.post('/hostname', async (req, res) => {
+  const { hostname } = req.body;
+  if (!hostname || !/^[a-zA-Z0-9][a-zA-Z0-9\-]{0,62}[a-zA-Z0-9]?$/.test(hostname)) {
+    return res.status(400).json({ success: false, error: 'Invalid hostname (use only letters, numbers, hyphens)' });
+  }
+  try {
+    const out = await run(`hostnamectl set-hostname "${hostname}" 2>&1`, 10000);
+    res.json({ success: true, output: out, hostname });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Swap Management ───────────────────────────────────────────────────────────
+router.get('/swap', async (_req, res) => {
+  const [swapInfo, freeInfo] = await Promise.all([
+    run('swapon --show 2>/dev/null || echo ""'),
+    run('free -h 2>/dev/null'),
+  ]);
+  res.json({ success: true, swapInfo: swapInfo.trim(), freeInfo: freeInfo.trim() });
+});
+
+router.post('/swap', async (req, res) => {
+  const sizeGb = parseInt(req.body.sizeGb);
+  if (!sizeGb || sizeGb < 1 || sizeGb > 256) return res.status(400).json({ success: false, error: 'Size must be 1–256 GB' });
+  const script = `
+if swapon --show 2>/dev/null | grep -q /swapfile; then swapoff /swapfile 2>/dev/null && rm -f /swapfile; fi
+fallocate -l ${sizeGb}G /swapfile 2>&1 || dd if=/dev/zero of=/swapfile bs=1M count=${sizeGb * 1024} status=progress 2>&1
+chmod 600 /swapfile
+mkswap /swapfile 2>&1
+swapon /swapfile 2>&1
+grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+grep -q 'vm.vfs_cache_pressure' /etc/sysctl.conf || echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
+sysctl -p 2>&1
+swapon --show 2>&1
+echo "=== ${sizeGb}GB swap created and persists across reboots ==="
+`;
+  try {
+    const output = await run(script, 180000);
+    res.json({ success: true, output });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.delete('/swap', async (_req, res) => {
+  const script = `
+swapoff /swapfile 2>/dev/null || true
+rm -f /swapfile 2>/dev/null || true
+sed -i '/swapfile/d' /etc/fstab 2>/dev/null || true
+echo "Swap removed"
+`;
+  try {
+    const output = await run(script, 30000);
+    res.json({ success: true, output });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── MOTD Management ───────────────────────────────────────────────────────────
+router.get('/motd', async (_req, res) => {
+  const [motd, custom] = await Promise.all([
+    run('cat /etc/motd 2>/dev/null || echo ""'),
+    run('cat /etc/update-motd.d/99-custom 2>/dev/null || echo ""'),
+  ]);
+  res.json({ success: true, motd: motd, custom });
+});
+
+router.post('/motd', async (req, res) => {
+  const { content = '', mode = 'motd' } = req.body;
+  try {
+    if (mode === 'motd') {
+      fs.writeFileSync('/etc/motd', content);
+    } else {
+      const file = '/etc/update-motd.d/99-custom';
+      fs.writeFileSync(file, content);
+      await run(`chmod +x ${file} 2>/dev/null`);
+    }
+    res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+router.delete('/motd', async (_req, res) => {
+  try {
+    fs.writeFileSync('/etc/motd', '');
+    await run('chmod -x /etc/update-motd.d/* 2>/dev/null || true');
+    await run('rm -f /etc/update-motd.d/99-custom 2>/dev/null || true');
+    res.json({ success: true });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
