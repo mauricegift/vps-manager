@@ -715,19 +715,40 @@ fi
 case "${type}" in
   postgresql)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
-    [ -n "$CONF" ] && sed -i "s/#\\?listen_addresses\\s*=\\s*'[^']*'/listen_addresses = '*'/" "$CONF" 2>&1 && systemctl restart postgresql 2>&1 && echo "BIND_FIXED=1"
+    if [ -n "$CONF" ]; then
+      sed -i "s/^[#]*listen_addresses.*/listen_addresses = '*'/" "$CONF"
+      grep -q "listen_addresses" "$CONF" || echo "listen_addresses = '*'" >> "$CONF"
+      systemctl restart postgresql 2>&1 || true
+      echo "BIND_FIXED=1"
+    fi
     ;;
   mysql|mariadb)
-    CONF=$(grep -rl "bind-address" /etc/mysql 2>/dev/null | head -1)
-    [ -n "$CONF" ] && sed -i "s/bind-address\\s*=\\s*127\\.0\\.0\\.1/bind-address = 0.0.0.0/" "$CONF" 2>&1 && systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null && echo "BIND_FIXED=1"
+    CONF=$(find /etc/mysql -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | head -1)
+    if [ -n "$CONF" ]; then
+      sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$CONF"
+      systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || true
+      echo "BIND_FIXED=1"
+    fi
     ;;
   mongodb)
     CONF=/etc/mongod.conf
-    [ -f "$CONF" ] && sed -i "s/bindIp:\\s*127\\.0\\.0\\.1/bindIp: 0.0.0.0/" "$CONF" 2>&1 && systemctl restart mongod 2>&1 && echo "BIND_FIXED=1"
+    if [ -f "$CONF" ]; then
+      if grep -q "bindIp" "$CONF"; then
+        sed -i "s/bindIp:.*/bindIp: 0.0.0.0/" "$CONF"
+      else
+        sed -i '/^net:/a\\  bindIp: 0.0.0.0' "$CONF"
+      fi
+      systemctl restart mongod 2>&1 || true
+      echo "BIND_FIXED=1"
+    fi
     ;;
   redis)
     CONF=$(find /etc/redis -name "*.conf" 2>/dev/null | head -1)
-    [ -n "$CONF" ] && sed -i "s/^bind 127\\.0\\.0\\.1.*/bind 0.0.0.0/" "$CONF" 2>&1 && systemctl restart redis-server 2>/dev/null || systemctl restart redis 2>/dev/null && echo "BIND_FIXED=1"
+    if [ -n "$CONF" ]; then
+      sed -i "s/^bind .*/bind 0.0.0.0/" "$CONF"
+      systemctl restart redis-server 2>/dev/null || systemctl restart redis 2>/dev/null || true
+      echo "BIND_FIXED=1"
+    fi
     ;;
 esac
 `.trim();
