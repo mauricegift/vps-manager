@@ -79,13 +79,20 @@ export default function DatabasesPage() {
   const [changePwdResult, setChangePwdResult] = useState<{ type: string; name: string; username: string; password: string } | null>(null);
   const [changePwdResultCopied, setChangePwdResultCopied] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
-  // Track dedicated per-database users created via Change Password (persisted)
+  // Track dedicated per-database users (persisted)
   const [dbUsers, setDbUsers] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem("vpsm_db_users") || "{}"); } catch { return {}; }
   });
   useEffect(() => {
     try { localStorage.setItem("vpsm_db_users", JSON.stringify(dbUsers)); } catch {}
   }, [dbUsers]);
+  // Track per-database passwords (persisted) so connection strings always show the real password
+  const [dbPasswords, setDbPasswords] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem("vpsm_db_passwords") || "{}"); } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("vpsm_db_passwords", JSON.stringify(dbPasswords)); } catch {}
+  }, [dbPasswords]);
 
   // New Table / Collection creation
   const [newTableModal, setNewTableModal] = useState(false);
@@ -423,69 +430,54 @@ export default function DatabasesPage() {
     if (!dbType || !newDbName.trim()) return;
     setManagingDb(true);
     try {
-      const defaultDb = dbType === "postgresql" ? "postgres" : dbType === "mongodb" ? "admin" : "mysql";
-      const existingDb = browserDb?.name || defaultDb;
       const safeName = newDbName.trim().replace(/[^a-zA-Z0-9_]/g, "_");
-      const pwd = newDbPassword.trim();
-
-      if (dbType === "postgresql") {
-        await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql: `CREATE DATABASE "${safeName}"` });
-        if (pwd) {
-          await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
-            sql: `DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${safeName}') THEN CREATE ROLE "${safeName}" WITH LOGIN PASSWORD '${pwd.replace(/'/g, "''")}'; END IF; END $$`
-          });
-          await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql: `GRANT ALL PRIVILEGES ON DATABASE "${safeName}" TO "${safeName}"` });
-        }
-      } else if (dbType === "mongodb") {
-        await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
-          sql: `db.getSiblingDB("${safeName}").createCollection("_init")`
-        });
-        if (pwd) {
-          await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
-            sql: `db.getSiblingDB("${safeName}").createUser({user:"${safeName}",pwd:"${pwd.replace(/"/g, '\\"')}",roles:[{role:"dbOwner",db:"${safeName}"}]})`
-          });
-        }
+      const pwd = newDbPassword.trim() || undefined;
+      let resp: any;
+      if (activeServer) {
+        resp = await api.post(`/remote/${activeServer.id}/databases/${dbType}/create`, { name: safeName, password: pwd });
       } else {
-        await api.post(`${dbApiBase(dbType, existingDb)}/query`, { sql: `CREATE DATABASE \`${safeName}\`` });
-        if (pwd) {
-          await api.post(`${dbApiBase(dbType, existingDb)}/query`, {
-            sql: `CREATE USER IF NOT EXISTS '${safeName}'@'%' IDENTIFIED BY '${pwd.replace(/'/g, "''")}'; GRANT ALL PRIVILEGES ON \`${safeName}\`.* TO '${safeName}'@'%'; FLUSH PRIVILEGES`
-          });
-        }
+        resp = await api.post(`/databases/${dbType}/create`, { name: safeName, password: pwd });
       }
-
-      toast.success(`Database "${safeName}" created${pwd ? " with user access" : ""}`);
+      const username: string = resp?.data?.username || "";
+      const key = `${activeServer?.id ?? "local"}:${dbType}:${safeName}`;
+      if (username) setDbUsers(prev => ({ ...prev, [key]: username }));
+      if (pwd) setDbPasswords(prev => ({ ...prev, [key]: pwd }));
+      toast.success(`Database "${safeName}" created`);
       setCreateDbModal(false);
       setCreateDbType(null);
       setNewDbName("");
       setNewDbPassword("");
       qc.invalidateQueries({ queryKey: ["databases"] });
+      // Show connection string immediately if a password was set
+      if (pwd && username) {
+        setChangePwdResult({ type: dbType, name: safeName, username, password: pwd });
+      }
     } catch (e: any) {
       toast.error(e.response?.data?.error || "Failed to create database");
     }
     setManagingDb(false);
   };
 
-  const makeConnStr = (type: string, dbname: string, masked = true) => {
+  const makeConnStr = (type: string, dbname: string) => {
     const host = activeServer?.ip ?? "127.0.0.1";
     const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
     const port = portMap[type] ?? 5432;
-    const pwd = masked ? "•••" : "PASSWORD";
     const key = `${activeServer?.id ?? "local"}:${type}:${dbname}`;
     const dedicatedUser = dbUsers[key];
+    const storedPwd = dbPasswords[key] || "•••";
     if (type === "postgresql") {
       const user = dedicatedUser || "postgres";
-      return `postgresql://${user}:${pwd}@${host}:${port}/${dbname}`;
+      return `postgresql://${user}:${storedPwd}@${host}:${port}/${dbname}`;
     }
     if (type === "mysql" || type === "mariadb") {
       const user = dedicatedUser || "root";
-      return `mysql://${user}:${pwd}@${host}:${port}/${dbname}`;
+      return `mysql://${user}:${storedPwd}@${host}:${port}/${dbname}`;
     }
     if (type === "mongodb") {
-      if (dedicatedUser) return `mongodb://${dedicatedUser}:${pwd}@${host}:${port}/${dbname}`;
-      return `mongodb://root:${pwd}@${host}:${port}/${dbname}?authSource=admin`;
+      if (dedicatedUser) return `mongodb://${dedicatedUser}:${storedPwd}@${host}:${port}/${dbname}`;
+      return `mongodb://root:${storedPwd}@${host}:${port}/${dbname}?authSource=admin`;
     }
-    if (type === "redis") return `redis://:${pwd}@${host}:${port}/0`;
+    if (type === "redis") return `redis://:${storedPwd}@${host}:${port}/0`;
     return dbname;
   };
 
@@ -501,11 +493,13 @@ export default function DatabasesPage() {
         resp = await api.post(`/databases/${type}/${name}/change-password`, { password: changePwdVal });
       }
       const username = resp?.data?.username || (type === "postgresql" ? "postgres" : type === "redis" ? "" : "root");
-      // Store the dedicated username so connection strings update
+      const key = `${activeServer?.id ?? "local"}:${type}:${name}`;
+      // Store dedicated username so connection strings update
       if (resp?.data?.username && type !== "redis") {
-        const key = `${activeServer?.id ?? "local"}:${type}:${name}`;
         setDbUsers(prev => ({ ...prev, [key]: resp.data.username }));
       }
+      // Persist password so connection string is always copyable
+      setDbPasswords(prev => ({ ...prev, [key]: changePwdVal }));
       // Show success with real connection string
       setChangePwdResult({ type, name, username, password: changePwdVal });
       setChangePwdVal("");
@@ -591,7 +585,13 @@ export default function DatabasesPage() {
                     onUninstall={() => setConfirmUninstall(db)}
                     onDeleteDb={(name) => setDeleteDbModal({ type: db.type, name })}
                     onCreateDb={() => { setCreateDbType(db.type); setNewDbName(""); setCreateDbModal(true); }}
-                    onConnect={() => setConnectionModal(db)}
+                    onConnect={() => {
+                      setConnectionModal(db);
+                      const key = `${activeServer?.id ?? "local"}:${db.type}:${db.name}`;
+                      const storedPwd = dbPasswords[key];
+                      if (storedPwd) setConnPassword(storedPwd);
+                      if (db.name) setConnDbName(db.name);
+                    }}
                   />
                 ))}
               </div>
