@@ -1,6 +1,34 @@
 import { Router } from 'express';
+import os from 'os';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import pool from '../db.js';
 import { testSSHConnection, getRemoteSystemInfo } from '../ssh.js';
+
+const execAsync = promisify(exec);
+
+function getLocalIPv4s(): string[] {
+  const ifaces = os.networkInterfaces();
+  const ips: string[] = ['127.0.0.1', 'localhost', '::1'];
+  for (const iface of Object.values(ifaces)) {
+    if (!iface) continue;
+    for (const alias of iface) {
+      if (alias.family === 'IPv4') ips.push(alias.address);
+    }
+  }
+  return ips;
+}
+
+async function getPublicIPv4(): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(
+      'curl -s --max-time 4 https://api.ipify.org 2>/dev/null || curl -s --max-time 4 https://ifconfig.me 2>/dev/null || true',
+      { timeout: 6000 }
+    );
+    const ip = stdout.trim();
+    return /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null;
+  } catch { return null; }
+}
 
 const router = Router();
 
@@ -23,6 +51,16 @@ router.post('/', async (req, res) => {
     if (!name || !ip) {
       return res.status(400).json({ success: false, error: 'name and ip are required' });
     }
+
+    const localIPs = getLocalIPv4s();
+    if (localIPs.includes(ip.trim())) {
+      return res.status(400).json({ success: false, error: 'Cannot add this server — the IP address matches this host machine. Use the local manager to manage this server directly.' });
+    }
+    const publicIP = await getPublicIPv4();
+    if (publicIP && publicIP === ip.trim()) {
+      return res.status(400).json({ success: false, error: 'Cannot add this server — the IP address matches this host machine\'s public IP. Use the local manager to manage this server directly.' });
+    }
+
     const result = await pool.query(
       `INSERT INTO vps_connections (name, ip, port, username, password, ssh_key, notes, tags)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, ip, port, username, tags, notes, created_at, last_tested, last_status`,
