@@ -928,20 +928,30 @@ router.post('/app-update', async (_req, res) => {
     const appDir = process.cwd();
     const envPath = path.join(appDir, '.env');
 
+    // Back up .env so git reset --hard doesn't wipe credentials
     let envContent = '';
     if (fs.existsSync(envPath)) envContent = fs.readFileSync(envPath, 'utf8');
 
+    // 1. Pull latest code from GitHub
     const gitOut = await run(
       `cd "${appDir}" && git fetch origin main 2>&1 && git reset --hard origin/main 2>&1`,
       90000
     );
 
+    // Restore .env immediately after git reset
     if (envContent) fs.writeFileSync(envPath, envContent);
 
+    // 2. Install any new/updated dependencies
     const npmOut = await run(`cd "${appDir}" && npm install --prefer-offline 2>&1`, 120000);
+
+    // 3. Rebuild the React frontend (Vite outputs to dist/public/)
+    //    Without this step new UI code would NOT be visible after restart
+    const buildOut = await run(`cd "${appDir}" && npm run build 2>&1`, 180000);
+
+    // 4. Restart via PM2 so the new backend + frontend are served
     const pm2Out = await run('pm2 restart vps-manager --update-env 2>&1', 20000);
 
-    res.json({ success: true, output: [gitOut, npmOut, pm2Out].join('\n---\n') });
+    res.json({ success: true, output: [gitOut, npmOut, buildOut, pm2Out].join('\n---\n') });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
