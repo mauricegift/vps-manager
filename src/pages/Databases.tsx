@@ -79,9 +79,11 @@ export default function DatabasesPage() {
   const [changePwdResult, setChangePwdResult] = useState<{ type: string; name: string; username: string; password: string } | null>(null);
   const [changePwdResultCopied, setChangePwdResultCopied] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
-  // Firewall status per db type (remote servers only)
+  // Firewall status per db type (local + remote)
   const [firewallStatus, setFirewallStatus] = useState<Record<string, boolean>>({});
   const [firewallToggling, setFirewallToggling] = useState<string | null>(null);
+  // Real server IP used in connection strings when external access is open locally
+  const [localServerIp, setLocalServerIp] = useState<string>("");
   // Track dedicated per-database users (persisted)
   const [dbUsers, setDbUsers] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem("vpsm_db_users") || "{}"); } catch { return {}; }
@@ -467,20 +469,26 @@ export default function DatabasesPage() {
     setCreatingTable(false);
   };
 
-  // ── Firewall status fetch (remote servers only) ───────────────────────────────
+  // ── Firewall status fetch (local + remote) ───────────────────────────────────
   const fetchFirewallStatus = useCallback(async () => {
-    if (!activeServer) return;
     try {
-      const { data } = await api.get(`/remote/${activeServer.id}/databases/firewall-status`);
-      setFirewallStatus(data);
+      if (activeServer) {
+        const { data } = await api.get(`/remote/${activeServer.id}/databases/firewall-status`);
+        setFirewallStatus(data);
+      } else {
+        const { data } = await api.get('/databases/firewall-status');
+        const { serverIp, ...status } = data;
+        setFirewallStatus(status);
+        if (serverIp && serverIp !== '127.0.0.1') setLocalServerIp(serverIp);
+      }
     } catch {}
   }, [activeServer]);
 
   useEffect(() => { fetchFirewallStatus(); }, [fetchFirewallStatus]);
 
-  // ── Open external access whenever a connection string is copied ───────────────
+  // ── Open external access (local or remote) ───────────────────────────────────
   const openExternal = async (type: string) => {
-    if (!activeServer || type === "sqlite") return;
+    if (type === "sqlite") return;
     // If already open, just confirm quietly
     if (firewallStatus[type]) {
       toast(`Port already open — ${type} is accessible externally`, { icon: "✅", duration: 2500 });
@@ -493,8 +501,12 @@ export default function DatabasesPage() {
         : `Opening firewall for external ${type} access…`,
       { duration: 4500, icon: isHighRisk ? "🔓" : "🔐" }
     );
+    setFirewallToggling(type);
     try {
-      const { data } = await api.post(`/remote/${activeServer.id}/databases/${type}/allow-external`);
+      const url = activeServer
+        ? `/remote/${activeServer.id}/databases/${type}/allow-external`
+        : `/databases/${type}/allow-external`;
+      const { data } = await api.post(url);
       const parts: string[] = [];
       if (data.alreadyOpen) {
         toast(`Port ${data.port} was already open — ${type} accessible externally`, { icon: "✅", duration: 3000 });
@@ -504,6 +516,7 @@ export default function DatabasesPage() {
         if (data.rateLimited) parts.push("rate-limited (20 conn/min per IP)");
         if (parts.length) toast.success(`External access active: ${parts.join(" · ")}`, { duration: 6000 });
       }
+      if (!activeServer && data.serverIp && data.serverIp !== '127.0.0.1') setLocalServerIp(data.serverIp);
       setFirewallStatus(prev => ({ ...prev, [type]: true }));
       if (data.warnings?.length) {
         data.warnings.forEach((w: string) => toast(w, { icon: "⚠️", duration: 8000 }));
@@ -511,14 +524,17 @@ export default function DatabasesPage() {
     } catch (e: any) {
       toast.error(`External setup failed: ${e.response?.data?.error ?? e.message}`);
     }
+    setFirewallToggling(null);
   };
 
-  // ── Close external firewall access ────────────────────────────────────────────
+  // ── Close external firewall access (local or remote) ─────────────────────────
   const closeExternal = async (type: string) => {
-    if (!activeServer) return;
     setFirewallToggling(type);
     try {
-      const { data } = await api.post(`/remote/${activeServer.id}/databases/${type}/close-external`);
+      const url = activeServer
+        ? `/remote/${activeServer.id}/databases/${type}/close-external`
+        : `/databases/${type}/close-external`;
+      const { data } = await api.post(url);
       if (data.success) {
         setFirewallStatus(prev => ({ ...prev, [type]: false }));
         toast.success(`External access disabled — port ${data.port} closed`);
@@ -564,7 +580,7 @@ export default function DatabasesPage() {
   };
 
   const makeConnStr = (type: string, dbname: string) => {
-    const host = activeServer?.ip ?? "127.0.0.1";
+    const host = activeServer?.ip ?? (firewallStatus[type] && localServerIp ? localServerIp : "127.0.0.1");
     const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
     const port = portMap[type] ?? 5432;
     const key = `${activeServer?.id ?? "local"}:${type}:${dbname}`;
@@ -703,7 +719,7 @@ export default function DatabasesPage() {
                       if (storedPwd) setConnPassword(storedPwd);
                       if (db.name) setConnDbName(db.name);
                     }}
-                    firewallOpen={activeServer ? (firewallStatus[db.type] ?? false) : undefined}
+                    firewallOpen={db.type !== "sqlite" ? (firewallStatus[db.type] ?? false) : undefined}
                     firewallToggling={firewallToggling === db.type}
                     onOpenFirewall={() => openExternal(db.type)}
                     onCloseFirewall={() => closeExternal(db.type)}
@@ -831,7 +847,7 @@ export default function DatabasesPage() {
       {changePassModal && (
         <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); setChangePwdResult(null); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200} key={`${changePassModal.type}:${changePassModal.name}`}>
           {(changePwdResult && changePwdResult.name === changePassModal.name && changePwdResult.type === changePassModal.type) ? (() => {
-            const host = activeServer?.ip ?? "127.0.0.1";
+            const host = activeServer?.ip ?? (firewallStatus[changePwdResult.type] && localServerIp ? localServerIp : "127.0.0.1");
             const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
             const port = portMap[changePwdResult.type] ?? 5432;
             const { type, name, username, password } = changePwdResult;
@@ -1466,7 +1482,7 @@ export default function DatabasesPage() {
         <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); setConnPassword(""); setConnDbName(""); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
           {(() => {
             const db = connectionModal;
-            const host = activeServer?.ip ?? "127.0.0.1";
+            const host = activeServer?.ip ?? (firewallStatus[db.type] && localServerIp ? localServerIp : "127.0.0.1");
             const port = db.port;
             const pwd = connPassword || "PASSWORD";
             const dbName = connDbName.trim();
