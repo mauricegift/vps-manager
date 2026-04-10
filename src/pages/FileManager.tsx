@@ -50,8 +50,8 @@ function fmtSize(b: number | null) {
   return b + " B";
 }
 
-function defaultPath(username?: string) {
-  if (!username) return "/";
+function remoteDefaultPath(username?: string) {
+  if (!username) return "/root";
   return username === "root" ? "/root" : `/home/${username}`;
 }
 
@@ -68,14 +68,19 @@ export default function FileManagerPage() {
 
   const { user } = useAuth();
   const [path, setPath] = useState(() =>
-    activeServer ? defaultPath(activeServer.username) : defaultPath(user?.username)
+    activeServer ? remoteDefaultPath(activeServer.username) : "/root"
   );
 
   useEffect(() => {
-    if (!activeServer && user?.username) {
-      setPath(p => p === "/" || p === "/home/runner/workspace" ? defaultPath(user.username) : p);
+    if (activeServer) {
+      setPath(remoteDefaultPath(activeServer.username));
+      return;
     }
-  }, [user?.username, activeServer]);
+    api.get("/system/homedir").then(r => {
+      const home: string = r.data?.data?.home || "/root";
+      setPath(p => (p === "/" || p === "/root" || p.startsWith("/home/runner")) ? home : p);
+    }).catch(() => {});
+  }, [activeServer]);
 
   const [selected, setSelected] = useState<FileItem | null>(null);
   const [clipboard, setClipboard] = useState<{ item: FileItem; op: "cut" | "copy" } | null>(null);
