@@ -112,6 +112,25 @@ router.delete('/images/:id', async (req, res) => {
   catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+router.post('/images/run', async (req, res) => {
+  try {
+    const { image, name, port } = req.body as { image: string; name?: string; port?: string };
+    if (!image) return res.status(400).json({ success: false, error: 'image is required' });
+    const safeImage = image.replace(/[^a-zA-Z0-9:.\-_/@]/g, '');
+    const containerName = (name || safeImage.replace(/[^a-zA-Z0-9_.-]/g, '_').replace(/^_+|_+$/g, '')).slice(0, 64);
+    let cmd = `docker run -d --name "${containerName}" --restart unless-stopped`;
+    if (port) {
+      const safePort = port.replace(/[^0-9:]/g, '');
+      if (safePort) cmd += ` -p ${safePort}`;
+    }
+    cmd += ` ${safeImage}`;
+    await execAsync(cmd, { timeout: 30000 });
+    res.json({ success: true, containerName });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.post('/images/pull', async (req, res) => {
   try {
     const { image, port, autoRun } = req.body;
