@@ -64,36 +64,30 @@ router.get('/', async (_req, res) => {
   }
 });
 
-// Build a pm2 start command that handles both file paths and command-style scripts
-// e.g. "npm start" → `pm2 start npm --name "x" -- start`
-// e.g. "node server.js" → `pm2 start node --name "x" -- server.js`
-// e.g. "python3 app.py" → `pm2 start python3 --name "x" -- app.py`
+// Interpreters that are invoked as commands rather than file paths
+// e.g. "npm start" → script="npm", args="start"
 const COMMAND_INTERPS = new Set(['npm', 'bun', 'node', 'python3', 'python', 'npx', 'pnpm', 'yarn', 'deno']);
 
-function buildPm2Cmd(script: string, name: string, cwd?: string, interpreter?: string): string {
-  const parts = script.trim().split(/\s+/);
-  const first = parts[0].toLowerCase();
-  if (COMMAND_INTERPS.has(first)) {
-    // Command-style: interpreter + args
-    let cmd = `pm2 start ${parts[0]} --name "${name}"`;
-    if (cwd) cmd += ` --cwd "${cwd}"`;
-    if (parts.length > 1) cmd += ` -- ${parts.slice(1).join(' ')}`;
-    return cmd;
-  }
-  // File path: pm2 start "/path/to/file" --name "x"
-  const isSh = script.trim().endsWith('.sh');
-  let cmd = `pm2 start "${script}" --name "${name}"`;
-  if (isSh || interpreter === 'bash') cmd += ' --interpreter bash';
-  if (cwd) cmd += ` --cwd "${cwd}"`;
-  return cmd;
-}
-
 router.post('/start', async (req, res) => {
+  let ecosystemPath = '';
   try {
     const { name, script, cwd, port, interpreter, envVars, pkgManager, installDeps } = req.body;
 
-    // Write PORT and env vars to .env in cwd (avoids shell-quoting issues with --env flags)
-    if (cwd && (port || (Array.isArray(envVars) && envVars.some((e: any) => e.key?.trim())))) {
+    // ── Build explicit env block for the new process ──────────────────────────
+    // We MUST use a PM2 ecosystem JSON file rather than --env flags because:
+    //  1. PM2's --env CLI flag selects named ecosystem blocks, NOT key=value pairs
+    //  2. BASE_ENV inherits PORT=5756 from our server process; without an explicit
+    //     env block that inheritance bleeds into every spawned process
+    const procEnv: Record<string, string> = {};
+    if (port) procEnv.PORT = String(port);
+    if (Array.isArray(envVars)) {
+      for (const { key, value } of envVars) {
+        if (key?.trim()) procEnv[key.trim()] = value ?? '';
+      }
+    }
+
+    // ── Also write env to .env in cwd so the app can read via dotenv ─────────
+    if (cwd && Object.keys(procEnv).length > 0) {
       const { readFileSync, writeFileSync, existsSync } = await import('fs');
       const dotenvPath = `${cwd}/.env`;
       let existing = '';
@@ -104,25 +98,39 @@ router.post('/start', async (req, res) => {
         if (idx >= 0) dotLines[idx] = `${k}=${v}`;
         else dotLines.push(`${k}=${v}`);
       };
-      if (port) setVar('PORT', port);
-      if (Array.isArray(envVars)) {
-        for (const { key, value } of envVars) {
-          if (key && key.trim()) setVar(key.trim(), value || '');
-        }
-      }
+      for (const [k, v] of Object.entries(procEnv)) setVar(k, v);
       writeFileSync(dotenvPath, dotLines.join('\n').replace(/\n+$/, '') + '\n', 'utf-8');
     }
 
-    // Build the pm2 start command (handles both file paths and command-style scripts)
-    let cmd = buildPm2Cmd(script, name, cwd, interpreter);
+    // ── Detect script type ────────────────────────────────────────────────────
+    const parts = script.trim().split(/\s+/);
+    const first = parts[0].toLowerCase();
+    const isCommandStyle = COMMAND_INTERPS.has(first);
+    const scriptIsSh = !isCommandStyle && /\.(sh|bash)$/i.test(script.trim());
+    const useBash = scriptIsSh || interpreter === 'bash';
 
-    // Inject env via --env when no cwd .env file was written above
-    if (!cwd && port) cmd += ` --env PORT=${port}`;
-    if (!cwd && Array.isArray(envVars)) {
-      for (const { key, value } of envVars) {
-        if (key && key.trim()) cmd += ` --env ${key.trim()}=${value || ''}`;
-      }
+    // ── Build PM2 ecosystem config object ────────────────────────────────────
+    const appEntry: Record<string, unknown> = { name };
+
+    if (isCommandStyle) {
+      // e.g. "npm start", "bun run app.js", "python app.py"
+      appEntry.script = parts[0];
+      if (parts.length > 1) appEntry.args = parts.slice(1).join(' ');
+    } else {
+      appEntry.script = script.trim();
+      if (useBash) appEntry.interpreter = 'bash';
     }
+
+    if (cwd) appEntry.cwd = cwd;
+
+    // Explicitly set env — this overrides anything the PM2 daemon might inherit
+    // Always include at minimum an empty env so PORT=5756 is not forwarded
+    appEntry.env = procEnv;
+
+    // ── Write temporary ecosystem JSON and start via it ───────────────────────
+    const { writeFileSync, unlinkSync } = await import('fs');
+    ecosystemPath = `/tmp/pm2-start-${Date.now()}.json`;
+    writeFileSync(ecosystemPath, JSON.stringify({ apps: [appEntry] }));
 
     if (installDeps && cwd) {
       const pm = pkgManager === 'bun' ? 'bun' : 'npm';
@@ -131,12 +139,17 @@ router.post('/start', async (req, res) => {
         : `${NVM_PREFIX}cd "${cwd}" && npm install 2>&1`;
       await execAsync(installCmd, { timeout: 300000, env: BASE_ENV }).catch(() => {});
     }
-    await execAsync(`${NVM_PREFIX}${cmd}`, { timeout: 60000, env: BASE_ENV });
+
+    await execAsync(`${NVM_PREFIX}pm2 start ${JSON.stringify(ecosystemPath)}`, { timeout: 60000, env: BASE_ENV });
     await execAsync(`${NVM_PREFIX}pm2 save`, { timeout: 10000, env: BASE_ENV }).catch(() => {});
     await execAsync(`${NVM_PREFIX}pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null`, { timeout: 15000, env: BASE_ENV }).catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
+  } finally {
+    if (ecosystemPath) {
+      try { const { unlinkSync } = await import('fs'); unlinkSync(ecosystemPath); } catch {}
+    }
   }
 });
 
