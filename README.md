@@ -1,9 +1,3 @@
----
-layout: default
-title: VPS Manager
-description: A modern, self-hosted web control panel for managing your Linux VPS — PM2, Docker, Nginx, databases, files and a full interactive terminal, all from one clean dashboard.
----
-
 # VPS Manager
 
 A modern, self-hosted web control panel for managing your Linux VPS — PM2 processes, Docker, Nginx, databases, files and a full interactive terminal, all from one clean dashboard.
