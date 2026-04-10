@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const execAsync = promisify(exec);
 const router = Router();
@@ -18,26 +21,46 @@ const COLOR_ENV = BASE_ENV;
 // Prefix for shell commands — sources NVM so node/npm/pm2 are in PATH
 const NVM_PREFIX = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
 
-function runPM2(args: string) {
+// ── Run a shell command as a non-root system user ────────────────────────────
+async function runAsUser(cmd: string, user: string): Promise<{ stdout: string; stderr: string }> {
+  const tmp = path.join(os.tmpdir(), `.vpsm-pm2-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
+  // #!/bin/bash -l  → login shell so .bashrc / NVM are sourced automatically
+  fs.writeFileSync(tmp, `#!/bin/bash -l\n${cmd}\n`, { mode: 0o755 });
+  try {
+    return await execAsync(`su - "${user}" -c "bash '${tmp}'"`, { env: BASE_ENV, timeout: 30000 });
+  } finally {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
+}
+
+function runPM2(args: string, user?: string) {
+  if (user && user !== 'root') return runAsUser(`${NVM_PREFIX}pm2 ${args} 2>&1`, user);
   return execAsync(`${NVM_PREFIX}pm2 ${args} 2>&1`, { env: BASE_ENV });
 }
 
-function runPM2Json(args: string) {
+function runPM2Json(args: string, user?: string) {
+  if (user && user !== 'root') return runAsUser(`${NVM_PREFIX}pm2 ${args} --no-color 2>&1`, user);
   return execAsync(`${NVM_PREFIX}pm2 ${args} --no-color 2>&1`, { env: BASE_ENV });
 }
 
-async function listProcesses() {
+async function listProcesses(user?: string) {
   try {
-    const { stdout } = await runPM2Json('jlist');
+    const { stdout } = await runPM2Json('jlist', user);
     return JSON.parse(stdout);
   } catch {
     return [];
   }
 }
 
-router.get('/', async (_req, res) => {
+function resolveUser(query: Record<string, any>): string | undefined {
+  const u = (query?.activeUser as string | undefined)?.trim();
+  return u && u !== 'root' ? u : undefined;
+}
+
+router.get('/', async (req, res) => {
   try {
-    const processes = await listProcesses();
+    const user = resolveUser(req.query);
+    const processes = await listProcesses(user);
     const data = processes.map((p: any) => {
       // Detect port: from --env PORT=xxx, or env object, or pm2_env.PORT
       const envObj = p.pm2_env?.env || {};
@@ -71,13 +94,10 @@ const COMMAND_INTERPS = new Set(['npm', 'bun', 'node', 'python3', 'python', 'npx
 router.post('/start', async (req, res) => {
   let ecosystemPath = '';
   try {
-    const { name, script, cwd, port, interpreter, envVars, pkgManager, installDeps } = req.body;
+    const { name, script, cwd, port, interpreter, envVars, pkgManager, installDeps, activeUser } = req.body;
+    const user = activeUser && activeUser !== 'root' ? activeUser : undefined;
 
     // ── Build explicit env block for the new process ──────────────────────────
-    // We MUST use a PM2 ecosystem JSON file rather than --env flags because:
-    //  1. PM2's --env CLI flag selects named ecosystem blocks, NOT key=value pairs
-    //  2. BASE_ENV inherits PORT=5756 from our server process; without an explicit
-    //     env block that inheritance bleeds into every spawned process
     const procEnv: Record<string, string> = {};
     if (port) procEnv.PORT = String(port);
     if (Array.isArray(envVars)) {
@@ -88,10 +108,9 @@ router.post('/start', async (req, res) => {
 
     // ── Also write env to .env in cwd so the app can read via dotenv ─────────
     if (cwd && Object.keys(procEnv).length > 0) {
-      const { readFileSync, writeFileSync, existsSync } = await import('fs');
       const dotenvPath = `${cwd}/.env`;
       let existing = '';
-      try { existing = existsSync(dotenvPath) ? readFileSync(dotenvPath, 'utf-8') : ''; } catch { existing = ''; }
+      try { existing = fs.existsSync(dotenvPath) ? fs.readFileSync(dotenvPath, 'utf-8') : ''; } catch { existing = ''; }
       const dotLines = existing ? existing.split('\n') : [];
       const setVar = (k: string, v: string) => {
         const idx = dotLines.findIndex(l => l.startsWith(`${k}=`) || l.startsWith(`${k} =`));
@@ -99,7 +118,7 @@ router.post('/start', async (req, res) => {
         else dotLines.push(`${k}=${v}`);
       };
       for (const [k, v] of Object.entries(procEnv)) setVar(k, v);
-      writeFileSync(dotenvPath, dotLines.join('\n').replace(/\n+$/, '') + '\n', 'utf-8');
+      fs.writeFileSync(dotenvPath, dotLines.join('\n').replace(/\n+$/, '') + '\n', 'utf-8');
     }
 
     // ── Detect script type ────────────────────────────────────────────────────
@@ -113,7 +132,6 @@ router.post('/start', async (req, res) => {
     const appEntry: Record<string, unknown> = { name };
 
     if (isCommandStyle) {
-      // e.g. "npm start", "bun run app.js", "python app.py"
       appEntry.script = parts[0];
       if (parts.length > 1) appEntry.args = parts.slice(1).join(' ');
     } else {
@@ -122,40 +140,46 @@ router.post('/start', async (req, res) => {
     }
 
     if (cwd) appEntry.cwd = cwd;
-
-    // Explicitly set env — this overrides anything the PM2 daemon might inherit
-    // Always include at minimum an empty env so PORT=5756 is not forwarded
     appEntry.env = procEnv;
 
     // ── Write temporary ecosystem JSON and start via it ───────────────────────
-    const { writeFileSync, unlinkSync } = await import('fs');
     ecosystemPath = `/tmp/pm2-start-${Date.now()}.json`;
-    writeFileSync(ecosystemPath, JSON.stringify({ apps: [appEntry] }));
+    fs.writeFileSync(ecosystemPath, JSON.stringify({ apps: [appEntry] }));
 
     if (installDeps && cwd) {
       const pm = pkgManager === 'bun' ? 'bun' : 'npm';
       const installCmd = pm === 'bun'
         ? `(command -v bun >/dev/null 2>&1 || npm install -g bun) && cd "${cwd}" && bun install 2>&1`
         : `${NVM_PREFIX}cd "${cwd}" && npm install 2>&1`;
-      await execAsync(installCmd, { timeout: 300000, env: BASE_ENV }).catch(() => {});
+      if (user) {
+        await runAsUser(installCmd, user).catch(() => {});
+      } else {
+        await execAsync(installCmd, { timeout: 300000, env: BASE_ENV }).catch(() => {});
+      }
     }
 
-    await execAsync(`${NVM_PREFIX}pm2 start ${JSON.stringify(ecosystemPath)}`, { timeout: 60000, env: BASE_ENV });
-    await execAsync(`${NVM_PREFIX}pm2 save`, { timeout: 10000, env: BASE_ENV }).catch(() => {});
-    await execAsync(`${NVM_PREFIX}pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null`, { timeout: 15000, env: BASE_ENV }).catch(() => {});
+    await runPM2(`start ${JSON.stringify(ecosystemPath)}`, user);
+    await runPM2('save', user).catch(() => {});
+
+    // Only set up PM2 startup for the root user (it requires root privileges)
+    if (!user) {
+      await execAsync(`${NVM_PREFIX}pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null`, { timeout: 15000, env: BASE_ENV }).catch(() => {});
+    }
+
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   } finally {
     if (ecosystemPath) {
-      try { const { unlinkSync } = await import('fs'); unlinkSync(ecosystemPath); } catch {}
+      try { fs.unlinkSync(ecosystemPath); } catch {}
     }
   }
 });
 
 router.post('/:id/stop', async (req, res) => {
   try {
-    await runPM2(`stop ${req.params.id}`);
+    const user = resolveUser(req.query);
+    await runPM2(`stop ${req.params.id}`, user);
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -164,8 +188,9 @@ router.post('/:id/stop', async (req, res) => {
 
 router.post('/:id/start', async (req, res) => {
   try {
-    await runPM2(`start ${req.params.id}`);
-    execAsync('pm2 save').catch(() => {});
+    const user = resolveUser(req.query);
+    await runPM2(`start ${req.params.id}`, user);
+    runPM2('save', user).catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -174,8 +199,9 @@ router.post('/:id/start', async (req, res) => {
 
 router.post('/:id/restart', async (req, res) => {
   try {
-    await runPM2(`restart ${req.params.id}`);
-    execAsync('pm2 save').catch(() => {});
+    const user = resolveUser(req.query);
+    await runPM2(`restart ${req.params.id}`, user);
+    runPM2('save', user).catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -184,8 +210,9 @@ router.post('/:id/restart', async (req, res) => {
 
 router.post('/:id/delete', async (req, res) => {
   try {
-    await runPM2(`delete ${req.params.id}`);
-    await execAsync('pm2 save');
+    const user = resolveUser(req.query);
+    await runPM2(`delete ${req.params.id}`, user);
+    await runPM2('save', user);
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -195,8 +222,8 @@ router.post('/:id/delete', async (req, res) => {
 router.get('/:id/logs', async (req, res) => {
   try {
     const id = req.params.id;
-    // Get full process list (raw jlist includes pm2_env with log file paths)
-    const processes = await listProcesses();
+    const user = resolveUser(req.query);
+    const processes = await listProcesses(user);
     const proc = processes.find((p: any) =>
       String(p.pm_id) === String(id) || p.name === id
     );
@@ -219,7 +246,6 @@ router.get('/:id/logs', async (req, res) => {
       return res.json({ success: true, data: content || '(no log output yet)' });
     }
 
-    // Fallback: pm2 logs with a short timeout & limited lines
     const { stdout } = await execAsync(
       `pm2 logs ${id} --lines 100 --nostream --no-color 2>&1`,
       { timeout: 12000 }
@@ -239,7 +265,9 @@ const ALLOWED_PM2_CMDS = [
 
 router.post('/terminal', async (req, res) => {
   try {
-    const { command } = req.body as { command: string };
+    const { command, activeUser } = req.body as { command: string; activeUser?: string };
+    const user = activeUser && activeUser !== 'root' ? activeUser : undefined;
+
     if (!command || typeof command !== 'string') {
       return res.status(400).json({ success: false, error: 'command is required' });
     }
@@ -251,7 +279,7 @@ router.post('/terminal', async (req, res) => {
       return res.status(400).json({ success: false, error: `Command not allowed: ${firstWord}` });
     }
 
-    // `logs` can hang with pm2 daemon — read files directly instead
+    // `logs` — read log files directly (pm2 logs can hang)
     if (firstWord === 'logs') {
       const nameOrId = parts[1] || '';
       const lines = parseInt(
@@ -259,7 +287,7 @@ router.post('/terminal', async (req, res) => {
         10
       ) || 100;
 
-      const processes = await listProcesses();
+      const processes = await listProcesses(user);
       const proc = processes.find((p: any) =>
         !nameOrId || String(p.pm_id) === nameOrId || p.name === nameOrId
       );
@@ -280,7 +308,6 @@ router.post('/terminal', async (req, res) => {
         }
         return res.json({ success: true, data: content || '(no log output yet)' });
       }
-      // No log path found — fallback with nostream
       const { stdout } = await execAsync(
         `pm2 logs ${nameOrId} --lines ${lines} --nostream --no-color 2>&1`,
         { timeout: 15000 }
@@ -288,7 +315,7 @@ router.post('/terminal', async (req, res) => {
       return res.json({ success: true, data: stdout || '(no logs)' });
     }
 
-    const { stdout, stderr } = await execAsync(`pm2 ${args} 2>&1`, { timeout: 20000, env: COLOR_ENV });
+    const { stdout, stderr } = await runPM2(args, user);
     res.json({ success: true, data: stdout || stderr || '(no output)' });
   } catch (e: any) {
     res.json({ success: true, data: e.stdout || e.stderr || e.message || 'Error running command' });
