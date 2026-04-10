@@ -977,18 +977,22 @@ router.post('/:type/close-external', async (req, res) => {
     if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
 
     const script = `
-# 1. Close firewall
+# 1. Close firewall — remove ALL instances of ACCEPT rules for this port (handles duplicates)
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw delete allow ${port}/tcp 2>&1 || true
   ufw reload 2>/dev/null || true
-  echo "FW_CLOSED=1"
-elif command -v iptables >/dev/null 2>&1; then
-  iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || true
-  echo "FW_CLOSED=1"
 fi
-iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || true
-iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || true
-iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || true
+# Flush ALL iptables ACCEPT rules for this port (loop until none remain)
+for i in 1 2 3 4 5 6 7 8; do
+  iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || break
+done
+# Remove rate-limit rules
+for i in 1 2 3; do
+  iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || true
+  iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || true
+done
+REMAINING=$(iptables -L INPUT -n 2>/dev/null | grep -c "dpt:${port}" || echo 0)
+echo "FW_CLOSED=1 remaining_rules=$REMAINING"
 
 # 2. Revert bind address back to localhost and restart
 case "${type}" in
@@ -1020,7 +1024,7 @@ case "${type}" in
 esac
 echo "DONE"
 `.trim();
-    const out = await run(`bash -c ${JSON.stringify(script)}`, 20000);
+    const out = await run(`bash -c ${JSON.stringify(script)}`, 45000);
     res.json({ success: true, port, closed: out.includes('FW_CLOSED=1') || out.includes('DONE') });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
