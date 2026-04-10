@@ -1002,8 +1002,8 @@ export default function DatabasesPage() {
                 </div>
               )}
 
-              {/* Connection String + Change Password */}
-              <div className="mt-auto pt-3 border-t border-[var(--line)] hidden md:block">
+              {/* Connection String + Change Password — always visible, including mobile */}
+              <div className="mt-auto pt-3 border-t border-[var(--line)]">
                 <p className="text-[10px] text-[var(--muted)] uppercase font-semibold tracking-wider mb-2 flex items-center gap-1">
                   <Link2 size={9} /> Connection
                 </p>

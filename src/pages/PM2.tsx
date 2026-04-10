@@ -103,6 +103,7 @@ export default function PM2Page() {
   const [ghRunInstall, setGhRunInstall] = useState(true);
   const [ghCloning, setGhCloning] = useState(false);
   const [ghCloneOutput, setGhCloneOutput] = useState("");
+  const [ghDepsInstalled, setGhDepsInstalled] = useState(false);
 
   const [startEnvVars, setStartEnvVars] = useState<{ key: string; value: string }[]>([]);
   const [pkgManager, setPkgManager] = useState<"npm" | "bun">("npm");
@@ -504,6 +505,7 @@ export default function PM2Page() {
         }));
         setScriptCheck(null);
         setEnvCheck(null);
+        if (ghRunInstall) setGhDepsInstalled(true);
         toast.success(`Cloned ${ghRepoInfo.owner}/${ghRepoInfo.repo} on remote`);
       } else {
         const { data } = await api.post("/github/clone", {
@@ -521,6 +523,7 @@ export default function PM2Page() {
           }));
           setScriptCheck(null);
           setEnvCheck(null);
+          if (ghRunInstall) setGhDepsInstalled(true);
           toast.success(`Cloned ${ghRepoInfo.owner}/${ghRepoInfo.repo}`);
         } else { toast.error(data.error || "Clone failed"); }
       }
@@ -1251,10 +1254,16 @@ export default function PM2Page() {
               <Package2 size={13} className="text-[var(--accent)] shrink-0" />
               <span className="text-xs font-medium">Dependencies</span>
             </div>
+            {ghDepsInstalled ? (
+              <p className="text-[11px] text-green-400 flex items-center gap-1.5">
+                <span>✓</span> Dependencies were installed during clone — no need to reinstall.
+              </p>
+            ) : (
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" checked={installDepsBeforeStart} onChange={e => setInstallDepsBeforeStart(e.target.checked)} className="rounded accent-[var(--accent)]" />
               <span className="text-xs">Install dependencies before starting (requires Working Directory)</span>
             </label>
+            )}
             {installDepsBeforeStart && (
               <div>
                 <p className="text-[10px] text-[var(--muted)] mb-2">Package manager to use:</p>

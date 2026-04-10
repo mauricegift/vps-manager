@@ -21,23 +21,25 @@ router.post('/clone', async (req, res) => {
       return res.status(400).json({ success: false, error: 'repoUrl and dir are required' });
     }
 
-    // Extract repo name from URL (e.g. "user/my-repo" → "my-repo")
+    // Extract repo slug from URL (e.g. "user/my-repo")
     const repoSlug = repoUrl
       .replace(/^https?:\/\/github\.com\//, '')
       .replace(/\.git$/, '');
-    const repoName = repoSlug.split('/').pop() || 'repo';
 
-    // Clone destination is always {dir}/{repoName}
-    const cloneTarget = path.join(dir, repoName);
+    // `dir` is the FULL destination path (e.g. /root/apps/atassa).
+    // Split into parent dir + clone folder name so git creates exactly the path the user expects.
+    const parentDir  = path.dirname(dir);   // /root/apps
+    const cloneName  = path.basename(dir);  // atassa
+    const cloneTarget = dir;                // /root/apps/atassa  (= parentDir/cloneName)
 
     // Build authenticated clone URL
     const cloneUrl = token
       ? `https://${token}@github.com/${repoSlug}.git`
       : `https://github.com/${repoSlug}.git`;
 
-    // Ensure the parent dir exists
-    if (!existsSync(dir)) {
-      await mkdir(dir, { recursive: true });
+    // Ensure the parent dir exists (not the clone target itself — git creates that)
+    if (!existsSync(parentDir)) {
+      await mkdir(parentDir, { recursive: true });
     }
 
     // Source NVM + widen PATH so npm/node/git are found even under PM2
@@ -49,12 +51,12 @@ router.post('/clone', async (req, res) => {
       PATH: [process.env.PATH, '/usr/local/bin', '/usr/bin', '/bin'].filter(Boolean).join(':'),
     };
 
-    // Clone into parent dir — git creates the {repoName} subfolder automatically
-    const cloneCmd = `${NVM_PREFIX}git clone --progress ${JSON.stringify(cloneUrl)} ${JSON.stringify(repoName)}`;
+    // Clone into parentDir — git creates the {cloneName} subfolder automatically
+    const cloneCmd = `${NVM_PREFIX}git clone --progress ${JSON.stringify(cloneUrl)} ${JSON.stringify(cloneName)}`;
     let output = '';
     try {
       const { stdout, stderr } = await execAsync(cloneCmd, {
-        cwd: dir,
+        cwd: parentDir,
         timeout: 120_000,
         env: WIDE_ENV,
       });

@@ -79,7 +79,14 @@ export default function FileManagerPage() {
       setSelected(null);
       return;
     }
-    // Local: ask the server for the real home dir (avoids hardcoding /home/runner etc.)
+    // Local: if a non-root user is active, go straight to their home dir.
+    // Only ask the server for root (it returns the process home which is always /root).
+    const activeUser = localStorage.getItem("vpsm_active_user") || "";
+    if (activeUser && activeUser !== "root") {
+      setPath(`/home/${activeUser}`);
+      setSelected(null);
+      return;
+    }
     setPath(null); // clear while fetching to block the file query
     api.get("/system/homedir")
       .then(r => {
