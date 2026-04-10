@@ -15,6 +15,7 @@ import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 
 async function collectFolderEntries(entry: FileSystemEntry, prefix: string): Promise<{ file: File; relativePath: string }[]> {
   if (entry.isFile) {
@@ -65,9 +66,17 @@ export default function FileManagerPage() {
   const dark = theme === "dark";
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
 
+  const { user } = useAuth();
   const [path, setPath] = useState(() =>
-    activeServer ? defaultPath(activeServer.username) : "/home/runner/workspace"
+    activeServer ? defaultPath(activeServer.username) : defaultPath(user?.username)
   );
+
+  useEffect(() => {
+    if (!activeServer && user?.username) {
+      setPath(p => p === "/" || p === "/home/runner/workspace" ? defaultPath(user.username) : p);
+    }
+  }, [user?.username, activeServer]);
+
   const [selected, setSelected] = useState<FileItem | null>(null);
   const [clipboard, setClipboard] = useState<{ item: FileItem; op: "cut" | "copy" } | null>(null);
 
