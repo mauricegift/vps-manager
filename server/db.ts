@@ -20,6 +20,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
+// Prevent pool errors (e.g. PostgreSQL restart) from crashing the server
+pool.on('error', (err) => {
+  console.error('[db] Pool client error (PostgreSQL may have restarted):', err.message);
+});
+
 export async function initDB() {
   try {
     await pool.query(`
