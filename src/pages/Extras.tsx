@@ -1000,9 +1000,13 @@ export default function ExtrasPage() {
                 </button>
                 <button
                   onClick={() => {
-                    if (motdQuery.data?.motd) setMotdContent(motdQuery.data.motd);
+                    if (motdMode === "motd") {
+                      setMotdContent(motdQuery.data?.motd || "");
+                    } else {
+                      setMotdContent(motdQuery.data?.custom || "");
+                    }
                   }}
-                  disabled={!motdQuery.data?.motd}
+                  disabled={motdMode === "motd" ? !motdQuery.data?.motd : !motdQuery.data?.custom}
                   className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-40 transition-colors"
                 >
                   <Eye size={12} /> Load Current
