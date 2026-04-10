@@ -67,6 +67,37 @@ async function mysqlRun(sql: string, dbname = '', opts = '-N'): Promise<string> 
   return '';
 }
 
+async function mysqlExec(sql: string, dbname = ''): Promise<void> {
+  const dbArg = dbname ? ` "${dbname}"` : '';
+  const cmds = [
+    `mysql --defaults-file=/etc/mysql/debian.cnf -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
+    `sudo mysql -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
+    `mysql -uroot --socket=/var/run/mysqld/mysqld.sock -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
+    `mysql -uroot -h 127.0.0.1 -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
+    `mysql -uroot -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
+  ];
+  const errors: string[] = [];
+  for (const cmd of cmds) {
+    try {
+      const { stdout, stderr } = await execAsync(cmd, { timeout: 10000 });
+      const out = (stdout + stderr).toLowerCase();
+      if (out.includes('access denied') || out.includes('error 1044') || out.includes('error 1227')) {
+        errors.push((stdout + stderr).trim());
+        continue;
+      }
+      return;
+    } catch (e: any) {
+      const msg: string = (e.stdout || e.stderr || e.message || '').toLowerCase();
+      if (msg.includes('access denied') || msg.includes('error 1044') || msg.includes('error 1227')) {
+        errors.push(e.message || msg);
+        continue;
+      }
+      errors.push(e.message || 'unknown error');
+    }
+  }
+  throw new Error(errors.length ? errors[errors.length - 1] : 'All MySQL auth methods failed');
+}
+
 async function mongoshRun(db: string, jsExpr: string): Promise<string> {
   const cmds = [
     `mongosh --quiet "${db}" --eval ${JSON.stringify(jsExpr)} 2>/dev/null`,
@@ -653,22 +684,18 @@ router.post('/:type/create', async (req, res) => {
       return res.json({ success: true, username });
     }
     if (type === 'mysql' || type === 'mariadb') {
-      const sql = [
-        `CREATE DATABASE IF NOT EXISTS ${safeName};`,
-        ...(password ? [
-          `CREATE USER IF NOT EXISTS '${safeName}'@'%' IDENTIFIED BY '${safePwd}';`,
-          `ALTER USER '${safeName}'@'%' IDENTIFIED BY '${safePwd}';`,
-          `GRANT ALL PRIVILEGES ON ${safeName}.* TO '${safeName}'@'%';`,
-          `FLUSH PRIVILEGES;`
-        ] : [])
-      ].join('\n');
-      const b64sql = Buffer.from(sql).toString('base64');
-      await execAsync(
-        `(echo '${b64sql}' | base64 -d | mysql --defaults-file=/etc/mysql/debian.cnf 2>/dev/null` +
-        ` || echo '${b64sql}' | base64 -d | sudo mysql 2>/dev/null` +
-        ` || echo '${b64sql}' | base64 -d | mysql -uroot 2>/dev/null)`,
-        { timeout: 15000 }
-      );
+      await mysqlExec(`CREATE DATABASE IF NOT EXISTS \`${safeName}\``);
+      if (password) {
+        const grantSql = [
+          `CREATE USER IF NOT EXISTS '${safeName}'@'%' IDENTIFIED BY '${safePwd}'`,
+          `ALTER USER '${safeName}'@'%' IDENTIFIED BY '${safePwd}'`,
+          `GRANT ALL PRIVILEGES ON \`${safeName}\`.* TO '${safeName}'@'%'`,
+          `FLUSH PRIVILEGES`,
+        ];
+        for (const stmt of grantSql) {
+          try { await mysqlExec(stmt); } catch { /* non-fatal: db still created */ }
+        }
+      }
       return res.json({ success: true, username: password ? safeName : 'root' });
     }
     if (type === 'mongodb') {
@@ -704,7 +731,7 @@ router.delete('/postgresql/:dbname', async (req, res) => {
 router.delete('/mysql/:dbname', async (req, res) => {
   const db = req.params.dbname.replace(/['"`;]/g, '');
   try {
-    await mysqlRun(`DROP DATABASE IF EXISTS \`${db}\``);
+    await mysqlExec(`DROP DATABASE IF EXISTS \`${db}\``);
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -712,7 +739,7 @@ router.delete('/mysql/:dbname', async (req, res) => {
 router.delete('/mariadb/:dbname', async (req, res) => {
   const db = req.params.dbname.replace(/['"`;]/g, '');
   try {
-    await mysqlRun(`DROP DATABASE IF EXISTS \`${db}\``);
+    await mysqlExec(`DROP DATABASE IF EXISTS \`${db}\``);
     res.json({ success: true });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
