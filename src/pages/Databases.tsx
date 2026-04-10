@@ -168,9 +168,18 @@ export default function DatabasesPage() {
     onError: (e: any) => toast.error(e.response?.data?.error || "Action failed — root access may be required"),
   });
 
+  const REMOTE_PURGE: Record<string, string> = {
+    postgresql: "systemctl stop postgresql 2>/dev/null; rm -rf /var/lib/postgresql 2>/dev/null; true",
+    mysql:      "systemctl stop mysql mysqld 2>/dev/null; rm -rf /var/lib/mysql 2>/dev/null; true",
+    mongodb:    "systemctl stop mongod mongodb 2>/dev/null; rm -rf /var/lib/mongodb 2>/dev/null; true",
+    redis:      "systemctl stop redis-server redis 2>/dev/null; rm -rf /var/lib/redis 2>/dev/null; true",
+    mariadb:    "systemctl stop mariadb mysql 2>/dev/null; rm -rf /var/lib/mysql 2>/dev/null; true",
+  };
+
   const runInstall = async (db: DB, opts?: { port?: string; password?: string }) => {
     setInstallTarget(null);
     setActionLoading(`install-${db.type}`);
+    qc.removeQueries({ queryKey: ["databases"] });
     try {
       let output = "";
       const pkgMap: Record<string, string> = {
@@ -178,13 +187,15 @@ export default function DatabasesPage() {
         redis: "redis-server", sqlite: "sqlite3", mariadb: "mariadb-server",
       };
       const pkg = pkgMap[db.type] || db.type;
+      const purge = REMOTE_PURGE[db.type] || "true";
       const _AW = "flock -w 120 /var/lib/dpkg/lock-frontend /bin/true 2>/dev/null || (rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null && dpkg --configure -a 2>/dev/null) || true";
-      let installCmd = `${_AW} && DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ${_AW} && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg} 2>&1`;
+      let installCmd = `${purge} && ${_AW} && DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ${_AW} && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg} 2>&1`;
 
       // MongoDB requires official repo setup — works across Ubuntu 20/22/24 and Debian 11/12
       if (db.type === "mongodb") {
         const AW = "flock -w 120 /var/lib/dpkg/lock-frontend /bin/true 2>/dev/null || (rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null && dpkg --configure -a 2>/dev/null) || true";
         installCmd = [
+          `systemctl stop mongod mongodb 2>/dev/null; rm -rf /var/lib/mongodb 2>/dev/null; true`,
           `export DEBIAN_FRONTEND=noninteractive`,
           `${AW}`,
           `OS_ID=$(. /etc/os-release 2>/dev/null && echo "$ID" || echo ubuntu)`,
