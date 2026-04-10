@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -13,6 +13,7 @@ import Modal from "@/components/ui/Modal";
 import type { DockerContainer, DockerImage, DockerCompose } from "@/types";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
+import { useAuth } from "@/context/AuthContext";
 
 function fmtSize(b: number) {
   if (b > 1e9) return (b / 1e9).toFixed(1) + " GB";
@@ -42,9 +43,16 @@ CMD ["node", "server.js"]
 
 const inpCls = "w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none transition-colors";
 
+function defaultComposeDir(activeUser?: string) {
+  const su = localStorage.getItem("vpsm_active_user") || "";
+  const u = su && su !== "root" ? su : (activeUser && activeUser !== "root" ? activeUser : "");
+  return u ? `/home/${u}/web/my-project` : "/root/web/my-project";
+}
+
 export default function DockerPage() {
   const qc = useQueryClient();
   const { activeServer } = useRemoteServer();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = (searchParams.get("tab") as Tab) || "containers";
   const setTab = (t: Tab) => setSearchParams(p => { p.set("tab", t); return p; }, { replace: true });
@@ -60,7 +68,7 @@ export default function DockerPage() {
 
   // Compose YAML creation
   const [composeModal, setComposeModal] = useState(false);
-  const [newComposeDir, setNewComposeDir] = useState("/root/web/my-project");
+  const [newComposeDir, setNewComposeDir] = useState(() => defaultComposeDir());
   const [newComposeYaml, setNewComposeYaml] = useState(DEFAULT_COMPOSE_YAML);
 
   // Compose YAML edit
@@ -82,6 +90,25 @@ export default function DockerPage() {
   const [buildContext, setBuildContext] = useState("");
   const [buildDockerfile, setBuildDockerfile] = useState(DEFAULT_DOCKERFILE);
   const [buildOutput, setBuildOutput] = useState<string | null>(null);
+
+  // After mount, update compose dir if JWT user is non-root and vpsm_active_user is not set
+  useEffect(() => {
+    const stored = localStorage.getItem("vpsm_active_user") || "";
+    if (!stored && user?.username && user.username !== "root") {
+      setNewComposeDir(defaultComposeDir(user.username));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.username]);
+
+  // Listen for user-switch from Extras page
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const username: string = (e as CustomEvent).detail?.username || "";
+      setNewComposeDir(defaultComposeDir(username));
+    };
+    window.addEventListener("vpsm:user-change", handler);
+    return () => window.removeEventListener("vpsm:user-change", handler);
+  }, []);
 
   const { data: versionInfo, isLoading: versionLoading } = useQuery({
     queryKey: ["docker-version", activeServer?.id ?? "local"],
@@ -171,7 +198,7 @@ export default function DockerPage() {
       qc.invalidateQueries({ queryKey: ["docker-compose"] });
       setComposeModal(false);
       setNewComposeYaml(DEFAULT_COMPOSE_YAML);
-      setNewComposeDir("/root/web/my-project");
+      setNewComposeDir(defaultComposeDir(user?.username));
     },
     onError: (e: any) => toast.error(e.response?.data?.error || "Failed to create compose project"),
   });
