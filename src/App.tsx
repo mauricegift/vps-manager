@@ -1,6 +1,9 @@
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, Outlet } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import Layout from "@/components/layout/Layout";
+import PublicLayout from "@/components/layout/PublicLayout";
+import ProtectedRoute from "@/components/ui/ProtectedRoute";
+
 import Dashboard from "@/pages/Dashboard";
 import PM2Page from "@/pages/PM2";
 import DockerPage from "@/pages/Docker";
@@ -10,6 +13,22 @@ import TerminalPage from "@/pages/Terminal";
 import ServersPage from "@/pages/Servers";
 import ExtrasPage from "@/pages/Extras";
 import NginxPage from "@/pages/Nginx";
+
+import LoginPage from "@/pages/auth/Login";
+import RegisterPage from "@/pages/auth/Register";
+import LandingPage from "@/pages/public/Landing";
+import AboutPage from "@/pages/public/About";
+import TermsPage from "@/pages/public/Terms";
+import PrivacyPage from "@/pages/public/Privacy";
+import ContactPage from "@/pages/public/Contact";
+
+function PublicWrapper() {
+  return (
+    <PublicLayout>
+      <Outlet />
+    </PublicLayout>
+  );
+}
 
 export default function App() {
   return (
@@ -25,7 +44,27 @@ export default function App() {
         theme="dark"
       />
       <Routes>
-        <Route element={<Layout />}>
+        {/* ── Auth pages (standalone, no shell) ─────────────── */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+
+        {/* ── Public pages (public header/footer) ────────────── */}
+        <Route element={<PublicWrapper />}>
+          <Route path="/home" element={<LandingPage />} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/contact" element={<ContactPage />} />
+        </Route>
+
+        {/* ── Protected pages (app layout, requires auth) ─────── */}
+        <Route
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
           <Route path="/" element={<Dashboard />} />
           <Route path="/pm2" element={<PM2Page />} />
           <Route path="/docker" element={<DockerPage />} />

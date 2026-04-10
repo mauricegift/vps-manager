@@ -9,6 +9,7 @@ import AOS from "aos";
 import "aos/dist/aos.css";
 import { ThemeProvider } from "./context/ThemeContext";
 import { RemoteServerProvider } from "./context/RemoteServerContext";
+import { AuthProvider } from "./context/AuthContext";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10_000 } },
@@ -69,13 +70,15 @@ function Root() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
-      <RemoteServerProvider>
-        <QueryClientProvider client={queryClient}>
-          <BrowserRouter>
-            <Root />
-          </BrowserRouter>
-        </QueryClientProvider>
-      </RemoteServerProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <RemoteServerProvider>
+            <QueryClientProvider client={queryClient}>
+              <Root />
+            </QueryClientProvider>
+          </RemoteServerProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </ThemeProvider>
   </StrictMode>
 );

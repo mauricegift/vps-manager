@@ -1,11 +1,13 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Server, Container, Database,
   FolderOpen, Terminal, Menu, Activity, Globe, Sun, Moon,
-  Unplug, Wifi, Sparkles, Shield
+  Unplug, Wifi, Sparkles, Shield, LogOut, User
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { useRemoteServer } from "@/context/RemoteServerContext";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "react-toastify";
 
 const nav = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -25,6 +27,14 @@ export default function Header({ onMenuToggle }: Props) {
   const { pathname } = useLocation();
   const { theme, toggleTheme } = useTheme();
   const { activeServer, disconnect } = useRemoteServer();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    toast.success("Logged out successfully");
+    navigate("/login");
+  };
 
   return (
     <header
@@ -92,6 +102,22 @@ export default function Header({ onMenuToggle }: Props) {
             >
               {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
             </button>
+
+            {user && (
+              <div className="hidden sm:flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-[var(--line)] text-xs text-[var(--muted)]">
+                  <User size={12} />
+                  <span className="max-w-[80px] truncate font-medium text-[var(--main)]">{user.username}</span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  title="Sign out"
+                  className="p-2 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:text-red-400 hover:border-red-400/40 hover:bg-red-500/5 transition-colors"
+                >
+                  <LogOut size={15} />
+                </button>
+              </div>
+            )}
 
             <button
               onClick={onMenuToggle}

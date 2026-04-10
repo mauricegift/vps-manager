@@ -19,6 +19,8 @@ import remoteRouter from './routes/remote.js';
 import extrasRouter from './routes/extras.js';
 import nginxRouter from './routes/nginx.js';
 import githubRouter from './routes/github.js';
+import authRouter from './routes/auth.js';
+import { requireAuth } from './middleware/auth.js';
 import { initDB } from './db.js';
 import pool from './db.js';
 
@@ -54,17 +56,19 @@ const io = new SocketIO(httpServer, {
 app.use(cors(corsOpts));
 app.use(express.json());
 
-app.use('/api/system', systemRouter);
-app.use('/api/pm2', pm2Router);
-app.use('/api/docker', dockerRouter);
-app.use('/api/databases', databasesRouter);
-app.use('/api/files', filesRouter);
-app.use('/api/vps', vpsRouter);
-app.use('/api/servers', serversRouter);
-app.use('/api/remote', remoteRouter);
-app.use('/api/extras', extrasRouter);
-app.use('/api/nginx', nginxRouter);
-app.use('/api/github', githubRouter);
+app.use('/api/auth', authRouter);
+
+app.use('/api/system', requireAuth, systemRouter);
+app.use('/api/pm2', requireAuth, pm2Router);
+app.use('/api/docker', requireAuth, dockerRouter);
+app.use('/api/databases', requireAuth, databasesRouter);
+app.use('/api/files', requireAuth, filesRouter);
+app.use('/api/vps', requireAuth, vpsRouter);
+app.use('/api/servers', requireAuth, serversRouter);
+app.use('/api/remote', requireAuth, remoteRouter);
+app.use('/api/extras', requireAuth, extrasRouter);
+app.use('/api/nginx', requireAuth, nginxRouter);
+app.use('/api/github', requireAuth, githubRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 

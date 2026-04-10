@@ -1,272 +1,230 @@
 # VPS Manager
 
-> A professional full-stack VPS control panel built with React + TypeScript + Express.
-> Manage PM2 processes, Docker containers, databases, files, Nginx, SSL, and SSH terminals across unlimited remote servers — all from one clean, responsive UI.
+A modern, self-hosted web control panel for managing your Linux VPS — PM2, Docker, Nginx, databases, files and a full web terminal, all in one place.
 
-**Author:** [Gifted Tech](https://me.giftedtech.co.ke) · [GitHub @mauricegift](https://github.com/mauricegift)
+[![GitHub](https://img.shields.io/badge/GitHub-mauricegift%2Fvps--manager-blue?logo=github)](https://github.com/mauricegift/vps-manager)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
 
 ## Features
 
-### Process Manager (PM2)
-- View all PM2 processes with CPU, memory, uptime, restarts, and status badges
-- Start, stop, restart, reload, and delete processes
-- View live logs per process in a themed terminal modal
-- **New Process form**:
-  - Script/entry-file verification — confirm the file exists before submitting
-  - Browse button — opens a server-side file browser to pick the script path
-  - Browse + Verify button row uses `flex-wrap` so it stacks cleanly on mobile
-  - Automatic `.env` detection in the working directory
-  - Port field — writes `PORT=xxx` to `cwd/.env` instead of passing `--env PORT` (more compatible)
-- **Import .env** button — paste raw `.env` file lines (`KEY=VALUE`) or JSON (`{"KEY":"val"}`) to bulk-import environment variables into the new process form
-- **Clone from GitHub** — pull a repo directly onto the server (or remote VPS via SSH), auto-installs dependencies and starts with PM2
-- PM2 terminal for running `pm2 list`, `pm2 logs`, `pm2 monit`, etc.
-- Auto-install PM2 if not present with one click
-- **Remote start saves automatically** — all remote `pm2 start` commands append `&& pm2 save` so processes persist across reboots
-- **File browser error handling** — on folder-open failure the item list is cleared and the exact error is shown in a toast
-- Full remote server support — all actions run on the connected remote VPS via SSH
-
-### Docker
-- **Containers**: list all, start, stop, restart, remove, view logs
-- **Images**: list, pull from registry, delete
-  - **Pull with custom port mapping** — enter a port map (e.g. `8080:80`) and optionally auto-run the container immediately after pulling
-  - **Build from Dockerfile** — paste a Dockerfile, set image name/tag, optionally set build context path
-- **Compose**: discover all docker-compose projects on the server
-  - Up / Down / Restart each project
-  - View compose logs in modal
-  - Edit `docker-compose.yml` content inline
-  - **Create new compose project** — paste YAML, choose directory, auto-starts with `docker compose up -d`
-- Auto-install Docker if not present
-
-### Databases
-Supports **PostgreSQL**, **MySQL**, **MariaDB**, **MongoDB**, **Redis**, and **SQLite**.
-
-#### Browsing & Querying
-- Browse all databases, tables/collections, and row/document data with pagination (50 rows per page)
-- Run custom SQL queries (PostgreSQL / MySQL / MariaDB / SQLite) or raw MongoDB expressions / Redis commands
-- **Action buttons always visible** — edit and delete buttons pinned to the left of every row in a sticky column (no horizontal scrolling required)
-
-#### PostgreSQL / MySQL / MariaDB / SQLite
-- Edit any row via modal — pre-filled fields, safe SQL `UPDATE ... WHERE`
-- Delete any row — confirmed `DELETE ... WHERE`
-- **Add Row** form auto-generates input fields from column names
-- **New Table** modal — column builder with name + type per column, live SQL `CREATE TABLE` preview
-- **Drop Table** with confirmation
-- MariaDB fully supported in remote SSH mode (tables list, data, and query endpoints)
-
-#### MongoDB
-- Full document CRUD — edit via JSON-aware update, delete via `_id` filter with EJSON ObjectId support
-- **Add Document** — JSON editor modal with `insertOne` support
-- **New Collection** — create a collection by name
-- **Drop Collection** with confirmation
-
-#### Redis
-- Browse keys by type: string, hash, list, set
-- **Type-aware edit commands**:
-  - String → `SET key value`
-  - Hash → `HSET key field value`
-  - List → `LSET key index value`
-  - Set → `SREM old + SADD new`
-- **Type-aware delete commands**:
-  - String → `DEL key`
-  - Hash → `HDEL key field`
-  - List → `LREM key 0 value`
-  - Set → `SREM key member`
-
-#### Remote Database Support
-- All CRUD features work on remote VPS databases via SSH
-- MariaDB fully handled in remote table-data and query routes
-
-### File Manager
-- Browse full directory tree with breadcrumb navigation
-- View files with **syntax highlighting** (50+ languages)
-- Edit files inline in a code-styled editor
-- Create new files and folders
-- Cut, Copy, Paste operations
-- **Multi-file drag-and-drop upload**
-- **Bulk select mode**:
-  - Toggle with the Select button in the toolbar
-  - Check individual items or use "Select All"
-  - **Zip & Download** selected items as a single archive
-    - ZIP excludes language build artifacts: `__pycache__`, `*.pyc`, `.mypy_cache`, `dist/`, `build/`, `.next/`, `target/`, `vendor/`, `venv/`, `.venv/`, `*.egg-info/`
-  - **Bulk delete** selected items with confirmation
-- **Download button** shown inline for every `.zip` file
-- **Clone from GitHub** — clone any repo into a chosen directory (works on remote VPS via SSH exec)
-- Seamlessly switches to SSH remote file browsing when a remote server is active
-
-### Terminal
-- Full interactive bash shell for both local and SSH-remote servers
-- Output follows the **active theme** — dark background in dark mode, light in light mode
-- Colorized output — `ls`, `grep`, `diff`, `ll` aliases applied automatically
-- Remote SSH terminal receives the same color environment on connect
-- Command history with Up/Down arrows
-- Quick-access Ctrl+C, Ctrl+L, Ctrl+D, Tab, history shortcuts
-- `exit` handled gracefully — local shell auto-reconnects, SSH shows session-end message
-- Adjustable font size
-
-### Nginx + SSL
-- Real-time nginx status: running/stopped, version, and available updates
-- **Certbot detection**: installed version and update availability shown on the status card
-- List all config files — enable, disable, delete, view, or edit
-- Create new configs from templates: Static site, Reverse proxy, PHP-FPM, SSL redirect
-- Test configuration, reload, and restart nginx
-- **Let's Encrypt SSL via Certbot**:
-  - Issue certificates for domains
-  - **Webroot path quick-pick presets** — one-click buttons for common paths (`/var/www/html`, `/var/www/letsencrypt`, `/srv/www`, `/usr/share/nginx/html`)
-  - **Step-by-step setup checklist** shown inside the SSL modal: DNS → Nginx config → issue cert → verify — guides you through the full setup
-  - Renew and delete certificates
-- One-click **Refresh** invalidates all cached queries
-- Full remote server support via SSH — certbot status returned in parallel with nginx status
-
-### Software / Extras
-- **System** tab: CPU, memory, disk usage
-- **Software** tab organized by category:
-  - Runtimes: Node.js (multi-version), npm, Bun, Deno, Python, Go, Rust, PM2, pnpm, yarn
-  - Servers & SSL: nginx, Apache, Certbot
-  - Dev Tools: git, curl, wget, rsync, vim, nvim
-  - System Tools: htop, tmux, screen, ufw, fail2ban, jq, unzip
-  - Browsers: Chrome
-  - Install, update, and check for newer versions
-  - **Global operation lock** — all install/update/uninstall buttons are disabled while any operation is running, preventing concurrent conflicts
-- **Users** tab: list all system users with home directory, shell, and UID
-- **Swap** tab:
-  - Create or resize a swap file in one click
-  - Always runs `swapoff /swapfile && rm -f /swapfile` before creating, so it works even when a swap file already exists
-- **MOTD** tab:
-  - Edit the Message of the Day (`/etc/motd`) in a code editor
-  - **View Current MOTD** button — shows current live MOTD in a read-only modal
-  - **Load Current** button — pulls the live MOTD into the editor so you can build on it
-  - Save applies the new MOTD to the server instantly
-
-### Cloud Tools (Extras → Cloud)
-- **Tailscale**:
-  - Install, start, connect with one click
-  - Connect command uses `--accept-routes` by default
-  - **Auth URL hint** — if the connect output includes a login URL (`https://...`), it is highlighted automatically with a click-to-copy link
-  - **Routes Info** button shows `tailscale status` in the output panel
-  - Tips displayed for `--advertise-routes` and `--accept-routes` flags
-- **Cloudflare Tunnel (cloudflared)**:
-  - Install, start, stop, restart
-  - **Setup Instructions panel** — step-by-step guide: `cloudflared login` → create tunnel → write `config.yml` → start service
-  - **Login** button runs `cloudflared login` and shows the browser-auth URL in the output
-  - Improved start-button output shows failure reason clearly
-- **Wrangler**:
-  - Install, run commands locally
-  - **Remote panel**: when a remote server is active, a dedicated `WranglerRemotePanel` prompts for a `CLOUDFLARE_API_TOKEN` before running any wrangler command — token is passed as an environment variable per-command, never stored
-
-### Remote Servers
-- Add unlimited VPS connections (IP, port, username, password or SSH key)
-- One-click connect — all pages (PM2, Docker, Databases, Files, Nginx, Terminal, Extras) switch to remote context
-- Test connection before saving
-- View basic server info and uptime for each connected server
-- GitHub tokens stored per-session and shared across PM2 and FileManager clone flows
+| Module | What you can do |
+|---|---|
+| **Dashboard** | System stats (CPU, RAM, disk), uptime, quick overview |
+| **PM2** | Start/stop/restart processes, view logs, deploy from GitHub |
+| **Docker** | Manage containers, images and volumes |
+| **Databases** | Browse and query PostgreSQL, MySQL and SQLite |
+| **File Manager** | Upload, edit (syntax-highlighted), download, zip files |
+| **Terminal** | Full interactive bash shell in the browser (local + remote SSH) |
+| **Nginx** | Create/edit reverse proxy configs and manage SSL via Let's Encrypt |
+| **Extras** | System tools, cron jobs, firewall, env editor and more |
+| **Servers** | Connect and manage multiple remote VPS servers |
 
 ---
 
-## Installation
+## Authentication
 
-### Automated (recommended)
+VPS Manager includes a built-in, JWT-based authentication system.
+
+### How it works
+
+- On first visit, new users are prompted to **create an account** at `/register`
+- After registering (or logging in at `/login`), a **JWT access token** (valid for **24 hours**) is issued
+- A **refresh token** (valid for **7 days**) is stored server-side and rotated on each use
+- All API routes (except `/api/auth/*`) require a valid `Authorization: Bearer <token>` header
+- The frontend automatically refreshes the access token in the background when it expires
+- Logging out immediately invalidates the refresh token server-side
+
+### Public pages (no login required)
+
+| Route | Description |
+|---|---|
+| `/home` | Landing / marketing page |
+| `/about` | About the project |
+| `/contact` | Contact and links |
+| `/terms` | Terms of Service |
+| `/privacy` | Privacy Policy |
+| `/login` | Sign in |
+| `/register` | Create account |
+
+All other routes (`/`, `/pm2`, `/docker`, `/files`, etc.) require authentication. Unauthenticated visitors are automatically redirected to `/login`.
+
+---
+
+## Quick Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | bash
 ```
 
-### Manual
-
-```bash
-git clone https://github.com/mauricegift/vps-manager.git
-cd vps-manager
-chmod +x install.sh
-./install.sh
-```
-
 The installer will:
-1. Install Node.js **24** via NVM (installs/upgrades NVM automatically)
-2. Install PM2 globally (if missing) and configure startup on reboot
-3. Install `nginx`, `sshpass`, `python3`, `pip`, `ffmpeg` system packages
-4. Create a `~/bin/python` symlink so `python` resolves to `python3`
-5. Clone / pull the latest repo
-6. Install npm dependencies
-7. Generate a `.env` with a random `SESSION_SECRET`
-8. Set UFW firewall rules (SSH, 80, 443, 5756)
-9. Start the app via PM2 using `npm run dev`
-10. **Auto-configure Nginx** as a reverse proxy on port 80:
-    - `/api/` → Express backend (port 5756)
-    - `/socket.io/` → WebSocket terminal (with upgrade headers)
-    - everything else → Vite frontend (port 5000)
-11. Optionally issue a **free SSL certificate** via `certbot --nginx` with zero downtime
-12. Add a daily **auto-renewal cron job** (`certbot renew` at 03:00)
+1. Install system packages (`git`, `nginx`, `dnsutils`, etc.)
+2. Install Node.js 24 via NVM
+3. Install PM2 globally
+4. Clone this repository to `/root/web/vps-manager`
+5. Install npm dependencies
+6. Generate a random `SESSION_SECRET` for JWT signing
+7. Configure UFW firewall rules
+8. Start the app with PM2 (auto-restart on reboot)
+9. Set up an Nginx reverse proxy on port 80
+10. Optionally issue a free SSL certificate via Let's Encrypt (with automatic DNS polling using `dig`)
 
-After install, access the dashboard at:
-- `http://<your-server-ip>` — main entry point via Nginx on port 80 (recommended)
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5756` | Backend API port |
+| `SESSION_SECRET` | — | **Required** — secret for signing JWTs (auto-generated by installer) |
+| `NODE_ENV` | `production` | Node environment |
+| `DATABASE_URL` | — | PostgreSQL connection string (or use `PG*` vars below) |
+| `PGHOST` | `localhost` | PostgreSQL host |
+| `PGPORT` | `5432` | PostgreSQL port |
+| `PGUSER` | `vpsmanager` | PostgreSQL user |
+| `PGPASSWORD` | `vpsmanager_secret` | PostgreSQL password |
+| `PGDATABASE` | `vpsmanager` | PostgreSQL database name |
 
 ---
 
-## Development
+## Manual Install
 
 ```bash
+# 1. Clone the repo
 git clone https://github.com/mauricegift/vps-manager.git
 cd vps-manager
+
+# 2. Install dependencies
 npm install
+
+# 3. Create .env
+cp .env.example .env     # or create manually
+# Edit .env — set SESSION_SECRET and database credentials
+
+# 4. Start in development
 npm run dev
+
+# 5. Or build and start in production
+npm run build
+npm start
 ```
 
-This is a monorepo — `npm run dev` starts both the Express API (port **5756**) and the Vite frontend (port **5000**) concurrently. In production both are unified behind **Nginx on port 80**, so users only see one URL.
+### Run with PM2
+
+```bash
+pm2 start npm --name vps-manager -- run dev
+pm2 save
+pm2 startup
+```
 
 ---
 
-## Environment Variables
+## Tech Stack
 
-| Variable | Description | Default |
+**Frontend**
+- React 18 + TypeScript
+- Vite 6
+- Tailwind CSS (CSS variables for theming)
+- React Router v6
+- TanStack Query (React Query)
+- Axios with JWT interceptors and auto-refresh
+- Socket.IO client (terminal)
+- highlight.js (syntax-highlighted file editor)
+- Framer Motion + AOS animations
+- Lucide React icons
+
+**Backend**
+- Node.js + Express (TypeScript via `tsx`)
+- PostgreSQL (via `pg` pool)
+- JWT authentication (`jsonwebtoken` + `bcryptjs`)
+- Socket.IO (WebSocket terminal)
+- SSH2 (remote server connections)
+- Multer (file uploads)
+- Nginx reverse proxy
+
+---
+
+## API Overview
+
+All protected endpoints require:
+```
+Authorization: Bearer <access_token>
+```
+
+### Auth endpoints (public)
+
+| Method | Endpoint | Description |
 |---|---|---|
-| `PORT` | Backend server port | `5756` |
-| `DATABASE_URL` | PostgreSQL connection URL | auto (local internal DB) |
-| `SESSION_SECRET` | Session signing key | auto-generated |
+| `POST` | `/api/auth/register` | Create a new account |
+| `POST` | `/api/auth/login` | Log in, receive tokens |
+| `POST` | `/api/auth/refresh` | Exchange refresh token for new tokens |
+| `POST` | `/api/auth/logout` | Invalidate refresh token |
+| `GET` | `/api/auth/me` | Get current user info (requires auth) |
+| `GET` | `/api/auth/setup-required` | Check if any accounts exist |
+
+### Protected endpoints
+
+| Prefix | Description |
+|---|---|
+| `/api/system` | System info, CPU/RAM/disk stats |
+| `/api/pm2` | PM2 process management |
+| `/api/docker` | Docker containers, images, volumes |
+| `/api/databases` | Database browsing and queries |
+| `/api/files` | File manager operations |
+| `/api/servers` | Remote VPS connection management |
+| `/api/remote/:id/*` | Proxy operations to a remote VPS |
+| `/api/extras` | System tools, cron, firewall, env |
+| `/api/nginx` | Nginx config management |
+| `/api/github` | GitHub repo detection |
 
 ---
 
-## Project Structure
+## SSL / HTTPS
 
-```
-vps-manager/
-├── src/                    # React + TypeScript frontend (Vite)
-│   ├── pages/              # PM2, Docker, Databases, FileManager, Terminal, Nginx, Extras, Servers
-│   ├── components/
-│   │   ├── layout/         # Header (server banner), Footer, MobileSidebar
-│   │   └── ui/             # Modal, ConfirmDialog, StatusBadge, CodeView, AnsiText
-│   └── context/            # ThemeContext, RemoteServerContext
-├── server/                 # Express backend (TypeScript, runs via tsx)
-│   ├── index.ts            # WebSocket terminal (local bash + SSH)
-│   └── routes/             # pm2, docker, databases, files, nginx, extras, remote, vps-connections, github
-├── install.sh              # VPS auto-installer (Node, PM2, Nginx, SSL, cron)
-└── README.md
+During install, the script offers to set up Let's Encrypt SSL. It:
+1. Polls `dig +short <domain> A` every 10 seconds (up to 5 minutes) waiting for DNS to point to this server
+2. Automatically proceeds once DNS resolves correctly — no manual "Continue anyway?" prompts
+3. Installs `certbot` + `python3-certbot-nginx` and issues the certificate
+4. Adds a daily cron job for auto-renewal
+
+To add SSL later:
+```bash
+certbot --nginx -d yourdomain.com
 ```
 
 ---
 
-## Changelog
+## Remote Server Management
 
-### Latest Release
-- **File Manager — exact file sizes**: files now show precise byte sizes (e.g. `14.23 KB`, `2.51 MB`); directories correctly show `—` instead of the misleading `4.1 KB` inode metadata value
-- **ZIP — exclude any Python venv**: dynamically detects virtual environments of any name (`myvenv`, `myenv`, `env`, `virtualenv`, etc.) by searching for `pyvenv.cfg` inside the path, then excludes them — works for both local and remote downloads; `.env` dotenv files are always **included**
-- **ZIP — full Python artifact exclusion**: `__pycache__/`, `*.pyc`, `.mypy_cache/`, `dist/`, `build/`, `.next/`, `target/`, `vendor/`, `venv/`, `.venv/`, `*.egg-info/` excluded in both local and remote zip routes
-- **Footer**: copyright `© {year} VPS Manager` now appears before "Built with ❤️ by Gifted Tech"
-- **Nginx SSL**: webroot quick-pick presets + step-by-step DNS → Nginx → SSL setup checklist
-- **Swap**: unconditionally removes existing swap before creating new one — no more "swap already exists" failures
-- **MOTD**: "View Current MOTD" modal and "Load Current" button added
-- **Software tools**: all buttons globally disabled during any active install/update/uninstall operation
-- **Tailscale**: auth URL hint, `--accept-routes` default, Routes Info button, route tips
-- **Cloudflared**: setup instructions panel, Login button, improved error output on start failure
-- **Wrangler**: dedicated remote panel with per-command `CLOUDFLARE_API_TOKEN` prompt
-- **PM2 file browser**: clears item list and shows error toast on folder-open failure
-- **PM2 verify row**: `flex-wrap` so Browse + Verify buttons stack on small screens
-- **PM2 port**: writes `PORT=xxx` to `cwd/.env` instead of passing via `--env` flag
-- **PM2 env import**: "Import .env" button — paste `.env` lines or JSON to bulk-add vars
-- **PM2 remote start**: appends `&& pm2 save` so processes survive reboots
+VPS Manager can manage multiple remote Linux servers via SSH:
+
+1. Go to **Servers** and add a new connection (IP, port, username, password or SSH key)
+2. Click **Connect** on any server — the panel switches to remote mode
+3. All pages (PM2, Docker, Files, Terminal, etc.) now operate on the remote server
+4. Click **Disconnect** in the banner to return to local mode
+
+---
+
+## File Manager
+
+- Browse, upload, download, delete and rename files and folders
+- Upload whole folders (preserving directory structure)
+- Download folders as ZIP (Python virtual environments automatically excluded)
+- Edit files with a **syntax-highlighted editor** (highlight.js) — supports TypeScript, Python, YAML, JSON, shell scripts, `.env` and 30+ languages
+- Tab key inserts 2 spaces; line numbers sync-scroll with the editor
+
+---
+
+## Contributing
+
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Commit your changes and push
+4. Open a Pull Request
+
+Bug reports and feature requests are welcome via [GitHub Issues](https://github.com/mauricegift/vps-manager/issues).
 
 ---
 
 ## License
 
-MIT — free to use, modify, and deploy.
+MIT © [Gifted Tech](https://me.giftedtech.co.ke)
