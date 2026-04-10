@@ -79,15 +79,16 @@ export default function FileManagerPage() {
       setSelected(null);
       return;
     }
-    // Local: if a non-root user is active, go straight to their home dir.
-    // Only ask the server for root (it returns the process home which is always /root).
+    // Priority 1: explicitly switched system user (set by Extras page)
     const activeUser = localStorage.getItem("vpsm_active_user") || "";
     if (activeUser && activeUser !== "root") {
       setPath(`/home/${activeUser}`);
       setSelected(null);
       return;
     }
-    setPath(null); // clear while fetching to block the file query
+    // Priority 2: VPS Manager login user — if not root, server looks up their system home
+    // (handles the case where the VPS Manager account matches a system user)
+    setPath(null);
     api.get("/system/homedir")
       .then(r => {
         const home: string = r.data?.data?.home || "/root";
@@ -95,7 +96,7 @@ export default function FileManagerPage() {
       })
       .catch(() => setPath("/root"))
       .finally(() => setSelected(null));
-  }, [activeServer?.id]);
+  }, [activeServer?.id, user?.username]);
 
   // React to user-context changes dispatched from Extras page
   useEffect(() => {
