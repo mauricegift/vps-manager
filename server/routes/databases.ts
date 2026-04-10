@@ -68,13 +68,17 @@ async function mysqlRun(sql: string, dbname = '', opts = '-N'): Promise<string> 
 }
 
 async function mysqlExec(sql: string, dbname = ''): Promise<void> {
-  const dbArg = dbname ? ` "${dbname}"` : '';
+  const dbArg = dbname ? ` ${JSON.stringify(dbname)}` : '';
+  // Pipe SQL via stdin using base64 to avoid ALL shell quoting / backtick issues.
+  // Backticks inside double-quoted shell strings are treated as command substitution —
+  // piping via stdin completely bypasses that problem.
+  const b64 = Buffer.from(sql).toString('base64');
   const cmds = [
-    `mysql --defaults-file=/etc/mysql/debian.cnf -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
-    `sudo mysql -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
-    `mysql -uroot --socket=/var/run/mysqld/mysqld.sock -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
-    `mysql -uroot -h 127.0.0.1 -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
-    `mysql -uroot -e ${JSON.stringify(sql)}${dbArg} 2>&1`,
+    `printf '%s' '${b64}' | base64 -d | mysql --defaults-file=/etc/mysql/debian.cnf${dbArg} 2>&1`,
+    `printf '%s' '${b64}' | base64 -d | sudo mysql${dbArg} 2>&1`,
+    `printf '%s' '${b64}' | base64 -d | mysql -uroot --socket=/var/run/mysqld/mysqld.sock${dbArg} 2>&1`,
+    `printf '%s' '${b64}' | base64 -d | mysql -uroot -h 127.0.0.1${dbArg} 2>&1`,
+    `printf '%s' '${b64}' | base64 -d | mysql -uroot${dbArg} 2>&1`,
   ];
   const errors: string[] = [];
   for (const cmd of cmds) {
@@ -266,6 +270,7 @@ const APT_REMOVE  = (pkgs: string) => `${APT_WAIT} && DEBIAN_FRONTEND=noninterac
 
 // MongoDB install works across Ubuntu 20/22/24 and Debian 11/12
 const MONGO_INSTALL = [
+  `systemctl stop mongod mongodb 2>/dev/null; rm -rf /var/lib/mongodb 2>/dev/null; true`,
   `export DEBIAN_FRONTEND=noninteractive`,
   `${APT_WAIT}`,
   `OS_ID=$(. /etc/os-release 2>/dev/null && echo "$ID" || echo ubuntu)`,
@@ -285,12 +290,21 @@ const MONGO_INSTALL = [
 ].join(' && \\\n');
 
 // ── Install / Uninstall ───────────────────────────────────────────────────────
+// Purge existing data directories so a fresh install always starts with zero databases
+const PURGE_DATA: Record<string, string> = {
+  postgresql: `systemctl stop postgresql 2>/dev/null; rm -rf /var/lib/postgresql 2>/dev/null; true`,
+  mysql:      `systemctl stop mysql mysqld 2>/dev/null; rm -rf /var/lib/mysql 2>/dev/null; true`,
+  mongodb:    `systemctl stop mongod mongodb 2>/dev/null; rm -rf /var/lib/mongodb 2>/dev/null; true`,
+  redis:      `systemctl stop redis-server redis 2>/dev/null; rm -rf /var/lib/redis 2>/dev/null; true`,
+  mariadb:    `systemctl stop mariadb mysql 2>/dev/null; rm -rf /var/lib/mysql 2>/dev/null; true`,
+};
+
 const installCmds: Record<string, string> = {
-  postgresql: `${APT_INSTALL('postgresql postgresql-contrib')} && systemctl enable postgresql && systemctl start postgresql 2>&1`,
-  mysql:      `${APT_INSTALL('mysql-server')} && systemctl enable mysql && systemctl start mysql 2>&1`,
+  postgresql: `${PURGE_DATA.postgresql} && ${APT_INSTALL('postgresql postgresql-contrib')} && systemctl enable postgresql && systemctl start postgresql 2>&1`,
+  mysql:      `${PURGE_DATA.mysql} && ${APT_INSTALL('mysql-server')} && systemctl enable mysql && systemctl start mysql 2>&1`,
   mongodb:    MONGO_INSTALL,
-  redis:      `${APT_INSTALL('redis-server')} && systemctl enable redis-server && systemctl start redis-server 2>&1`,
-  mariadb:    `${APT_INSTALL('mariadb-server')} && systemctl enable mariadb && systemctl start mariadb 2>&1`,
+  redis:      `${PURGE_DATA.redis} && ${APT_INSTALL('redis-server')} && systemctl enable redis-server && systemctl start redis-server 2>&1`,
+  mariadb:    `${PURGE_DATA.mariadb} && ${APT_INSTALL('mariadb-server')} && systemctl enable mariadb && systemctl start mariadb 2>&1`,
 };
 
 const uninstallCmds: Record<string, string> = {
