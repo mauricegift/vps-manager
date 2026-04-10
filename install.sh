@@ -244,6 +244,13 @@ server {
     proxy_read_timeout 120s;
   }
 
+  # Let's Encrypt ACME challenge — served from disk, NOT proxied to the app
+  # Without this, certbot's .well-known requests get proxied → 404 → cert fails
+  location /.well-known/acme-challenge/ {
+    root /var/www/html;
+    try_files $uri =404;
+  }
+
   location / {
     proxy_pass         http://127.0.0.1:FRONTEND_PORT_PLACEHOLDER;
     proxy_http_version 1.1;
@@ -314,23 +321,106 @@ else
   else
     read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL </dev/tty
     SSL_EMAIL="${SSL_EMAIL:-admin@$DOMAIN}"
+
+    # Install certbot with webroot plugin (not nginx plugin) for reliable challenges
     if ! command -v certbot &>/dev/null; then
-      warn "Installing certbot + nginx plugin..."
-      $SUDO apt-get install -y -qq certbot python3-certbot-nginx 2>/dev/null
+      warn "Installing certbot..."
+      $SUDO apt-get install -y -qq certbot 2>/dev/null
     fi
-    $SUDO certbot --nginx \
-      -d "$DOMAIN" \
-      --email "$SSL_EMAIL" \
-      --agree-tos --non-interactive --redirect \
-      && log "SSL certificate issued for $DOMAIN!" \
-      || warn "Certbot failed — try: sudo certbot --nginx -d $DOMAIN"
-    $SUDO sed -i "s/server_name _;/server_name $DOMAIN;/" "$NGINX_CONF"
-    $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx || true
-    if ! crontab -l 2>/dev/null | grep -q certbot; then
-      (crontab -l 2>/dev/null; echo "0 3 * * * $SUDO certbot renew --quiet --nginx && $SUDO systemctl reload nginx") | crontab -
-      log "Auto-renewal cron job added (runs daily at 03:00)"
+
+    # Create webroot so certbot can serve the ACME challenge file from disk
+    $SUDO mkdir -p /var/www/html/.well-known/acme-challenge
+
+    # Reload nginx now so the ACME location block is live before certbot runs
+    $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx
+
+    # If a cert for this domain already exists (e.g. from a failed previous run),
+    # delete it first so certbot can issue a clean new certificate
+    if $SUDO certbot certificates 2>/dev/null | grep -q "Domains:.*$DOMAIN"; then
+      warn "Existing cert found for $DOMAIN — revoking and deleting before reissue..."
+      $SUDO certbot revoke --cert-name "$DOMAIN" --non-interactive 2>/dev/null || true
+      $SUDO certbot delete  --cert-name "$DOMAIN" --non-interactive 2>/dev/null || true
+      log "Old certificate removed"
+    fi
+
+    # Issue the certificate using the webroot authenticator
+    if $SUDO certbot certonly --webroot -w /var/www/html \
+        -d "$DOMAIN" \
+        --email "$SSL_EMAIL" \
+        --agree-tos --non-interactive; then
+
+      log "SSL certificate issued for $DOMAIN!"
+
+      # Patch nginx config: set server_name, add SSL listen, and ssl_certificate paths
+      $SUDO sed -i "s/server_name _;/server_name $DOMAIN;/" "$NGINX_CONF"
+
+      # Append SSL server block to nginx config
+      $SUDO tee -a "$NGINX_CONF" > /dev/null <<SSLEOF
+
+server {
+  listen 443 ssl;
+  server_name $DOMAIN;
+
+  ssl_certificate     /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+  include             /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+  location /.well-known/acme-challenge/ {
+    root /var/www/html;
+    try_files \$uri =404;
+  }
+
+  location /socket.io/ {
+    proxy_pass         http://127.0.0.1:APP_PORT_PLACEHOLDER;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade \$http_upgrade;
+    proxy_set_header   Connection \$connection_upgrade;
+    proxy_set_header   Host \$host;
+    proxy_cache_bypass \$http_upgrade;
+  }
+
+  location /api/ {
+    proxy_pass         http://127.0.0.1:APP_PORT_PLACEHOLDER;
+    proxy_http_version 1.1;
+    proxy_set_header   Host \$host;
+    proxy_set_header   X-Real-IP \$remote_addr;
+    proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 120s;
+  }
+
+  location / {
+    proxy_pass         http://127.0.0.1:FRONTEND_PORT_PLACEHOLDER;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade \$http_upgrade;
+    proxy_set_header   Connection \$connection_upgrade;
+    proxy_set_header   Host \$host;
+    proxy_cache_bypass \$http_upgrade;
+  }
+}
+SSLEOF
+
+      # Substitute port placeholders in the SSL server block too
+      $SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g; s/FRONTEND_PORT_PLACEHOLDER/$FRONTEND_PORT/g" "$NGINX_CONF"
+
+      # Add HTTP → HTTPS redirect to the port-80 block
+      $SUDO sed -i "/listen 80;/{n; /server_name $DOMAIN;/{ n; a\  return 301 https://\$host\$request_uri;}}}" "$NGINX_CONF" 2>/dev/null || true
+
+      $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx
+      log "Nginx updated — HTTPS enabled for $DOMAIN"
+
+      # Auto-renewal cron
+      if ! crontab -l 2>/dev/null | grep -q certbot; then
+        (crontab -l 2>/dev/null; echo "0 3 * * * $SUDO certbot renew --quiet --webroot -w /var/www/html && $SUDO systemctl reload nginx") | crontab -
+        log "Auto-renewal cron added (runs daily at 03:00)"
+      else
+        log "Auto-renewal cron already exists"
+      fi
+
     else
-      log "Auto-renewal cron already exists"
+      warn "Certbot failed to issue certificate for $DOMAIN."
+      warn "Check that $DOMAIN resolves to this server's IP: $SERVER_IP"
+      warn "Manual retry: sudo certbot certonly --webroot -w /var/www/html -d $DOMAIN"
     fi
   fi
 fi
