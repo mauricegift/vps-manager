@@ -924,9 +924,9 @@ case "${type}" in
     fi
     ;;
   mysql|mariadb)
-    # Update ALL cnf files that have bind-address (covers mysql.conf.d/ and conf.d/)
-    find /etc/mysql /etc/mariadb -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | while read f; do
-      sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$f"
+    # Update bind-address in ALL known MySQL/MariaDB CNF locations
+    for f in /etc/mysql/mysql.conf.d/mysqld.cnf /etc/mysql/conf.d/mysqld.cnf /etc/mysql/my.cnf /etc/mysql/mariadb.conf.d/50-server.cnf /etc/mariadb/my.cnf; do
+      [ -f "$f" ] && sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$f" || true
     done
     # Also write a drop-in that always wins (highest sort order)
     mkdir -p /etc/mysql/conf.d 2>/dev/null
@@ -1030,9 +1030,9 @@ case "${type}" in
     fi
     ;;
   mysql|mariadb)
-    # Revert ALL cnf files that have bind-address
-    find /etc/mysql /etc/mariadb -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | while read f; do
-      sed -i "s/^bind-address.*/bind-address = 127.0.0.1/" "$f"
+    # Revert bind-address in ALL known MySQL/MariaDB CNF locations
+    for f in /etc/mysql/mysql.conf.d/mysqld.cnf /etc/mysql/conf.d/mysqld.cnf /etc/mysql/my.cnf /etc/mysql/mariadb.conf.d/50-server.cnf /etc/mariadb/my.cnf; do
+      [ -f "$f" ] && sed -i "s/^bind-address.*/bind-address = 127.0.0.1/" "$f" || true
     done
     # Remove the vpsm drop-in override
     rm -f /etc/mysql/conf.d/99-vpsm-bind.cnf 2>/dev/null || true
