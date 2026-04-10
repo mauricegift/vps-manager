@@ -82,8 +82,21 @@ export default function FileManagerPage() {
     }).catch(() => {});
   }, [activeServer]);
 
+  // React to user-context changes dispatched from Extras page
+  useEffect(() => {
+    if (activeServer) return;
+    const handler = (e: Event) => {
+      const username: string = (e as CustomEvent).detail?.username || "";
+      setPath(username && username !== "root" ? `/home/${username}` : "/root");
+    };
+    window.addEventListener("vpsm:user-change", handler);
+    return () => window.removeEventListener("vpsm:user-change", handler);
+  }, [activeServer]);
+
   const [selected, setSelected] = useState<FileItem | null>(null);
   const [clipboard, setClipboard] = useState<{ item: FileItem; op: "cut" | "copy" } | null>(null);
+  const [copyNameModal, setCopyNameModal] = useState<{ src: string; suggestedName: string } | null>(null);
+  const [copyNameValue, setCopyNameValue] = useState("");
 
   // Modals
   const [viewContent, setViewContent] = useState<{ name: string; content: string; path: string } | null>(null);
@@ -130,7 +143,7 @@ export default function FileManagerPage() {
   // Reset path when active server changes
   useEffect(() => {
     if (activeServer) {
-      setPath(defaultPath(activeServer.username));
+      setPath(remoteDefaultPath(activeServer.username));
     } else {
       setPath("/home/runner/workspace");
     }
@@ -156,8 +169,36 @@ export default function FileManagerPage() {
       activeServer
         ? api.post(`/remote/${activeServer.id}/exec`, { command: `mv ${JSON.stringify(src)} ${JSON.stringify(dest)}` })
         : api.post("/files/move", { src, dest }),
-    onSuccess: () => { toast.success("Moved/Copied"); qc.invalidateQueries({ queryKey: ["files"] }); setClipboard(null); setMoveModal(false); setMoveDest(""); },
-    onError: () => toast.error("Operation failed"),
+    onSuccess: () => { toast.success("Moved"); qc.invalidateQueries({ queryKey: ["files"] }); setClipboard(null); setMoveModal(false); setMoveDest(""); },
+    onError: () => toast.error("Move failed"),
+  });
+
+  // Generate a unique copy name: file.txt → file-1.txt, folder → folder-1, etc.
+  function nextCopyName(name: string, existingNames: Set<string>): string {
+    const dotIdx = name.lastIndexOf(".");
+    const hasExt = dotIdx > 0;
+    const base = hasExt ? name.slice(0, dotIdx) : name;
+    const ext = hasExt ? name.slice(dotIdx) : "";
+    let i = 1;
+    while (existingNames.has(`${base}-${i}${ext}`)) i++;
+    return `${base}-${i}${ext}`;
+  }
+
+  const copyMutation = useMutation({
+    mutationFn: ({ src, dest }: { src: string; dest: string }) =>
+      activeServer
+        ? api.post(`/remote/${activeServer.id}/exec`, { command: `cp -r ${JSON.stringify(src)} ${JSON.stringify(dest)}` })
+        : api.post("/files/copy", { src, dest }),
+    onSuccess: () => {
+      toast.success("Copied");
+      qc.invalidateQueries({ queryKey: ["files"] });
+      setClipboard(null);
+      setMoveModal(false);
+      setMoveDest("");
+      setCopyNameModal(null);
+      setCopyNameValue("");
+    },
+    onError: () => toast.error("Copy failed"),
   });
 
   const mkdirMutation = useMutation({
@@ -641,7 +682,21 @@ export default function FileManagerPage() {
             <span className="text-[var(--accent)] font-medium">{clipboard.op === "cut" ? "Cut" : "Copied"}</span>: {clipboard.item.name}
           </span>
           <div className="flex gap-2">
-            <button onClick={() => setMoveModal(true)} className="text-xs px-3 py-1 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">
+            <button
+              onClick={() => {
+                if (clipboard.op === "copy") {
+                  // For copy: auto-generate a unique name and prompt user to confirm/rename
+                  const existingNames = new Set((files as FileItem[]).map(f => f.name));
+                  const suggested = nextCopyName(clipboard.item.name, existingNames);
+                  setCopyNameValue(suggested);
+                  setCopyNameModal({ src: clipboard.item.path, suggestedName: suggested });
+                } else {
+                  // For cut: open the move modal
+                  setMoveModal(true);
+                }
+              }}
+              className="text-xs px-3 py-1 rounded-lg bg-[var(--accent)] text-white hover:opacity-90 transition-opacity"
+            >
               Paste here
             </button>
             <button onClick={() => setClipboard(null)} className="text-xs px-3 py-1 rounded-lg border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
@@ -806,7 +861,8 @@ export default function FileManagerPage() {
         loading={deleteMutation.isPending}
       />
 
-      <Modal isOpen={moveModal} onClose={() => setMoveModal(false)} title="Paste To">
+      {/* Move (cut) modal */}
+      <Modal isOpen={moveModal} onClose={() => setMoveModal(false)} title="Move To">
         <div className="space-y-4">
           <div>
             <label className="text-xs text-[var(--muted)] mb-1.5 block">Destination path</label>
@@ -816,10 +872,43 @@ export default function FileManagerPage() {
             <button onClick={() => setMoveModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
             <button onClick={() => clipboard && moveMutation.mutate({ src: clipboard.item.path, dest: (moveDest || path) + "/" + clipboard.item.name })}
               disabled={moveMutation.isPending} className="px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
-              {moveMutation.isPending ? "Working..." : clipboard?.op === "cut" ? "Move" : "Copy"}
+              {moveMutation.isPending ? "Moving..." : "Move"}
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Copy name modal — confirms/renames before pasting a copy */}
+      <Modal isOpen={!!copyNameModal} onClose={() => { setCopyNameModal(null); setCopyNameValue(""); }} title="Paste Copy As">
+        <form onSubmit={e => {
+          e.preventDefault();
+          if (!copyNameModal || !copyNameValue.trim()) return;
+          copyMutation.mutate({ src: copyNameModal.src, dest: path + "/" + copyNameValue.trim() });
+        }} className="space-y-4">
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">Name for the copy</label>
+            <input
+              value={copyNameValue}
+              onChange={e => setCopyNameValue(e.target.value)}
+              className={`${inp} font-mono`}
+              required
+              autoFocus
+              onFocus={e => {
+                const dotIdx = e.target.value.lastIndexOf(".");
+                if (dotIdx > 0) e.target.setSelectionRange(0, dotIdx);
+                else e.target.select();
+              }}
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={() => { setCopyNameModal(null); setCopyNameValue(""); }}
+              className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+            <button type="submit" disabled={copyMutation.isPending || !copyNameValue.trim()}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
+              <Copy size={13} />{copyMutation.isPending ? "Copying..." : "Paste Copy"}
+            </button>
+          </div>
+        </form>
       </Modal>
 
       <Modal isOpen={newFolderModal} onClose={() => setNewFolderModal(false)} title="New Folder">

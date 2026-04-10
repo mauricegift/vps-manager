@@ -192,14 +192,28 @@ export default function PM2Page() {
     setCheckingScript(false);
   };
 
+  const CMD_INTERPS = new Set(["npm", "bun", "node", "python3", "python", "npx", "pnpm", "yarn", "deno"]);
+  function buildRemotePm2Cmd(script: string, name: string, cwd?: string): string {
+    const parts = script.trim().split(/\s+/);
+    const first = parts[0].toLowerCase();
+    if (CMD_INTERPS.has(first)) {
+      let cmd = `pm2 start ${parts[0]} --name "${name}"`;
+      if (cwd) cmd += ` --cwd "${cwd}"`;
+      if (parts.length > 1) cmd += ` -- ${parts.slice(1).join(" ")}`;
+      return cmd;
+    }
+    const isSh = script.trim().endsWith(".sh");
+    let cmd = `pm2 start "${script}" --name "${name}"`;
+    if (isSh) cmd += " --interpreter bash";
+    if (cwd) cmd += ` --cwd "${cwd}"`;
+    return cmd;
+  }
+
   const startMutation = useMutation({
     mutationFn: async (body: typeof startForm) => {
-      const isSh = body.script.trim().endsWith(".sh");
       const envPairs = startEnvVars.filter(e => e.key.trim());
       if (activeServer) {
-        let pm2Cmd = `pm2 start "${body.script}" --name "${body.name}"`;
-        if (isSh) pm2Cmd += ` --interpreter bash`;
-        if (body.cwd) pm2Cmd += ` --cwd "${body.cwd}"`;
+        let pm2Cmd = buildRemotePm2Cmd(body.script, body.name, body.cwd);
         // Write port and env vars to .env file on remote when cwd is provided
         if (body.cwd && (body.port || envPairs.length > 0)) {
           const dotenvLines = envPairs.map(({ key, value }) => `${key.trim()}=${value}`);

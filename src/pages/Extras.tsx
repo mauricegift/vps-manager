@@ -677,6 +677,7 @@ export default function ExtrasPage() {
   const switchToUser = (username: string) => {
     localStorage.setItem("vpsm_active_user", username);
     setActiveUser(username);
+    window.dispatchEvent(new CustomEvent("vpsm:user-change", { detail: { username } }));
     toast.success(`Switched active user context to ${username}. File browsing and paths will now use /home/${username === "root" ? "root" : username}.`);
   };
 
