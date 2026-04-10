@@ -936,20 +936,17 @@ router.post('/app-update', async (_req, res) => {
   const lines: string[] = [];
   const log = (msg: string) => { lines.push(msg); };
 
-  const tmpZip = `/tmp/vpsm-update-${Date.now()}.zip`;
+  const tmpTar    = `/tmp/vpsm-update-${Date.now()}.tar.gz`;
   const tmpExtract = `/tmp/vpsm-extract-${Date.now()}`;
 
   try {
     const appDir = process.cwd();
     const envPath = path.join(appDir, '.env');
-
     log(`App directory: ${appDir}`);
 
     // Resolve npm from the running Node binary (works under PM2 + NVM)
     const nodeDir = path.dirname(process.execPath);
-    const npmBin = fs.existsSync(path.join(nodeDir, 'npm'))
-      ? path.join(nodeDir, 'npm')
-      : 'npm';
+    const npmBin  = fs.existsSync(path.join(nodeDir, 'npm')) ? path.join(nodeDir, 'npm') : 'npm';
     const nvmPrefix = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
 
     // ── Step 1: Back up .env ─────────────────────────────────────────────────
@@ -958,57 +955,82 @@ router.post('/app-update', async (_req, res) => {
       envContent = fs.readFileSync(envPath, 'utf8');
       log('[1/5] .env backed up');
     } else {
-      log('[1/5] No .env found — skipping backup');
+      log('[1/5] No .env — skipping backup');
     }
 
-    // ── Step 2: Download latest zip from GitHub ───────────────────────────────
-    const zipUrl = 'https://github.com/mauricegift/vps-manager/archive/refs/heads/main.zip';
-    log(`[2/5] Downloading latest code from GitHub…`);
-    let downloaded = false;
-    // Try curl first
+    // ── Step 2: Resolve download URL (latest release → main fallback) ─────────
+    log('[2/5] Resolving latest release from GitHub…');
+    const REPO   = 'mauricegift/vps-manager';
+    const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+
+    // Attempt to get the latest release tag via the GitHub API
+    let tarUrl    = `https://github.com/${REPO}/archive/refs/heads/main.tar.gz`;
+    let releaseTag = 'main (latest commit)';
     try {
-      const curlOut = await runStrict(
-        `curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 3 -o "${tmpZip}" "${zipUrl}" && echo "OK"`,
-        90000
+      const apiRaw = await run(
+        `curl -fsSL --connect-timeout 10 -H "Accept: application/vnd.github+json" "${API_URL}" 2>/dev/null`
       );
-      log(`curl: ${curlOut || 'done'}`);
+      const apiJson = JSON.parse(apiRaw.trim() || '{}');
+      if (apiJson.tag_name) {
+        releaseTag = apiJson.tag_name;
+        tarUrl     = `https://github.com/${REPO}/archive/refs/tags/${releaseTag}.tar.gz`;
+        log(`Latest release: ${releaseTag}`);
+      } else {
+        log('No formal release found — downloading from main branch');
+      }
+    } catch {
+      log('GitHub API unreachable — downloading from main branch');
+    }
+
+    log(`URL: ${tarUrl}`);
+
+    // Download (curl → wget fallback)
+    let downloaded = false;
+    try {
+      await runStrict(
+        `curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 -L -o "${tmpTar}" "${tarUrl}" 2>&1`,
+        120000
+      );
       downloaded = true;
-    } catch (curlErr: any) {
-      log(`curl failed, trying wget…`);
+      log('Download complete (curl)');
+    } catch {
+      log('curl failed — trying wget…');
       try {
-        const wgetOut = await runStrict(
-          `wget -q --timeout=15 --tries=3 -O "${tmpZip}" "${zipUrl}" && echo "OK"`,
-          90000
+        await runStrict(
+          `wget -q --timeout=20 --tries=3 -O "${tmpTar}" "${tarUrl}" 2>&1`,
+          120000
         );
-        log(`wget: ${wgetOut || 'done'}`);
         downloaded = true;
-      } catch (wgetErr: any) {
-        const msg = (wgetErr.stdout || wgetErr.stderr || wgetErr.message || '').trim();
-        throw new Error(`Download failed (tried curl & wget):\n${msg}`);
+        log('Download complete (wget)');
+      } catch (e2: any) {
+        throw new Error(`Download failed (curl & wget both failed):\n${(e2.stdout || e2.stderr || e2.message || '').trim()}`);
       }
     }
-
     if (!downloaded) throw new Error('Download produced no output');
 
-    // ── Step 3: Extract & rsync files ────────────────────────────────────────
-    log('[3/5] Extracting and applying update…');
+    // Verify the archive is a valid gzip
     try {
-      fs.mkdirSync(tmpExtract, { recursive: true });
+      await runStrict(`gzip -t "${tmpTar}" 2>&1`, 10000);
+    } catch (e: any) {
+      throw new Error(`Downloaded file is not a valid gzip archive — the URL may be wrong or GitHub returned an error page.\n${(e.stdout || e.stderr || e.message || '').trim()}`);
+    }
 
-      await runStrict(`unzip -o "${tmpZip}" -d "${tmpExtract}" 2>&1`, 60000);
+    // ── Step 3: Extract & rsync ───────────────────────────────────────────────
+    log('[3/5] Extracting and applying update…');
+    fs.mkdirSync(tmpExtract, { recursive: true });
 
-      // GitHub zip creates a "vps-manager-main" subdirectory inside
-      const extractedDir = `${tmpExtract}/vps-manager-main`;
-      const checkDir = await run(`test -d "${extractedDir}" && echo yes || echo no`);
-      if (checkDir.trim() !== 'yes') {
-        // Fallback: find the single extracted dir
-        const firstDir = (await run(`ls -1 "${tmpExtract}" 2>/dev/null | head -1`)).trim();
-        if (!firstDir) throw new Error('Extracted zip is empty or has unexpected structure');
-        log(`Note: using extracted subdir "${firstDir}"`);
-      }
+    try {
+      await runStrict(`tar -xzf "${tmpTar}" -C "${tmpExtract}" 2>&1`, 60000);
+    } catch (e: any) {
+      throw new Error(`Extraction failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
+    }
 
-      const srcDir = (await run(`test -d "${extractedDir}" && echo "${extractedDir}" || ls -1d "${tmpExtract}"/*/  2>/dev/null | head -1`)).trim();
+    // GitHub archives create a single subdirectory: "vps-manager-<tag>/"
+    const srcDir = (await run(`ls -1d "${tmpExtract}"/*/  2>/dev/null | head -1`)).trim().replace(/\/$/, '');
+    if (!srcDir) throw new Error('Extracted archive is empty or has unexpected structure');
+    log(`Source dir: ${srcDir.split('/').pop()}`);
 
+    try {
       const rsyncOut = await runStrict(
         `rsync -a --delete \
           --exclude='.env' \
@@ -1019,16 +1041,13 @@ router.post('/app-update', async (_req, res) => {
           "${srcDir}/" "${appDir}/" 2>&1`,
         60000
       );
-      log(rsyncOut ? `rsync: ${rsyncOut.split('\n').slice(-3).join(' | ')}` : 'rsync: files updated');
+      log(rsyncOut ? `rsync: ${rsyncOut.split('\n').filter(Boolean).slice(-3).join(' | ')}` : 'rsync: files applied');
     } catch (e: any) {
-      throw new Error(`Extract/apply failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
+      throw new Error(`rsync failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
     }
 
-    // ── Restore .env immediately ──────────────────────────────────────────────
-    if (envContent) {
-      fs.writeFileSync(envPath, envContent);
-      log('.env restored');
-    }
+    // Restore .env immediately after rsync so build can read secrets
+    if (envContent) { fs.writeFileSync(envPath, envContent); log('.env restored'); }
 
     // ── Step 4: npm install ───────────────────────────────────────────────────
     log('[4/5] Installing dependencies…');
@@ -1037,7 +1056,7 @@ router.post('/app-update', async (_req, res) => {
         `${nvmPrefix} cd "${appDir}" && "${npmBin}" install --prefer-offline --no-fund --no-audit 2>&1`,
         240000
       );
-      log(npmOut.split('\n').slice(-8).join('\n') || 'npm install: done');
+      log(npmOut.split('\n').filter(Boolean).slice(-6).join('\n') || 'npm install: done');
     } catch (e: any) {
       throw new Error(`npm install failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
     }
@@ -1050,7 +1069,7 @@ router.post('/app-update', async (_req, res) => {
         360000
       );
       const summary = buildOut.split('\n')
-        .filter(l => l.includes('dist/') || l.includes('built') || l.includes('✓') || l.includes('kB') || l.includes('error'))
+        .filter(l => /dist\/|built|✓|kB|error/i.test(l))
         .join('\n');
       log(summary || 'build: complete');
     } catch (e: any) {
@@ -1058,24 +1077,18 @@ router.post('/app-update', async (_req, res) => {
     }
 
     // ── PM2 restart ───────────────────────────────────────────────────────────
-    log('Restarting app via PM2…');
-    // Try by name first, then by index 0, then reload all
+    log('Restarting via PM2…');
     const pm2Out = await run(
       `pm2 restart vps-manager --update-env 2>&1 || pm2 restart 0 --update-env 2>&1 || pm2 reload all --update-env 2>&1`,
       30000
     );
-    log(pm2Out ? `pm2: ${pm2Out.split('\n').slice(0, 3).join(' | ')}` : 'pm2: restarted');
+    log(pm2Out ? `pm2: ${pm2Out.split('\n').filter(Boolean).slice(0, 3).join(' | ')}` : 'pm2: restarted');
 
     res.json({ success: true, output: lines.join('\n') });
   } catch (e: any) {
-    res.status(500).json({
-      success: false,
-      error: e.message || 'Update failed',
-      output: lines.join('\n'),
-    });
+    res.status(500).json({ success: false, error: e.message || 'Update failed', output: lines.join('\n') });
   } finally {
-    // Always clean up temp files
-    try { if (fs.existsSync(tmpZip)) fs.unlinkSync(tmpZip); } catch {}
+    try { if (fs.existsSync(tmpTar)) fs.unlinkSync(tmpTar); } catch {}
     try { await run(`rm -rf "${tmpExtract}" 2>/dev/null`); } catch {}
   }
 });
