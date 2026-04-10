@@ -34,7 +34,7 @@ fi
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/vps-manager}"
 APP_PORT="${APP_PORT:-5756}"
-FRONTEND_PORT="${FRONTEND_PORT:-5000}"
+FRONTEND_PORT="${FRONTEND_PORT:-5758}"
 APP_NAME="vps-manager"
 
 # ── Step 1: System packages ───────────────────────────────────────────────────

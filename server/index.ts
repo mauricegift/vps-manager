@@ -7,6 +7,7 @@ import { exec, spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Client as SSH2Client } from 'ssh2';
+import { networkInterfaces } from 'os';
 
 import systemRouter from './routes/system.js';
 import pm2Router from './routes/pm2.js';
@@ -30,20 +31,47 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const CUSTOM_DOMAIN = (process.env.ALLOWED_ORIGIN || '').trim();
-const ALLOWED_ORIGINS = [
-  'http://localhost:5758',
-  'http://127.0.0.1:5758',
-  'http://localhost:5000',
-  ...(CUSTOM_DOMAIN ? [CUSTOM_DOMAIN, CUSTOM_DOMAIN.replace(/^https?/, 'http'), CUSTOM_DOMAIN.replace(/^http:/, 'https:')] : []),
-];
+
+// Detect the server's own public/private IP for use when no custom domain is set
+const getServerIP = (): string => {
+  const nets = networkInterfaces();
+  for (const iface of Object.values(nets)) {
+    for (const addr of iface ?? []) {
+      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+    }
+  }
+  return 'localhost';
+};
+const SERVER_IP = getServerIP();
+
+// Build allowed origins:
+//   • Custom domain set  → only that domain (http + https variants)
+//   • No custom domain   → only the VPS host IP on port 80 (via nginx)
+const buildAllowedOrigins = (): string[] => {
+  if (CUSTOM_DOMAIN) {
+    const base = CUSTOM_DOMAIN.replace(/\/$/, '');
+    return [
+      base,
+      base.replace(/^https:\/\//, 'http://'),
+      base.replace(/^http:\/\//, 'https://'),
+    ];
+  }
+  return [
+    `http://${SERVER_IP}`,
+    `http://${SERVER_IP}:5758`,
+  ];
+};
+const ALLOWED_ORIGINS = buildAllowedOrigins();
+console.log('[cors] allowed origins:', ALLOWED_ORIGINS);
 
 const corsOpts: cors.CorsOptions = {
   origin: (origin, cb) => {
-    if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o)) || CUSTOM_DOMAIN === '*') {
+    // Allow server-to-server and same-origin requests (no Origin header)
+    if (!origin) { cb(null, true); return; }
+    if (ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o + '/'))) {
       cb(null, true);
     } else {
-      cb(null, true); // permissive in dev; tighten by removing this and uncommenting below
-      // cb(new Error(`CORS: origin ${origin} not allowed`));
+      cb(new Error(`CORS: origin "${origin}" not allowed`));
     }
   },
   credentials: true,
@@ -52,7 +80,11 @@ const corsOpts: cors.CorsOptions = {
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIO(httpServer, {
-  cors: { origin: CUSTOM_DOMAIN || '*', methods: ['GET', 'POST'], credentials: true },
+  cors: {
+    origin: ALLOWED_ORIGINS,
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
 });
 
 app.use(cors(corsOpts));
