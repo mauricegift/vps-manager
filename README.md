@@ -28,14 +28,18 @@ A modern, self-hosted web control panel for managing your Linux VPS — PM2, Doc
 
 ## Quick Install
 
-  > **Run as root for the smoothest experience** (no sudo prompts, no permission issues).
-  > Non-root users are also supported — the installer will automatically prefix system commands with `sudo`.
+  > **Run as root for the smoothest experience** — no sudo prompts, no permission issues.
+  > Non-root users with sudo access are also supported.
+
+  **As root (recommended):**
 
   ```bash
-  # As root (recommended)
   curl -fsSL https://vps-manager.giftedtech.co.ke/install.sh | bash
+  ```
 
-  # As a non-root user with sudo access
+  **As a non-root user (with sudo access):**
+
+  ```bash
   curl -fsSL https://vps-manager.giftedtech.co.ke/install.sh | sudo bash
   ```
 
@@ -51,11 +55,11 @@ A modern, self-hosted web control panel for managing your Linux VPS — PM2, Doc
   9. Set up an Nginx reverse proxy on port 80
   10. Optionally issue a free SSL certificate via Let's Encrypt (with automatic DNS polling via `dig`)
 
-  > **SMTP / email is optional** — you can configure it any time after install via the **Settings** page inside the app (user dropdown → Settings → Email / SMTP tab).
+  > **SMTP / email is optional** — configure it any time after install via the **Settings** page (user dropdown → Settings → Email / SMTP tab).
 
   ---
 
-## Manual Install
+  ## Manual Install
 
 ```bash
 # Clone
