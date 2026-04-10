@@ -910,6 +910,8 @@ echo "ALREADY=$ALREADY"
     const fixScript = `
 case "${type}" in
   postgresql)
+    # Check if already bound to 0.0.0.0 — skip restart if so (avoids killing VPS Manager's own DB connection)
+    ALREADY_BOUND=$(ss -tlnp 2>/dev/null | grep ':5432 ' | grep -cE '\\*:|0\\.0\\.0\\.0:' || echo 0)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
       sed -i -E "s/^#?[[:space:]]*listen_addresses.*/listen_addresses = '*'/" "$CONF"
@@ -918,8 +920,10 @@ case "${type}" in
       if [ -n "$HBA" ] && ! grep -q "^host.*all.*all.*0\\.0\\.0\\.0/0" "$HBA"; then
         echo "host    all             all             0.0.0.0/0               scram-sha-256" >> "$HBA"
       fi
-      systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
-      sleep 3
+      if [ "$ALREADY_BOUND" = "0" ]; then
+        systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
+        sleep 3
+      fi
       echo "BIND_FIXED=1"
     fi
     ;;
@@ -1023,10 +1027,14 @@ case "${type}" in
   postgresql)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
+      # Only restart if currently open — avoids killing VPS Manager's own DB connection unnecessarily
+      CURRENTLY_OPEN=$(ss -tlnp 2>/dev/null | grep ':5432 ' | grep -cE '\\*:|0\\.0\\.0\\.0:' || echo 0)
       sed -i -E "s/^listen_addresses.*/listen_addresses = 'localhost'/" "$CONF"
       HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
       [ -n "$HBA" ] && sed -i "/^host.*all.*all.*0\\.0\\.0\\.0\\/0/d" "$HBA"
-      systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
+      if [ "$CURRENTLY_OPEN" != "0" ]; then
+        systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
+      fi
     fi
     ;;
   mysql|mariadb)
