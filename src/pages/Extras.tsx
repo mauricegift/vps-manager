@@ -237,6 +237,101 @@ function SysUpdateCard({ onRun, loading }: { onRun: (action: 'update' | 'upgrade
   );
 }
 
+function AppUpdateCard({ onOutput }: { onOutput: (title: string, output: string) => void }) {
+  const qc = useQueryClient();
+
+  const versionQuery = useQuery<{ localVersion: string; remoteVersion: string | null; updateAvailable: boolean }>({
+    queryKey: ["app-version"],
+    queryFn: () => api.get("/extras/app-version").then(r => r.data),
+    staleTime: 60000,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: () => api.post("/extras/app-update").then(r => r.data),
+    onSuccess: (data) => {
+      toast.success("Update applied — server is restarting…");
+      onOutput("App Update Log", data.output || "Done.");
+      qc.invalidateQueries({ queryKey: ["app-version"] });
+    },
+    onError: (e: any) => {
+      toast.error(e?.response?.data?.error || "Update failed");
+    },
+  });
+
+  const { localVersion, remoteVersion, updateAvailable } = versionQuery.data ?? {};
+
+  return (
+    <div className="glass-card p-5 flex flex-col gap-4 border-l-4 border-violet-500">
+      <div className="flex items-start gap-3">
+        <div className="text-2xl">🚀</div>
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm">VPS Manager Updates</div>
+          <div className="text-[11px] text-[var(--muted)] mt-0.5">
+            Compares your installed version with the latest on GitHub and applies updates in-place.
+          </div>
+        </div>
+      </div>
+
+      {versionQuery.isLoading ? (
+        <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+          <Loader2 size={13} className="animate-spin" /> Checking versions…
+        </div>
+      ) : versionQuery.isError ? (
+        <p className="text-xs text-red-400">Could not fetch version info.</p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-[var(--muted)] uppercase tracking-wider">Installed</span>
+            <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--foreground)] border border-[var(--line)]">
+              v{localVersion}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-[var(--muted)] uppercase tracking-wider">GitHub</span>
+            <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--foreground)] border border-[var(--line)]">
+              {remoteVersion ? `v${remoteVersion}` : "—"}
+            </span>
+          </div>
+          {remoteVersion && (
+            updateAvailable ? (
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-400 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded-full">
+                <ArrowUpCircle size={11} /> Update available
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[10px] font-semibold text-green-400 bg-green-400/10 border border-green-400/30 px-2 py-0.5 rounded-full">
+                <CheckCircle2 size={11} /> Up to date
+              </span>
+            )
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => qc.invalidateQueries({ queryKey: ["app-version"] })}
+          disabled={versionQuery.isFetching || updateMutation.isPending}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] disabled:opacity-50 transition-colors"
+        >
+          {versionQuery.isFetching
+            ? <Loader2 size={12} className="animate-spin" />
+            : <RefreshCw size={12} />}
+          Refresh
+        </button>
+        <button
+          onClick={() => updateMutation.mutate()}
+          disabled={!updateAvailable || updateMutation.isPending || versionQuery.isLoading}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 transition-colors"
+          title={!updateAvailable ? "Already on latest version" : "Pull latest code from GitHub and restart"}
+        >
+          {updateMutation.isPending
+            ? <><Loader2 size={12} className="animate-spin" /> Updating…</>
+            : <><ArrowUpCircle size={12} /> Update Now</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const inp = "w-full px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-[var(--main)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] transition-colors";
 
 function WranglerRemotePanel({ activeServer, runCloudCmd, cloudOutput, cloudLoading }: {
@@ -746,10 +841,18 @@ export default function ExtrasPage() {
 
           {/* Updates */}
           {sysSubTab === "updates" && (
-          <div className="space-y-2">
-            <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Package Management</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-              <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">App Update</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <AppUpdateCard onOutput={(title, output) => setOutputModal({ title, output })} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs text-[var(--muted)] font-semibold uppercase tracking-widest">Package Management</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <SysUpdateCard onRun={handleSystemUpdate} loading={sysUpdLoading} />
+              </div>
             </div>
           </div>
           )}
