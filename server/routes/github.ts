@@ -83,4 +83,72 @@ router.post('/clone', async (req, res) => {
   }
 });
 
+router.post('/detect', async (req, res) => {
+  try {
+    const { repoUrl, token } = req.body as { repoUrl: string; token?: string };
+    if (!repoUrl) return res.status(400).json({ success: false, error: 'repoUrl is required' });
+
+    const slug = repoUrl
+      .replace(/^https?:\/\/(www\.)?github\.com\//, '')
+      .replace(/\.git$/, '')
+      .replace(/\/$/, '');
+
+    const parts = slug.split('/');
+    if (parts.length < 2) return res.status(400).json({ success: false, error: 'Invalid GitHub URL — expected github.com/owner/repo' });
+
+    const [owner, repo] = parts;
+
+    const headers: Record<string, string> = { 'User-Agent': 'vps-manager', Accept: 'application/vnd.github.v3+json' };
+    if (token) headers['Authorization'] = `token ${token}`;
+
+    const apiBase = `https://api.github.com/repos/${owner}/${repo}`;
+
+    const metaRes = await fetch(apiBase, { headers, signal: AbortSignal.timeout(10000) });
+    if (!metaRes.ok) {
+      const body: any = await metaRes.json().catch(() => ({}));
+      return res.status(metaRes.status).json({ success: false, error: body.message || `GitHub API error ${metaRes.status}` });
+    }
+    const meta: any = await metaRes.json();
+
+    const treeRes = await fetch(`${apiBase}/git/trees/${meta.default_branch}?recursive=0`, { headers, signal: AbortSignal.timeout(8000) });
+    const treeData: any = treeRes.ok ? await treeRes.json() : { tree: [] };
+    const files: string[] = (treeData.tree || []).map((f: any) => f.path as string);
+
+    const hasPackageJson      = files.includes('package.json');
+    const hasRequirementsTxt  = files.includes('requirements.txt');
+    const hasIndexJs          = files.includes('index.js') || files.includes('src/index.js') || files.includes('app.js');
+    const hasIndexPy          = files.includes('index.py') || files.includes('app.py') || files.includes('main.py') || files.includes('server.py');
+    const hasIndexTs          = files.includes('index.ts') || files.includes('src/index.ts') || files.includes('app.ts');
+
+    const suggestions: { label: string; file: string; interpreter?: string }[] = [];
+    if (hasPackageJson) {
+      if (hasIndexTs)   suggestions.push({ label: 'TypeScript (tsx index.ts)',    file: 'index.ts',     interpreter: 'tsx' });
+      if (hasIndexJs)   suggestions.push({ label: 'Node.js (node index.js)',       file: 'index.js' });
+      suggestions.push(                   { label: 'npm start (npm run start)',     file: 'npm start',   interpreter: 'npm' });
+    }
+    if (hasRequirementsTxt) {
+      if (hasIndexPy)   suggestions.push({ label: 'Python (python3 app.py)',       file: files.find(f => ['app.py','main.py','index.py','server.py'].includes(f)) || 'app.py', interpreter: 'python3' });
+    }
+    if (!suggestions.length) suggestions.push({ label: 'Custom — fill entry below', file: '' });
+
+    return res.json({
+      success: true,
+      data: {
+        owner,
+        repo,
+        description:        meta.description || '',
+        defaultBranch:      meta.default_branch || 'main',
+        private:            meta.private || false,
+        language:           meta.language || null,
+        stars:              meta.stargazers_count || 0,
+        hasPackageJson,
+        hasRequirementsTxt,
+        suggestions,
+      },
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 export default router;
