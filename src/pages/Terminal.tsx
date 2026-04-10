@@ -62,8 +62,9 @@ export default function TerminalPage() {
   const [histIdx, setHistIdx] = useState(-1);
   const [fontSize, setFontSize] = useState(DEFAULT_FONT);
   const outputRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   const addLine = useCallback((type: Line["type"], text: string) => {
     setLines(prev => [...prev, { type, text }]);
@@ -80,7 +81,7 @@ export default function TerminalPage() {
 
     setLines([
       { type: "system", text: sessionLabel },
-      { type: "system", text: 'Type commands and press Enter. "clear" clears the screen.' },
+      { type: "system", text: 'Type commands and press Enter. Shift+Enter adds a newline. "clear" clears the screen.' },
     ]);
     setInput("");
     setCwd("~");
@@ -102,7 +103,6 @@ export default function TerminalPage() {
     });
     s.on("disconnect", () => { setConnected(false); addLine("system", "✗ Disconnected"); });
     s.on("output", (data: string) => {
-      // Detect clear-screen escape (\x1b[2J or \x1b[3J) — wipe frontend display too
       if (/\x1b\[[23]J/.test(data)) { setLines([]); return; }
       addLine("output", data);
     });
@@ -114,13 +114,23 @@ export default function TerminalPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeServer?.id]);
 
-  const bottomRef = useRef<HTMLDivElement>(null);
-
+  // Scroll to bottom when new lines arrive
   useEffect(() => {
     requestAnimationFrame(() => {
       bottomRef.current?.scrollIntoView({ block: "nearest" });
     });
   }, [lines]);
+
+  // Auto-resize textarea as content grows/shrinks
+  useEffect(() => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  }, [input]);
+
+  // Focus textarea when output area is clicked
+  const focusInput = useCallback(() => inputRef.current?.focus(), []);
 
   const reconnect = useCallback((newUser?: string) => {
     const s = socketRef.current;
@@ -167,13 +177,12 @@ export default function TerminalPage() {
     return () => window.removeEventListener("vpsm:user-change", handler);
   }, [activeServer, reconnect]);
 
-  const send = () => {
+  const send = useCallback(() => {
     const s = socketRef.current;
-    if (!input.trim() || !s || !connected) return;
-    const cmd = input.trim();
-    if (cmd === "clear") { setLines([]); setInput(""); return; }
-    // Intercept 'exit' in SSH mode — don't kill the session, just reconnect
-    if (activeServer && (cmd === "exit" || cmd === "logout")) {
+    const cmd = input.trimEnd();
+    if (!cmd.trim() || !s || !connected) return;
+    if (cmd.trim() === "clear") { setLines([]); setInput(""); return; }
+    if (activeServer && (cmd.trim() === "exit" || cmd.trim() === "logout")) {
       setInput("");
       addLine("system", "⚠ 'exit' is disabled in SSH mode — use the Servers panel to disconnect.");
       return;
@@ -185,13 +194,16 @@ export default function TerminalPage() {
     setHistory(h => [cmd, ...h.slice(0, 99)]);
     setHistIdx(-1);
     setInput("");
-  };
+  }, [input, connected, activeServer, cwd, addLine]);
 
   const histUp = () => {
     const next = Math.min(histIdx + 1, history.length - 1);
     setHistIdx(next);
     setInput(history[next] || "");
-    setTimeout(() => inputRef.current?.setSelectionRange(9999, 9999), 0);
+    setTimeout(() => {
+      const ta = inputRef.current;
+      if (ta) { ta.selectionStart = ta.selectionEnd = ta.value.length; }
+    }, 0);
   };
 
   const histDown = () => {
@@ -200,22 +212,12 @@ export default function TerminalPage() {
     setInput(next === -1 ? "" : history[next]);
   };
 
-  // Multi-line paste: join lines with "; " so they run sequentially as one command
-  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    const text = e.clipboardData.getData("text");
-    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    if (lines.length > 1) {
-      e.preventDefault();
-      setInput(prev => prev + lines.join("; "));
-      addLine("system", `📋 Pasted ${lines.length} lines — joined with ';'. Review and press Enter.`);
-    }
-    // single-line paste: let browser handle normally
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") { send(); return; }
-    if (e.key === "ArrowUp") { e.preventDefault(); histUp(); }
-    if (e.key === "ArrowDown") { e.preventDefault(); histDown(); }
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sends; Shift+Enter inserts newline
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); return; }
+    // Arrow history only when on single-line input
+    if (e.key === "ArrowUp" && !input.includes("\n")) { e.preventDefault(); histUp(); return; }
+    if (e.key === "ArrowDown" && !input.includes("\n")) { e.preventDefault(); histDown(); return; }
     if (e.key === "c" && e.ctrlKey) {
       socketRef.current?.emit("interrupt");
       addLine("system", "^C");
@@ -262,7 +264,7 @@ export default function TerminalPage() {
           </div>
           {!connected && (
             <button
-              onClick={reconnect}
+              onClick={() => reconnect()}
               className="text-xs px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white font-medium hover:opacity-90 transition-opacity"
             >
               Reconnect
@@ -320,10 +322,10 @@ export default function TerminalPage() {
           </div>
         </div>
 
-        {/* Output — always dark so ANSI colors render correctly */}
+        {/* Output + inline prompt — all inside one scrollable area */}
         <div
           ref={outputRef}
-          onClick={() => inputRef.current?.focus()}
+          onClick={focusInput}
           className="h-[52vh] min-h-[260px] overflow-y-auto p-4 font-mono leading-relaxed cursor-text"
           style={{ background: OUT.bg, color: OUT.text, fontSize: `${fontSize}px` }}
         >
@@ -355,10 +357,43 @@ export default function TerminalPage() {
               </div>
             );
           })}
-          <div ref={bottomRef} style={{ height: 1 }} />
+
+          {/* Inline prompt — lives inside the output scroll area */}
+          <div className="flex items-start gap-2 mt-0.5">
+            <span
+              className="font-mono font-bold shrink-0 select-none leading-relaxed"
+              style={{ color: OUT.prompt }}
+            >
+              {activeServer ? `${activeServer.username}@${activeServer.ip}` : cwd}$
+            </span>
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              disabled={!connected}
+              placeholder={connected ? "" : "Connecting..."}
+              className="flex-1 bg-transparent font-mono resize-none focus:outline-none overflow-hidden leading-relaxed"
+              style={{
+                color: OUT.text,
+                caretColor: OUT.prompt,
+                fontSize: "inherit",
+                lineHeight: "inherit",
+                minHeight: "1.5em",
+              }}
+              autoFocus
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+          </div>
+
+          <div ref={bottomRef} style={{ height: 4 }} />
         </div>
 
-        {/* Mobile control keys */}
+        {/* Control keys strip */}
         <div
           className="flex gap-1.5 px-3 py-2 overflow-x-auto hide-scrollbar border-t"
           style={{ background: MONOKAI.inputBar, borderColor: MONOKAI.border }}
@@ -376,40 +411,12 @@ export default function TerminalPage() {
               {key.label}
             </button>
           ))}
-        </div>
-
-        {/* Input bar */}
-        <div
-          className="flex items-center gap-2 px-4 py-2.5 border-t"
-          style={{ background: MONOKAI.inputBar, borderColor: MONOKAI.border }}
-        >
-          <span className="font-mono text-sm shrink-0 font-bold" style={{ color: MONOKAI.prompt }}>
-            {activeServer ? `${activeServer.username}@${activeServer.ip}` : cwd}$
-          </span>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            disabled={!connected}
-            placeholder={connected ? "Enter command..." : "Connecting..."}
-            className="flex-1 bg-transparent font-mono text-sm focus:outline-none"
-            style={{ color: MONOKAI.text, caretColor: MONOKAI.prompt }}
-            autoFocus
-            spellCheck={false}
-            autoComplete="off"
-          />
-          <button
-            onClick={send}
-            disabled={!connected || !input.trim()}
-            className="shrink-0 p-1.5 rounded-lg transition-opacity disabled:opacity-30"
-            style={{ background: MONOKAI.prompt }}
+          <span
+            className="ml-auto self-center text-[10px] font-mono shrink-0"
+            style={{ color: MONOKAI.muted }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#272822" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-            </svg>
-          </button>
+            Enter↵ send · Shift+Enter new line
+          </span>
         </div>
       </div>
 

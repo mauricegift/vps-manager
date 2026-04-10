@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { useSearchParams } from "react-router-dom";
 import {
   Play, Square, RotateCcw, Trash2, RefreshCw,
-  Server, FileText, Plus, ChevronRight, TerminalIcon, Send, Trash, List, RefreshCcw,
+  Server, FileText, Plus, ChevronRight, TerminalIcon, Trash, List, RefreshCcw,
   ArrowUpCircle, Download, Copy, Check, Minus, SearchCheck, XCircle, Loader2,
   Github, HardDrive, Folder, File, ArrowUp, Eye, EyeOff, Key, Globe, Star,
   PackageOpen, PackageCheck, CornerDownRight, PlusCircle, MinusCircle, Package2
@@ -121,6 +121,7 @@ export default function PM2Page() {
   const [pm2InstallOutput, setPm2InstallOutput] = useState<string | null>(null);
   const termEndRef = useRef<HTMLDivElement>(null);
   const termContainerRef = useRef<HTMLDivElement>(null);
+  const termInputRef = useRef<HTMLTextAreaElement>(null);
 
   const { activeServer } = useRemoteServer();
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
@@ -289,6 +290,14 @@ export default function PM2Page() {
     if (!termEndRef.current) return;
     termEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [termHistory, termLoading]);
+
+  // Auto-resize PM2 terminal textarea
+  useEffect(() => {
+    const ta = termInputRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`;
+  }, [termCmd]);
 
   const runTermCmd = async () => {
     const cmd = termCmd.trim();
@@ -775,10 +784,11 @@ export default function PM2Page() {
                 </button>
               </div>
 
-              {/* Output */}
+              {/* Output + inline prompt — all inside one scrollable area */}
               <div
                 ref={termContainerRef}
-                className="font-mono p-4 h-72 overflow-y-auto leading-relaxed"
+                onClick={() => termInputRef.current?.focus()}
+                className="font-mono p-4 h-72 overflow-y-auto leading-relaxed cursor-text"
                 style={{ background: T.bg, color: T.text, fontSize: `${fontSize}px`, scrollBehavior: "smooth", overflowAnchor: "none" }}
               >
                 {termHistory.map((line, i) => (
@@ -802,7 +812,41 @@ export default function PM2Page() {
                     Running...
                   </div>
                 )}
-                <div ref={termEndRef} />
+
+                {/* Inline prompt */}
+                {!termLoading && (
+                  <div className="flex items-start gap-2 mt-0.5">
+                    <span
+                      className="font-mono font-bold shrink-0 select-none leading-relaxed"
+                      style={{ color: T.input }}
+                    >
+                      pm2$
+                    </span>
+                    <textarea
+                      ref={termInputRef}
+                      rows={1}
+                      value={termCmd}
+                      onChange={e => setTermCmd(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runTermCmd(); }
+                      }}
+                      placeholder="list · logs myapp · restart 0 · reload all"
+                      className="flex-1 bg-transparent font-mono resize-none focus:outline-none overflow-hidden leading-relaxed"
+                      style={{
+                        color: T.text,
+                        caretColor: T.input,
+                        fontSize: "inherit",
+                        lineHeight: "inherit",
+                        minHeight: "1.5em",
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                    />
+                  </div>
+                )}
+                <div ref={termEndRef} style={{ height: 4 }} />
               </div>
 
               {/* Quick commands */}
@@ -811,38 +855,19 @@ export default function PM2Page() {
                 {["list", "status", "monit", "flush", "save", "reload all", "logs --lines 50"].map(cmd => (
                   <button
                     key={cmd}
-                    onClick={() => setTermCmd(cmd)}
+                    onClick={() => { setTermCmd(cmd); termInputRef.current?.focus(); }}
                     className="text-[10px] px-2 py-1 rounded-lg font-mono transition-colors"
                     style={{ background: T.border, color: T.text }}
                   >
                     {cmd}
                   </button>
                 ))}
-              </div>
-
-              {/* Input bar */}
-              <div className="flex items-center gap-2 px-4 py-2.5 border-t"
-                style={{ background: T.header, borderColor: T.border }}>
-                <span className="font-mono text-sm font-bold shrink-0" style={{ color: T.input }}>pm2</span>
-                <input
-                  value={termCmd}
-                  onChange={e => setTermCmd(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && runTermCmd()}
-                  placeholder="list · logs myapp · restart 0 · reload all"
-                  className="flex-1 bg-transparent font-mono text-sm focus:outline-none disabled:opacity-50"
-                  style={{ color: T.text, caretColor: T.input }}
-                  disabled={termLoading}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <button
-                  onClick={runTermCmd}
-                  disabled={termLoading || !termCmd.trim()}
-                  className="shrink-0 p-1.5 rounded-xl disabled:opacity-40 transition-opacity"
-                  style={{ background: T.input }}
+                <span
+                  className="ml-auto self-center text-[10px] font-mono shrink-0"
+                  style={{ color: T.muted }}
                 >
-                  <Send size={13} style={{ color: theme === "dark" ? "#272822" : "#ffffff" }} />
-                </button>
+                  Enter↵ send · Shift+Enter new line
+                </span>
               </div>
             </div>
           )}
