@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
-import { sendMail, tplPasswordReset, tplPasswordChanged } from '../services/email.js';
+import { sendMail, tplPasswordReset, tplPasswordChanged, getSmtpConfig } from '../services/email.js';
 
 const router = Router();
 
@@ -262,10 +262,23 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     return;
   }
   try {
+    // Check SMTP config up-front so we can be honest in the response.
+    // This is server-level info (not user-specific), safe to reveal.
+    const smtpCfg = await getSmtpConfig();
+    const emailConfigured = smtpCfg.provider !== 'none' && !!smtpCfg.from_email;
+
     const userRes = await pool.query('SELECT id, username, email FROM users WHERE email = $1', [email.toLowerCase().trim()]);
-    // Always respond 200 to avoid user enumeration
+
+    // Always respond 200 to avoid user enumeration (don't reveal whether email exists)
     if (!userRes.rows.length) {
-      res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
+      res.json({
+        success: true,
+        emailSent: false,
+        emailConfigured,
+        message: emailConfigured
+          ? 'If that email exists, a reset code has been sent.'
+          : 'No email provider configured on this server.',
+      });
       return;
     }
     const user = userRes.rows[0];
@@ -273,25 +286,41 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     // Delete any existing codes for this user
     await pool.query('DELETE FROM password_reset_codes WHERE user_id = $1', [user.id]);
 
-    // Generate 6-digit code
+    // Generate 6-digit code, valid 10 minutes
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     await pool.query(
       'INSERT INTO password_reset_codes (user_id, code, expires_at) VALUES ($1, $2, $3)',
       [user.id, code, expiresAt]
     );
 
-    // Send email (non-blocking — don't fail if email is not configured)
-    sendMail({
-      to: user.email,
-      subject: 'VPS Manager — Your password reset code',
-      html: tplPasswordReset(user.username, code),
-      text: `Your VPS Manager password reset code is: ${code}\n\nValid for 10 minutes. If you didn't request this, ignore this email.`,
-    }).catch(e => console.error('[auth] forgot-password email error:', e));
+    // Always log to console so admins can retrieve code if email fails
+    console.log(`[auth] Password reset code for ${user.email}: ${code}`);
 
-    console.log(`[auth] Reset code for ${user.email}: ${code}`); // fallback log if email not configured
-    res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
+    let emailSent = false;
+    if (emailConfigured) {
+      emailSent = await sendMail({
+        to: user.email,
+        subject: 'Your VPS Manager password reset code',
+        html: tplPasswordReset(user.username, code),
+        text: `Your VPS Manager password reset code is: ${code}\n\nValid for 10 minutes. If you did not request this, you can safely ignore this email.`,
+      });
+      if (!emailSent) {
+        console.warn(`[auth] Email send failed for ${user.email} — code is in the log above`);
+      }
+    }
+
+    res.json({
+      success: true,
+      emailSent,
+      emailConfigured,
+      message: emailSent
+        ? 'A reset code has been sent to your email address.'
+        : emailConfigured
+          ? 'Email delivery failed. Contact your server administrator.'
+          : 'No email provider configured on this server. Contact your server administrator — the reset code is in the server logs.',
+    });
   } catch (e: any) {
     console.error('[auth] forgot-password error:', e.message);
     res.status(500).json({ success: false, error: 'Failed to process request' });

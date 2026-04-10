@@ -130,86 +130,199 @@ export async function sendMail(opts: MailOptions): Promise<boolean> {
 }
 
 // ─── Email Templates ────────────────────────────────────────────────────────
+// All styles are inline so they survive Gmail and other clients that strip
+// <style> blocks. Table-based layout for maximum email-client compatibility.
 
-function baseTemplate(content: string): string {
+const YEAR = new Date().getFullYear();
+const BRAND_COLOR = '#6366f1';      // indigo-500
+const BG        = '#0f0f12';
+const CARD_BG   = '#18181f';
+const BORDER    = '#27272f';
+const TEXT_MAIN = '#f1f1f3';
+const TEXT_MUTED= '#8b8b9a';
+const CODE_BG   = '#0f0f12';
+
+function baseTemplate(preheader: string, body: string): string {
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;background:#0f0f12;color:#e5e7eb}
-  .wrap{background:#0f0f12;padding:40px 16px}
-  .container{max-width:520px;margin:0 auto}
-  .logo{text-align:center;margin-bottom:24px}
-  .logo-inner{display:inline-flex;align-items:center;gap:10px}
-  .logo-icon{background:linear-gradient(135deg,#6366f1,#7c3aed);border-radius:10px;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center}
-  .logo-text{font-size:16px;font-weight:700;color:#f3f4f6}
-  .card{background:#1a1a24;border:1px solid #2a2a3a;border-radius:16px;overflow:hidden}
-  .card-top{height:3px;background:linear-gradient(90deg,#6366f1,#7c3aed)}
-  .body{padding:32px}
-  h1{font-size:20px;font-weight:700;color:#f3f4f6;margin-bottom:12px}
-  .lead{font-size:14px;color:#9ca3af;line-height:1.65;margin-bottom:20px}
-  .code-box{background:#0f0f12;border:1px solid #2a2a3a;border-radius:12px;padding:20px;text-align:center;margin:20px 0}
-  .code{font-size:36px;font-weight:800;letter-spacing:8px;color:#6366f1;font-family:monospace}
-  .code-label{font-size:11px;color:#6b7280;margin-top:8px}
-  .alert{background:#1f1f2e;border:1px solid #2a2a3a;border-radius:8px;padding:12px 16px;font-size:12px;color:#9ca3af;margin-top:16px;line-height:1.5}
-  .footer{text-align:center;padding:20px 16px}
-  .footer p{font-size:11px;color:#4b5563}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no,url=no" />
+  <title>VPS Manager</title>
 </head>
-<body>
-<div class="wrap">
-  <div class="container">
-    <div class="logo">
-      <div class="logo-inner">
-        <div class="logo-icon">
-          <svg width="18" height="18" fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        </div>
-        <span class="logo-text">VPS Manager</span>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-top"></div>
-      <div class="body">${content}</div>
-    </div>
-    <div class="footer">
-      <p>&copy; ${new Date().getFullYear()} VPS Manager</p>
-    </div>
-  </div>
-</div>
+<body style="margin:0;padding:0;background-color:${BG};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+
+  <!--[if !vml]><!--><span style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${preheader}</span><!--<![endif]-->
+
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background-color:${BG};">
+    <tr>
+      <td align="center" style="padding:48px 16px 40px;">
+
+        <!-- Container -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;max-width:520px;">
+
+          <!-- Logo -->
+          <tr>
+            <td align="center" style="padding-bottom:28px;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="padding-right:10px;vertical-align:middle;">
+                    <div style="background:linear-gradient(135deg,${BRAND_COLOR},#7c3aed);border-radius:10px;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;text-align:center;line-height:36px;">
+                      <img src="https://raw.githubusercontent.com/mauricegift/vps-manager/main/public/favicon.svg" width="20" height="20" alt="" style="display:block;border:0;outline:0;" />
+                    </div>
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:16px;font-weight:700;color:${TEXT_MAIN};letter-spacing:-0.3px;">VPS Manager</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Card -->
+          <tr>
+            <td style="background-color:${CARD_BG};border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
+
+              <!-- Accent bar -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+                <tr>
+                  <td style="height:3px;background:linear-gradient(90deg,${BRAND_COLOR},#7c3aed);font-size:0;line-height:0;">&nbsp;</td>
+                </tr>
+              </table>
+
+              <!-- Body -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+                <tr>
+                  <td style="padding:36px 36px 32px;">
+                    ${body}
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding-top:28px;">
+              <p style="margin:0 0 6px;font-size:11px;color:${TEXT_MUTED};line-height:1.5;">
+                You received this email because a password reset was requested for your VPS Manager account.
+              </p>
+              <p style="margin:0;font-size:11px;color:${TEXT_MUTED};">
+                &copy; ${YEAR} VPS Manager &mdash; <a href="https://me.giftedtech.co.ke" style="color:${TEXT_MUTED};text-decoration:underline;">Gifted Tech</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
 </body>
 </html>`;
 }
 
 export function tplPasswordReset(username: string, code: string): string {
-  return baseTemplate(`
-    <h1>Password reset code</h1>
-    <p class="lead">Hi <strong>${username}</strong>, we received a request to reset your VPS Manager password. Use the code below to set a new password.</p>
-    <div class="code-box">
-      <div class="code">${code}</div>
-      <div class="code-label">Valid for 10 minutes</div>
-    </div>
-    <div class="alert">If you didn't request a password reset, you can safely ignore this email — your password will not change.</div>
-  `);
+  const body = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:${TEXT_MAIN};letter-spacing:-0.4px;">Password reset code</h1>
+    <p style="margin:0 0 24px;font-size:14px;color:${TEXT_MUTED};line-height:1.65;">
+      Hi <strong style="color:${TEXT_MAIN};">${username}</strong>, we received a request to reset your VPS Manager password.
+      Use the code below on the password reset page.
+    </p>
+
+    <!-- Code box -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:20px;">
+      <tr>
+        <td align="center" style="background-color:${CODE_BG};border:1px solid ${BORDER};border-radius:12px;padding:24px 16px;">
+          <p style="margin:0 0 4px;font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:${TEXT_MUTED};">Your reset code</p>
+          <p style="margin:8px 0 6px;font-size:40px;font-weight:800;letter-spacing:10px;color:${BRAND_COLOR};font-family:monospace,monospace;line-height:1;">${code}</p>
+          <p style="margin:0;font-size:11px;color:${TEXT_MUTED};">Valid for <strong style="color:${TEXT_MAIN};">10 minutes</strong></p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Steps -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:20px;">
+      <tr>
+        <td style="background-color:#1e1e2a;border:1px solid ${BORDER};border-radius:10px;padding:14px 16px;">
+          <p style="margin:0;font-size:12px;color:${TEXT_MUTED};line-height:1.6;">
+            1. Go to the <strong style="color:${TEXT_MAIN};">Password Reset</strong> page on your VPS Manager<br/>
+            2. Enter your email address and paste the code above<br/>
+            3. Choose your new password
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Security note -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+      <tr>
+        <td style="border-left:3px solid ${BORDER};padding:4px 0 4px 14px;">
+          <p style="margin:0;font-size:12px;color:${TEXT_MUTED};line-height:1.6;">
+            If you did not request a password reset, you can safely ignore this email. Your password will not change.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+  return baseTemplate(`Your VPS Manager password reset code is: ${code}`, body);
 }
 
 export function tplPasswordChanged(username: string): string {
-  return baseTemplate(`
-    <h1>Password changed</h1>
-    <p class="lead">Hi <strong>${username}</strong>, your VPS Manager account password was successfully changed.</p>
-    <div class="alert">If you did not make this change, please contact your administrator immediately.</div>
-  `);
+  const body = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:${TEXT_MAIN};letter-spacing:-0.4px;">Password changed</h1>
+    <p style="margin:0 0 20px;font-size:14px;color:${TEXT_MUTED};line-height:1.65;">
+      Hi <strong style="color:${TEXT_MAIN};">${username}</strong>, your VPS Manager account password was successfully updated.
+    </p>
+
+    <!-- Confirmation box -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:20px;">
+      <tr>
+        <td align="center" style="background-color:${CODE_BG};border:1px solid ${BORDER};border-radius:12px;padding:20px 16px;">
+          <p style="margin:0;font-size:13px;font-weight:600;color:#34d399;">&#10003; &nbsp;Password updated successfully</p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Security note -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+      <tr>
+        <td style="border-left:3px solid #ef4444;padding:4px 0 4px 14px;">
+          <p style="margin:0;font-size:12px;color:${TEXT_MUTED};line-height:1.6;">
+            If you did not make this change, contact your server administrator immediately. All active sessions have been invalidated.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+  return baseTemplate('Your VPS Manager password was changed', body);
 }
 
 export function tplTestEmail(to: string): string {
-  return baseTemplate(`
-    <h1>Test email</h1>
-    <p class="lead">This is a test email from VPS Manager confirming that your SMTP settings are working correctly.</p>
-    <div class="code-box">
-      <div style="font-size:14px;color:#6366f1;font-weight:600;">✓ Configuration working</div>
-      <div class="code-label">Sent to: ${to}</div>
-    </div>
-  `);
+  const body = `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:${TEXT_MAIN};letter-spacing:-0.4px;">SMTP test email</h1>
+    <p style="margin:0 0 24px;font-size:14px;color:${TEXT_MUTED};line-height:1.65;">
+      This is a test email confirming that your VPS Manager SMTP settings are configured correctly.
+    </p>
+
+    <!-- Status box -->
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin-bottom:20px;">
+      <tr>
+        <td align="center" style="background-color:${CODE_BG};border:1px solid ${BORDER};border-radius:12px;padding:24px 16px;">
+          <p style="margin:0 0 6px;font-size:24px;color:#34d399;">&#10003;</p>
+          <p style="margin:0 0 4px;font-size:14px;font-weight:600;color:#34d399;">Email delivery is working</p>
+          <p style="margin:0;font-size:12px;color:${TEXT_MUTED};">Sent to: <strong style="color:${TEXT_MAIN};">${to}</strong></p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:0;font-size:12px;color:${TEXT_MUTED};line-height:1.6;">
+      Password reset emails will now be delivered to your users. You can close the Settings page.
+    </p>
+  `;
+  return baseTemplate('VPS Manager SMTP configuration test — delivery confirmed', body);
 }
