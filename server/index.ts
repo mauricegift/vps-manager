@@ -32,7 +32,12 @@ const __dirname = path.dirname(__filename);
 
 const CUSTOM_DOMAIN = (process.env.ALLOWED_ORIGIN || '').trim();
 
-// Detect the server's own public/private IP for use when no custom domain is set
+// In the Replit dev environment REPLIT_DEV_DOMAIN is always set —
+// the browser origin is a proxied *.replit.dev URL so we allow all there.
+const IS_DEV = !!process.env.REPLIT_DEV_DOMAIN;
+
+// Detect the server's own public/private IP for use in production
+// when no custom domain is configured.
 const getServerIP = (): string => {
   const nets = networkInterfaces();
   for (const iface of Object.values(nets)) {
@@ -44,9 +49,9 @@ const getServerIP = (): string => {
 };
 const SERVER_IP = getServerIP();
 
-// Build allowed origins:
-//   • Custom domain set  → only that domain (http + https variants)
-//   • No custom domain   → only the VPS host IP on port 80 (via nginx)
+// Build the list of allowed origins for production:
+//   • ALLOWED_ORIGIN env var set (custom domain) → only that domain
+//   • No env var → only http://<vps-ip> (port 80 via nginx) + direct frontend port
 const buildAllowedOrigins = (): string[] => {
   if (CUSTOM_DOMAIN) {
     const base = CUSTOM_DOMAIN.replace(/\/$/, '');
@@ -57,31 +62,33 @@ const buildAllowedOrigins = (): string[] => {
     ];
   }
   return [
-    `http://${SERVER_IP}`,
-    `http://${SERVER_IP}:5758`,
+    `http://${SERVER_IP}`,       // via nginx port 80
+    `http://${SERVER_IP}:5758`,  // direct Vite port (production VPS)
   ];
 };
 const ALLOWED_ORIGINS = buildAllowedOrigins();
-console.log('[cors] allowed origins:', ALLOWED_ORIGINS);
+console.log(`[cors] mode=${IS_DEV ? 'dev (permissive)' : 'production'} allowed origins:`, ALLOWED_ORIGINS);
 
-const corsOpts: cors.CorsOptions = {
-  origin: (origin, cb) => {
-    // Allow server-to-server and same-origin requests (no Origin header)
-    if (!origin) { cb(null, true); return; }
-    if (ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o + '/'))) {
-      cb(null, true);
-    } else {
-      cb(new Error(`CORS: origin "${origin}" not allowed`));
-    }
-  },
-  credentials: true,
-};
+const corsOpts: cors.CorsOptions = IS_DEV
+  ? { origin: true, credentials: true } // Replit dev: allow all origins
+  : {
+      origin: (origin, cb) => {
+        // Allow server-to-server requests (no Origin header)
+        if (!origin) { cb(null, true); return; }
+        if (ALLOWED_ORIGINS.some(o => origin === o || origin.startsWith(o + '/'))) {
+          cb(null, true);
+        } else {
+          cb(new Error(`CORS: origin "${origin}" not allowed`));
+        }
+      },
+      credentials: true,
+    };
 
 const app = express();
 const httpServer = createServer(app);
 const io = new SocketIO(httpServer, {
   cors: {
-    origin: ALLOWED_ORIGINS,
+    origin: IS_DEV ? true : ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
     credentials: true,
   },

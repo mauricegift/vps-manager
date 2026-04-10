@@ -111,7 +111,7 @@ Copy `.env.example` to `.env` and fill in your values.
 | `RESEND_API_KEY` | — | API key from [resend.com](https://resend.com) (if `EMAIL_PROVIDER=resend`) |
 | `BREVO_SMTP_USER` | — | Brevo SMTP login (if `EMAIL_PROVIDER=brevo`) |
 | `BREVO_SMTP_PASS` | — | Brevo SMTP password / API key (if `EMAIL_PROVIDER=brevo`) |
-| `ALLOWED_ORIGIN` | — | Your public domain for CORS (leave blank in dev) |
+| `ALLOWED_ORIGIN` — set to your domain (e.g. `https://vps.example.com`) to lock CORS to that domain only; omit to allow only the server's own IP
 
 > **Note:** SMTP settings saved through the Settings page (stored in the database) take priority over environment variables.
 
