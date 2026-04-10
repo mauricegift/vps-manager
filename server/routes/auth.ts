@@ -23,21 +23,10 @@ function signRefresh(userId: number) {
   return jwt.sign({ id: userId }, REFRESH_SECRET, { expiresIn: '7d' });
 }
 
-// Helper: extract and verify optional bearer token (does not block request)
-function tryGetAuthUser(req: Request): { id: number; username: string; email: string } | null {
-  const header = req.headers.authorization;
-  if (!header?.startsWith('Bearer ')) return null;
-  try {
-    const payload = jwt.verify(header.slice(7), ACCESS_SECRET) as any;
-    return { id: payload.id, username: payload.username, email: payload.email };
-  } catch {
-    return null;
-  }
-}
 
 // ── POST /api/auth/register ────────────────────────────────────────────────
-// Allowed if: (a) no users exist yet (initial setup), OR
-//             (b) caller has a valid access token (admin creating another user)
+// ONLY allowed when NO users exist (first-time setup).
+// Once the first user is created this endpoint returns 404 for everyone.
 router.post('/register', async (req: Request, res: Response) => {
   const { username, email, password } = req.body;
   if (!username || !email || !password) {
@@ -52,11 +41,10 @@ router.post('/register', async (req: Request, res: Response) => {
   try {
     const countRes = await pool.query('SELECT COUNT(*) FROM users');
     const userCount = parseInt(countRes.rows[0].count);
-    const caller = tryGetAuthUser(req);
 
-    // Reject if users exist AND caller is not authenticated
-    if (userCount > 0 && !caller) {
-      res.status(403).json({ success: false, error: 'Registration is closed. Ask an existing admin to create your account.' });
+    // Once any user exists — route is permanently closed (404)
+    if (userCount > 0) {
+      res.status(404).json({ success: false, error: 'Not found' });
       return;
     }
 
@@ -76,30 +64,21 @@ router.post('/register', async (req: Request, res: Response) => {
     );
     const newUser = result.rows[0];
 
-    // First user (initial setup): issue tokens so they land on dashboard directly
-    // Admin creating another user: just return user info (no tokens for the new user)
-    if (caller) {
-      res.status(201).json({
-        success: true,
-        data: { user: { id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at } },
-      });
-    } else {
-      const accessToken = signAccess(newUser);
-      const refreshToken = signRefresh(newUser.id);
-      const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
-      await pool.query(
-        'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-        [newUser.id, refreshToken, expiresAt]
-      );
-      res.status(201).json({
-        success: true,
-        data: {
-          user: { id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at },
-          accessToken,
-          refreshToken,
-        },
-      });
-    }
+    const accessToken = signAccess(newUser);
+    const refreshToken = signRefresh(newUser.id);
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+    await pool.query(
+      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [newUser.id, refreshToken, expiresAt]
+    );
+    res.status(201).json({
+      success: true,
+      data: {
+        user: { id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at },
+        accessToken,
+        refreshToken,
+      },
+    });
   } catch (e: any) {
     console.error('[auth] register error:', e.message);
     res.status(500).json({ success: false, error: 'Registration failed' });
@@ -210,6 +189,42 @@ router.get('/setup-required', async (_req: Request, res: Response) => {
     res.json({ success: true, data: { required: parseInt(r.rows[0].count) === 0 } });
   } catch {
     res.json({ success: true, data: { required: true } });
+  }
+});
+
+// ── POST /api/auth/users ─── admin creates a new user (requires auth) ─────
+router.post('/users', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) {
+    res.status(400).json({ success: false, error: 'username, email and password are required' });
+    return;
+  }
+  if (password.length < 6) {
+    res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    return;
+  }
+  try {
+    const exists = await pool.query(
+      'SELECT id FROM users WHERE email = $1 OR username = $2',
+      [email.toLowerCase(), username.toLowerCase()]
+    );
+    if (exists.rows.length) {
+      res.status(409).json({ success: false, error: 'Username or email already taken' });
+      return;
+    }
+    const hash = await bcrypt.hash(password, 12);
+    const result = await pool.query(
+      'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, created_at',
+      [username.trim(), email.toLowerCase().trim(), hash]
+    );
+    const newUser = result.rows[0];
+    res.status(201).json({
+      success: true,
+      data: { user: { id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at } },
+    });
+  } catch (e: any) {
+    console.error('[auth] create user error:', e.message);
+    res.status(500).json({ success: false, error: 'Failed to create user' });
   }
 });
 

@@ -248,7 +248,7 @@ function UsersModal({ onClose, currentUserId }: { onClose: () => void; currentUs
     if (!uname.trim() || !email.trim() || !pass) return;
     setCreating(true);
     try {
-      const { data } = await api.post("/auth/register", { username: uname.trim(), email: email.trim(), password: pass });
+      const { data } = await api.post("/auth/users", { username: uname.trim(), email: email.trim(), password: pass });
       if (data.success) {
         toast.success(`User "${uname}" created`);
         setUname(""); setEmail(""); setPass("");
