@@ -165,18 +165,34 @@ log "Dependencies installed"
 
 # ── Step 5b: PostgreSQL setup ───────────────────────────────────────────────
 step "Setting up PostgreSQL database"
+
+# Helper: run a psql command as the postgres OS user.
+# "sudo -u postgres" fails when SUDO="" (root) because the empty string means
+# bash tries to execute "-u" as a command. Use "su - postgres" for root.
+_psql() {
+  if [[ $EUID -eq 0 ]]; then
+    su - postgres -c "psql -c \"$1\"" 2>/dev/null
+  else
+    sudo -u postgres psql -c "$1" 2>/dev/null
+  fi
+}
+
 $SUDO systemctl enable postgresql 2>/dev/null || true
 $SUDO systemctl start  postgresql 2>/dev/null || true
-# Wait up to 10s for postgres to be ready
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  $SUDO -u postgres psql -c "SELECT 1;" &>/dev/null && break
+
+# Wait up to 15 s for postgres to accept connections
+for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  _psql "SELECT 1" &>/dev/null && break
   sleep 1
 done
+
 PG_PASS=$(openssl rand -hex 16)
-$SUDO -u postgres psql -c "CREATE USER vpsmanager WITH PASSWORD '$PG_PASS';" 2>/dev/null || \
-  $SUDO -u postgres psql -c "ALTER  USER vpsmanager WITH PASSWORD '$PG_PASS';"
-$SUDO -u postgres psql -c "CREATE DATABASE vpsmanager OWNER vpsmanager;" 2>/dev/null || true
-$SUDO -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpsmanager TO vpsmanager;" 2>/dev/null || true
+# Create user (idempotent — ALTER if already exists)
+_psql "CREATE USER vpsmanager WITH PASSWORD '${PG_PASS}';" 2>/dev/null || \
+  _psql "ALTER  USER vpsmanager WITH PASSWORD '${PG_PASS}';" 2>/dev/null || true
+# Create database and grant privileges (both are idempotent)
+_psql "CREATE DATABASE vpsmanager OWNER vpsmanager;" 2>/dev/null || true
+_psql "GRANT ALL PRIVILEGES ON DATABASE vpsmanager TO vpsmanager;" 2>/dev/null || true
 log "PostgreSQL ready (user: vpsmanager)"
 
 
