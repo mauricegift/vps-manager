@@ -191,7 +191,7 @@ npm run build
 npm start
 ```
 
-### Development mode (Replit / local)
+### Development mode (local)
 
 ```bash
 npm run dev
