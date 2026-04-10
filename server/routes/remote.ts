@@ -205,7 +205,8 @@ router.get('/:id/files', async (req, res) => {
       if (name === '.' || name === '..') continue;
       const isDir = perms[0] === 'd';
       const fullPath = dir === '/' ? `/${name}` : `${dir}/${name}`;
-      files.push({ name, path: fullPath, type: isDir ? 'directory' : 'file', size: parseInt(size) || 0, modified: mtime, permissions: perms.slice(1) });
+      // Directories show only inode metadata size via ls -la (~4KB) — return null so UI shows "—"
+      files.push({ name, path: fullPath, type: isDir ? 'directory' : 'file', size: isDir ? null : (parseInt(size) || 0), modified: mtime, permissions: perms.slice(1) });
     }
     res.json({ success: true, data: files });
   } catch (e: any) {
@@ -337,14 +338,33 @@ router.get('/:id/files/zip-download', async (req, res) => {
       '*/node_modules/*', '*/.git/*', '*/.npm/*', '*/.agents/*',
       '*/attached_assets/*', '*/replit.md', '*/replit.nix', '*/.replit',
       '*/bun.lock', '*/package-lock.json',
+      '*/__pycache__/*', '*/*.pyc', '*/.mypy_cache/*',
+      '*/dist/*', '*/build/*', '*/.next/*',
+      '*/target/*', '*/vendor/*',
+      '*/venv/*', '*/.venv/*',
+      '*/*.egg-info/*',
     ].map(p => `-x ${JSON.stringify(p)}`).join(' ');
 
     // Ensure zip is installed, create zip on remote
     const zipCheckCmd = `command -v zip >/dev/null 2>&1 || (apt-get install -y zip -qq 2>&1)`;
     await runSSHCommand(conn, zipCheckCmd);
 
+    // Detect Python virtual environments of any name (myvenv, myenv, env, etc.)
+    // by searching for pyvenv.cfg inside the target — any dir containing it IS a venv
+    let dynamicExclude = '';
+    try {
+      const { stdout: venvOut } = await runSSHCommand(conn,
+        `find ${JSON.stringify(targetPath)} -name pyvenv.cfg -maxdepth 6 2>/dev/null | head -20`
+      );
+      const venvDirs = venvOut.trim().split('\n').filter(Boolean)
+        .map(p => p.replace(/\/pyvenv\.cfg$/, ''));
+      if (venvDirs.length) {
+        dynamicExclude = venvDirs.map(d => `-x ${JSON.stringify(d + '/*')}`).join(' ');
+      }
+    } catch { /* ignore */ }
+
     const { stdout: zipOut, code: zipCode } = await runSSHCommand(conn,
-      `cd ${JSON.stringify(parentDir)} && zip -r ${JSON.stringify(tmpZip)} ${JSON.stringify(baseName)} ${EXCLUDE} 2>&1; echo "_ZIPCODE_$?"`
+      `cd ${JSON.stringify(parentDir)} && zip -r ${JSON.stringify(tmpZip)} ${JSON.stringify(baseName)} ${EXCLUDE} ${dynamicExclude} 2>&1; echo "_ZIPCODE_$?"`
     );
     const actualZipCode = parseInt((zipOut.match(/_ZIPCODE_(\d+)/) || ['', '1'])[1]);
     if (actualZipCode !== 0 && actualZipCode !== 12) {

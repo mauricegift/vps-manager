@@ -40,11 +40,12 @@ async function collectFolderEntries(entry: FileSystemEntry, prefix: string): Pro
   return [];
 }
 
-function fmtSize(b: number) {
-  if (!b) return "—";
-  if (b > 1e9) return (b / 1e9).toFixed(1) + " GB";
-  if (b > 1e6) return (b / 1e6).toFixed(1) + " MB";
-  if (b > 1e3) return (b / 1e3).toFixed(1) + " KB";
+function fmtSize(b: number | null) {
+  if (b === null || b === undefined) return "—";
+  if (!b) return "0 B";
+  if (b > 1e9) return (b / 1e9).toFixed(2) + " GB";
+  if (b > 1e6) return (b / 1e6).toFixed(2) + " MB";
+  if (b > 1e3) return (b / 1e3).toFixed(2) + " KB";
   return b + " B";
 }
 

@@ -33,7 +33,9 @@ router.get('/', async (req, res) => {
             name: entry.name,
             path: fullPath,
             type: entry.isDirectory() ? 'directory' : 'file',
-            size: s.size,
+            // Directories report only their inode metadata (~4KB) via stat — not the real content size.
+            // Return null so the UI shows "—" instead of a misleading 4.1 KB.
+            size: entry.isDirectory() ? null : s.size,
             modified: s.mtime.toISOString(),
             permissions: (s.mode & 0o777).toString(8),
             owner: String(s.uid),
@@ -203,7 +205,22 @@ router.post('/zip', async (req, res) => {
     if (!paths || !paths.length) return res.status(400).json({ success: false, error: 'paths required' });
     const outPath = dest || path.join('/tmp', `archive-${Date.now()}.zip`);
     const quoted = paths.map(p => `"${p}"`).join(' ');
-    await execAsync(`zip -r "${outPath}" ${quoted} ${ZIP_EXCLUDE} 2>&1`);
+
+    // Detect Python virtual environments of any name by looking for pyvenv.cfg
+    // This catches myvenv, myenv, env, .env_venv, virtualenv, etc.
+    let dynamicExcludes = '';
+    try {
+      const { stdout: venvOut } = await Promise.race([
+        execAsync(`find ${quoted} -name pyvenv.cfg -maxdepth 6 2>/dev/null`),
+        new Promise<{ stdout: string }>((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+      ]);
+      const venvDirs = venvOut.trim().split('\n').filter(Boolean).map(p => path.dirname(p));
+      if (venvDirs.length) {
+        dynamicExcludes = venvDirs.map(d => `-x "${d}/*"`).join(' ');
+      }
+    } catch { /* timeout or no pyvenv.cfg found — skip */ }
+
+    await execAsync(`zip -r "${outPath}" ${quoted} ${ZIP_EXCLUDE} ${dynamicExcludes} 2>&1`);
     res.json({ success: true, data: { path: outPath } });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });

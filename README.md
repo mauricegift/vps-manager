@@ -248,8 +248,10 @@ vps-manager/
 ## Changelog
 
 ### Latest Release
+- **File Manager — exact file sizes**: files now show precise byte sizes (e.g. `14.23 KB`, `2.51 MB`); directories correctly show `—` instead of the misleading `4.1 KB` inode metadata value
+- **ZIP — exclude any Python venv**: dynamically detects virtual environments of any name (`myvenv`, `myenv`, `env`, `virtualenv`, etc.) by searching for `pyvenv.cfg` inside the path, then excludes them — works for both local and remote downloads; `.env` dotenv files are always **included**
+- **ZIP — full Python artifact exclusion**: `__pycache__/`, `*.pyc`, `.mypy_cache/`, `dist/`, `build/`, `.next/`, `target/`, `vendor/`, `venv/`, `.venv/`, `*.egg-info/` excluded in both local and remote zip routes
 - **Footer**: copyright `© {year} VPS Manager` now appears before "Built with ❤️ by Gifted Tech"
-- **ZIP downloads**: exclude `__pycache__`, `*.pyc`, `.mypy_cache`, `dist/`, `build/`, `.next/`, `target/`, `vendor/`, `venv/`, `.venv/`, `*.egg-info/`
 - **Nginx SSL**: webroot quick-pick presets + step-by-step DNS → Nginx → SSL setup checklist
 - **Swap**: unconditionally removes existing swap before creating new one — no more "swap already exists" failures
 - **MOTD**: "View Current MOTD" modal and "Load Current" button added

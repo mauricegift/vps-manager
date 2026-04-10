@@ -68,7 +68,7 @@ export interface FileItem {
   name: string;
   path: string;
   type: 'file' | 'directory';
-  size: number;
+  size: number | null;
   modified: string;
   permissions: string;
   owner: string;
