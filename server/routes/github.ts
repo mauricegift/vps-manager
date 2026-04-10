@@ -40,14 +40,23 @@ router.post('/clone', async (req, res) => {
       await mkdir(dir, { recursive: true });
     }
 
+    // Source NVM + widen PATH so npm/node/git are found even under PM2
+    const NVM_PREFIX = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
+    const WIDE_ENV = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: '0',
+      DEBIAN_FRONTEND: 'noninteractive',
+      PATH: [process.env.PATH, '/usr/local/bin', '/usr/bin', '/bin'].filter(Boolean).join(':'),
+    };
+
     // Clone into parent dir — git creates the {repoName} subfolder automatically
-    const cloneCmd = `git clone --progress ${JSON.stringify(cloneUrl)} ${JSON.stringify(repoName)}`;
+    const cloneCmd = `${NVM_PREFIX}git clone --progress ${JSON.stringify(cloneUrl)} ${JSON.stringify(repoName)}`;
     let output = '';
     try {
       const { stdout, stderr } = await execAsync(cloneCmd, {
         cwd: dir,
         timeout: 120_000,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: WIDE_ENV,
       });
       output = (stdout + stderr).trim();
     } catch (cloneErr: any) {
@@ -56,13 +65,14 @@ router.post('/clone', async (req, res) => {
       return res.status(500).json({ success: false, error: safe });
     }
 
-    // Optionally run npm install
+    // Optionally run npm install (or pip if Python project)
     let installOutput = '';
     if (runInstall && existsSync(path.join(cloneTarget, 'package.json'))) {
       try {
-        const { stdout, stderr } = await execAsync('npm install --legacy-peer-deps', {
+        const { stdout, stderr } = await execAsync(`${NVM_PREFIX}npm install --legacy-peer-deps`, {
           cwd: cloneTarget,
           timeout: 180_000,
+          env: WIDE_ENV,
         });
         installOutput = (stdout + stderr).trim();
       } catch (installErr: any) {

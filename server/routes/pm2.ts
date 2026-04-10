@@ -5,14 +5,25 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 const router = Router();
 
-const COLOR_ENV = { ...process.env, FORCE_COLOR: '3', COLORTERM: 'truecolor' };
+// Broad PATH so NVM-installed pm2/npm/node are always found even when spawned by PM2
+const WIDE_PATH = [
+  process.env.PATH,
+  `${process.env.HOME || '/root'}/.nvm/versions/node`,   // resolved per-command via shell glob
+  `${process.env.HOME || '/root'}/.local/bin`,
+  '/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin',
+].filter(Boolean).join(':');
+
+const BASE_ENV = { ...process.env, PATH: WIDE_PATH, FORCE_COLOR: '3', COLORTERM: 'truecolor', DEBIAN_FRONTEND: 'noninteractive' };
+const COLOR_ENV = BASE_ENV;
+// Prefix for shell commands — sources NVM so node/npm/pm2 are in PATH
+const NVM_PREFIX = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
 
 function runPM2(args: string) {
-  return execAsync(`pm2 ${args} 2>&1`, { env: COLOR_ENV });
+  return execAsync(`${NVM_PREFIX}pm2 ${args} 2>&1`, { env: BASE_ENV });
 }
 
 function runPM2Json(args: string) {
-  return execAsync(`pm2 ${args} --no-color 2>&1`);
+  return execAsync(`${NVM_PREFIX}pm2 ${args} --no-color 2>&1`, { env: BASE_ENV });
 }
 
 async function listProcesses() {
@@ -117,12 +128,12 @@ router.post('/start', async (req, res) => {
       const pm = pkgManager === 'bun' ? 'bun' : 'npm';
       const installCmd = pm === 'bun'
         ? `(command -v bun >/dev/null 2>&1 || npm install -g bun) && cd "${cwd}" && bun install 2>&1`
-        : `cd "${cwd}" && npm install 2>&1`;
-      await execAsync(installCmd, { timeout: 300000 }).catch(() => {});
+        : `${NVM_PREFIX}cd "${cwd}" && npm install 2>&1`;
+      await execAsync(installCmd, { timeout: 300000, env: BASE_ENV }).catch(() => {});
     }
-    await execAsync(cmd, { timeout: 30000 });
-    await execAsync('pm2 save', { timeout: 10000 }).catch(() => {});
-    await execAsync('pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null', { timeout: 15000 }).catch(() => {});
+    await execAsync(`${NVM_PREFIX}${cmd}`, { timeout: 60000, env: BASE_ENV });
+    await execAsync(`${NVM_PREFIX}pm2 save`, { timeout: 10000, env: BASE_ENV }).catch(() => {});
+    await execAsync(`${NVM_PREFIX}pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null`, { timeout: 15000, env: BASE_ENV }).catch(() => {});
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });

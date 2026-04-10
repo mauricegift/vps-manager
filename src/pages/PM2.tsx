@@ -212,6 +212,8 @@ export default function PM2Page() {
   const startMutation = useMutation({
     mutationFn: async (body: typeof startForm) => {
       const envPairs = startEnvVars.filter(e => e.key.trim());
+      // Source NVM and widen PATH on the remote so pm2/npm/node are always found
+      const nvmPath = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; export PATH="$HOME/.nvm/versions/node/$(ls $NVM_DIR/versions/node/ 2>/dev/null | sort -V | tail -1)/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:$PATH"; `;
       if (activeServer) {
         let pm2Cmd = buildRemotePm2Cmd(body.script, body.name, body.cwd);
         // Write port and env vars to .env file on remote when cwd is provided
@@ -223,7 +225,7 @@ export default function PM2Page() {
             const v = rest.join("=");
             return `grep -q '^${k}=' "${body.cwd}/.env" && sed -i 's|^${k}=.*|${line}|' "${body.cwd}/.env" || echo '${line}' >> "${body.cwd}/.env"`;
           }).join(" && ")}`;
-          await api.post(`/remote/${activeServer.id}/exec`, { command: writeEnvCmd });
+          await api.post(`/remote/${activeServer.id}/exec`, { command: nvmPath + writeEnvCmd });
         } else {
           if (body.port) pm2Cmd += ` --env PORT=${body.port}`;
           envPairs.forEach(({ key, value }) => { pm2Cmd += ` --env ${key.trim()}=${value}`; });
@@ -235,12 +237,14 @@ export default function PM2Page() {
             : `cd "${body.cwd}" && npm install`;
           fullCmd = `${installCmd} 2>&1 && ${pm2Cmd}`;
         }
-        fullCmd += ` && pm2 save`;
-        return api.post(`/remote/${activeServer.id}/exec`, { command: fullCmd });
+        fullCmd += ` && pm2 save 2>/dev/null; pm2 startup 2>/dev/null || true`;
+        return api.post(`/remote/${activeServer.id}/exec`, { command: nvmPath + fullCmd });
       }
+      // Local (non-remote) — compute isSh from body.script here
+      const scriptIsSh = body.script.trim().endsWith(".sh");
       return api.post("/pm2/start", {
         ...body,
-        interpreter: isSh ? "bash" : undefined,
+        interpreter: scriptIsSh ? "bash" : undefined,
         envVars: envPairs,
         pkgManager,
         installDeps: installDepsBeforeStart,

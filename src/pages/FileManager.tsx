@@ -67,20 +67,28 @@ export default function FileManagerPage() {
   const pfx = activeServer ? `/remote/${activeServer.id}` : "";
 
   const { user } = useAuth();
-  const [path, setPath] = useState(() =>
-    activeServer ? remoteDefaultPath(activeServer.username) : "/root"
+  // null = not yet resolved; prevents a premature file listing before we know the real home dir
+  const [path, setPath] = useState<string | null>(() =>
+    activeServer ? remoteDefaultPath(activeServer.username) : null
   );
 
+  // Single authoritative effect: sets path whenever the active server changes
   useEffect(() => {
     if (activeServer) {
       setPath(remoteDefaultPath(activeServer.username));
+      setSelected(null);
       return;
     }
-    api.get("/system/homedir").then(r => {
-      const home: string = r.data?.data?.home || "/root";
-      setPath(p => (p === "/" || p === "/root" || p.startsWith("/home/runner")) ? home : p);
-    }).catch(() => {});
-  }, [activeServer]);
+    // Local: ask the server for the real home dir (avoids hardcoding /home/runner etc.)
+    setPath(null); // clear while fetching to block the file query
+    api.get("/system/homedir")
+      .then(r => {
+        const home: string = r.data?.data?.home || "/root";
+        setPath(home);
+      })
+      .catch(() => setPath("/root"))
+      .finally(() => setSelected(null));
+  }, [activeServer?.id]);
 
   // React to user-context changes dispatched from Extras page
   useEffect(() => {
@@ -140,19 +148,10 @@ export default function FileManagerPage() {
   const [ghCloning, setGhCloning] = useState(false);
   const [ghCloneOutput, setGhCloneOutput] = useState("");
 
-  // Reset path when active server changes
-  useEffect(() => {
-    if (activeServer) {
-      setPath(remoteDefaultPath(activeServer.username));
-    } else {
-      setPath("/home/runner/workspace");
-    }
-    setSelected(null);
-  }, [activeServer?.id]);
-
   const { data: files = [], isLoading, refetch, isFetching } = useQuery<FileItem[]>({
     queryKey: ["files", path, activeServer?.id ?? "local"],
     queryFn: () => api.get(`${pfx}/files`, { params: { path } }).then(r => r.data.data),
+    enabled: path !== null,
   });
 
   const deleteMutation = useMutation({
@@ -203,7 +202,8 @@ export default function FileManagerPage() {
 
   const mkdirMutation = useMutation({
     mutationFn: (name: string) => {
-      const newPath = path === "/" ? `/${name}` : `${path}/${name}`;
+      const curPath = path ?? "/";
+      const newPath = curPath === "/" ? `/${name}` : `${curPath}/${name}`;
       return activeServer
         ? api.post(`/remote/${activeServer.id}/files/mkdir`, { path: newPath })
         : api.post("/files/mkdir", { path: newPath });
@@ -214,7 +214,8 @@ export default function FileManagerPage() {
 
   const createFileMutation = useMutation({
     mutationFn: ({ name, content }: { name: string; content: string }) => {
-      const newPath = path === "/" ? `/${name}` : `${path}/${name}`;
+      const curPath = path ?? "/";
+      const newPath = curPath === "/" ? `/${name}` : `${curPath}/${name}`;
       return activeServer
         ? api.post(`/remote/${activeServer.id}/files/save`, { path: newPath, content })
         : api.post("/files/create", { path: newPath, content });
@@ -285,7 +286,7 @@ export default function FileManagerPage() {
       const form = new FormData();
       const filesArr = Array.from(files);
       filesArr.forEach(f => form.append("files", f));
-      form.append("path", path);
+      form.append("path", path ?? "/");
       if (relativePaths && relativePaths.length) {
         form.append("relativePaths", JSON.stringify(relativePaths));
       }
@@ -444,7 +445,7 @@ export default function FileManagerPage() {
         const saved = JSON.parse(localStorage.getItem("vps_gh_tokens") || "[]");
         setGhSavedTokens(saved);
       } catch { /* ignore */ }
-      setGhTargetDir(path);
+      setGhTargetDir(path ?? "/");
       setGhCloneOutput("");
     }
   }, [ghModal, path]);
@@ -529,7 +530,7 @@ export default function FileManagerPage() {
     setGhCloning(false);
   };
 
-  const breadcrumbs = ["", ...path.split("/").filter(Boolean)];
+  const breadcrumbs = ["", ...(path ?? "").split("/").filter(Boolean)];
   const navigate = (parts: string[]) => { setPath(parts.join("/") || "/"); setSelected(null); setBulkSelected(new Set()); };
 
   return (
@@ -598,7 +599,7 @@ export default function FileManagerPage() {
         onClick={() => fileInputRef.current?.click()}
       >
         <Upload size={16} className="mx-auto mb-1 opacity-50" />
-        Drop files or folders here, or click to upload to <span className="font-mono text-[var(--accent)]">{path}</span>
+        Drop files or folders here, or click to upload to <span className="font-mono text-[var(--accent)]">{path ?? "…"}</span>
       </div>
 
       {/* Breadcrumb */}
@@ -706,10 +707,10 @@ export default function FileManagerPage() {
 
       {/* File list */}
       <div data-aos="fade-up" className="glass-card overflow-hidden">
-        {path !== "/" && (
+        {path && path !== "/" && (
           <button
             onClick={() => {
-              const parts = path.split("/").filter(Boolean);
+              const parts = (path ?? "").split("/").filter(Boolean);
               parts.pop();
               navigate(parts.length ? parts : [""]);
             }}
@@ -866,11 +867,11 @@ export default function FileManagerPage() {
         <div className="space-y-4">
           <div>
             <label className="text-xs text-[var(--muted)] mb-1.5 block">Destination path</label>
-            <input value={moveDest || path} onChange={e => setMoveDest(e.target.value)} placeholder="/destination/path" className={`${inp} font-mono`} />
+            <input value={moveDest || (path ?? "/")} onChange={e => setMoveDest(e.target.value)} placeholder="/destination/path" className={`${inp} font-mono`} />
           </div>
           <div className="flex gap-2 justify-end">
             <button onClick={() => setMoveModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
-            <button onClick={() => clipboard && moveMutation.mutate({ src: clipboard.item.path, dest: (moveDest || path) + "/" + clipboard.item.name })}
+            <button onClick={() => clipboard && moveMutation.mutate({ src: clipboard.item.path, dest: (moveDest || path || "/") + "/" + clipboard.item.name })}
               disabled={moveMutation.isPending} className="px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
               {moveMutation.isPending ? "Moving..." : "Move"}
             </button>
