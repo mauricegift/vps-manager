@@ -901,23 +901,49 @@ router.delete('/motd', async (_req, res) => {
 
 router.get('/app-version', async (_req, res) => {
   try {
+    const REPO = 'mauricegift/vps-manager';
+
+    // Local version from package.json
     const pkgPath = path.resolve(process.cwd(), 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     const localVersion: string = pkg.version || '0.0.0';
 
     let remoteVersion: string | null = null;
+    let versionSource: 'release' | 'package.json' = 'package.json';
+
+    // ── Priority 1: GitHub Releases API (latest formal release) ──────────────
     try {
-      const ghRes = await fetch('https://raw.githubusercontent.com/mauricegift/vps-manager/main/package.json', {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (ghRes.ok) {
-        const ghPkg: any = await ghRes.json();
-        remoteVersion = ghPkg.version || null;
+      const relRes = await fetch(
+        `https://api.github.com/repos/${REPO}/releases/latest`,
+        { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(8000) }
+      );
+      if (relRes.ok) {
+        const relJson: any = await relRes.json();
+        if (relJson.tag_name) {
+          // Strip leading "v" so "v1.0.4" → "1.0.4"
+          remoteVersion = relJson.tag_name.replace(/^v/i, '').trim() || null;
+          if (remoteVersion) versionSource = 'release';
+        }
       }
-    } catch { }
+    } catch { /* network error — fall through */ }
+
+    // ── Priority 2: package.json on main branch (no formal release yet) ───────
+    if (!remoteVersion) {
+      try {
+        const pkgRes = await fetch(
+          `https://raw.githubusercontent.com/${REPO}/main/package.json`,
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (pkgRes.ok) {
+          const ghPkg: any = await pkgRes.json();
+          remoteVersion = ghPkg.version || null;
+          if (remoteVersion) versionSource = 'package.json';
+        }
+      } catch { /* network error — leave null */ }
+    }
 
     const updateAvailable = remoteVersion ? semverGt(remoteVersion, localVersion) : false;
-    res.json({ localVersion, remoteVersion, updateAvailable });
+    res.json({ localVersion, remoteVersion, updateAvailable, versionSource });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
