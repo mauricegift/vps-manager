@@ -894,9 +894,16 @@ case "${type}" in
   postgresql)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
-      sed -i "s/^[#]*listen_addresses.*/listen_addresses = '*'/" "$CONF"
-      grep -q "listen_addresses" "$CONF" || echo "listen_addresses = '*'" >> "$CONF"
-      systemctl restart postgresql 2>&1 || true
+      # Handle commented lines like "#listen_addresses" or "# listen_addresses"
+      sed -i -E "s/^#?[[:space:]]*listen_addresses.*/listen_addresses = '*'/" "$CONF"
+      grep -q "^listen_addresses" "$CONF" || echo "listen_addresses = '*'" >> "$CONF"
+      # Also update pg_hba.conf to allow external password auth
+      HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
+      if [ -n "$HBA" ] && ! grep -q "^host.*all.*all.*0\\.0\\.0\\.0/0" "$HBA"; then
+        echo "host    all             all             0.0.0.0/0               scram-sha-256" >> "$HBA"
+      fi
+      systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
+      sleep 2
       echo "BIND_FIXED=1"
     fi
     ;;
@@ -904,7 +911,8 @@ case "${type}" in
     CONF=$(find /etc/mysql -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
       sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$CONF"
-      systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || true
+      systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || service mysql restart 2>/dev/null || true
+      sleep 2
       echo "BIND_FIXED=1"
     fi
     ;;
@@ -916,7 +924,8 @@ case "${type}" in
       else
         sed -i '/^net:/a\\  bindIp: 0.0.0.0' "$CONF"
       fi
-      systemctl restart mongod 2>&1 || true
+      systemctl restart mongod 2>&1 || service mongod restart 2>&1 || true
+      sleep 2
       echo "BIND_FIXED=1"
     fi
     ;;
@@ -925,6 +934,7 @@ case "${type}" in
     if [ -n "$CONF" ]; then
       sed -i "s/^bind .*/bind 0.0.0.0/" "$CONF"
       systemctl restart redis-server 2>/dev/null || systemctl restart redis 2>/dev/null || true
+      sleep 1
       echo "BIND_FIXED=1"
     fi
     ;;
@@ -967,6 +977,7 @@ router.post('/:type/close-external', async (req, res) => {
     if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
 
     const script = `
+# 1. Close firewall
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw delete allow ${port}/tcp 2>&1 || true
   ufw reload 2>/dev/null || true
@@ -975,8 +986,38 @@ elif command -v iptables >/dev/null 2>&1; then
   iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || true
   echo "FW_CLOSED=1"
 fi
+iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || true
 iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || true
 iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || true
+
+# 2. Revert bind address back to localhost and restart
+case "${type}" in
+  postgresql)
+    CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
+    if [ -n "$CONF" ]; then
+      sed -i -E "s/^listen_addresses.*/listen_addresses = 'localhost'/" "$CONF"
+      # Remove external pg_hba.conf entry
+      HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
+      [ -n "$HBA" ] && sed -i "/^host.*all.*all.*0\\.0\\.0\\.0\\/0/d" "$HBA"
+      systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
+    fi
+    ;;
+  mysql|mariadb)
+    CONF=$(find /etc/mysql -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | head -1)
+    [ -n "$CONF" ] && sed -i "s/^bind-address.*/bind-address = 127.0.0.1/" "$CONF"
+    systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || true
+    ;;
+  mongodb)
+    CONF=/etc/mongod.conf
+    [ -f "$CONF" ] && sed -i "s/bindIp:.*/bindIp: 127.0.0.1/" "$CONF"
+    systemctl restart mongod 2>&1 || true
+    ;;
+  redis)
+    CONF=$(find /etc/redis -name "*.conf" 2>/dev/null | head -1)
+    [ -n "$CONF" ] && sed -i "s/^bind .*/bind 127.0.0.1/" "$CONF"
+    systemctl restart redis-server 2>/dev/null || systemctl restart redis 2>/dev/null || true
+    ;;
+esac
 echo "DONE"
 `.trim();
     const out = await run(`bash -c ${JSON.stringify(script)}`, 20000);
