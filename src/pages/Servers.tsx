@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { toast } from 'react-toastify';
 import AOS from 'aos';
@@ -41,6 +41,8 @@ export default function Servers() {
   const [form, setForm] = useState<ServerFormData>(EMPTY_FORM);
   const [showPwd, setShowPwd] = useState(false);
   const [activeTab, setActiveTab] = useState<'password' | 'key'>('password');
+  const [liveStatus, setLiveStatus] = useState<Record<number, boolean>>({});
+  const pollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['vps-connections'],
@@ -52,6 +54,22 @@ export default function Servers() {
     placeholderData: keepPreviousData,
   });
 
+  // Poll /servers/status every 3 seconds for live online/offline icons
+  const pollStatus = async () => {
+    try {
+      const r = await api.get('/servers/status');
+      const map: Record<number, boolean> = {};
+      for (const item of (r.data.data || [])) map[item.id] = item.online;
+      setLiveStatus(map);
+    } catch { /* silently ignore */ }
+  };
+
+  useEffect(() => {
+    pollStatus();
+    pollerRef.current = setInterval(pollStatus, 3000);
+    return () => { if (pollerRef.current) clearInterval(pollerRef.current); };
+  }, []);
+
   useEffect(() => {
     if (!isLoading) {
       const t = setTimeout(() => AOS.refresh(), 80);
@@ -61,10 +79,24 @@ export default function Servers() {
 
   const addMutation = useMutation({
     mutationFn: (body: any) => api.post('/servers', body),
-    onSuccess: () => {
+    onSuccess: async (res) => {
+      const newServer = res.data?.data;
       qc.invalidateQueries({ queryKey: ['vps-connections'] });
-      toast.success('Server added successfully');
+      toast.success('Server added — testing SSH connection…');
       closeForm();
+      if (newServer?.id) {
+        try {
+          const r = await api.post(`/servers/${newServer.id}/test`);
+          if (r.data.online) {
+            toast.success(`${newServer.name} is online ✓`);
+            setLiveStatus(prev => ({ ...prev, [newServer.id]: true }));
+          } else {
+            toast.warning(`${newServer.name} added but SSH unreachable`);
+            setLiveStatus(prev => ({ ...prev, [newServer.id]: false }));
+          }
+          qc.invalidateQueries({ queryKey: ['vps-connections'] });
+        } catch { /* test failed, ignore */ }
+      }
     },
     onError: (e: any) => toast.error(e.response?.data?.error || 'Failed to add server'),
   });
@@ -185,8 +217,14 @@ export default function Servers() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <StatusDot status={s.last_status} />
-                  <span className="text-xs text-[var(--muted)] capitalize">{s.last_status}</span>
+                  {(() => {
+                    const isLive = liveStatus[s.id];
+                    const statusStr = isLive === undefined ? (s.last_status || 'unknown') : (isLive ? 'online' : 'offline');
+                    return <>
+                      <StatusDot status={statusStr} />
+                      <span className="text-xs text-[var(--muted)] capitalize">{statusStr}</span>
+                    </>;
+                  })()}
                 </div>
               </div>
 
