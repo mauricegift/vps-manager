@@ -936,13 +936,18 @@ router.post('/app-update', async (_req, res) => {
   const lines: string[] = [];
   const log = (msg: string) => { lines.push(msg); };
 
+  const tmpZip = `/tmp/vpsm-update-${Date.now()}.zip`;
+  const tmpExtract = `/tmp/vpsm-extract-${Date.now()}`;
+
   try {
     const appDir = process.cwd();
     const envPath = path.join(appDir, '.env');
 
-    // Resolve npm — when running under PM2, NVM may not be sourced
+    log(`App directory: ${appDir}`);
+
+    // Resolve npm from the running Node binary (works under PM2 + NVM)
     const nodeDir = path.dirname(process.execPath);
-    const npmBin  = fs.existsSync(path.join(nodeDir, 'npm'))
+    const npmBin = fs.existsSync(path.join(nodeDir, 'npm'))
       ? path.join(nodeDir, 'npm')
       : 'npm';
     const nvmPrefix = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
@@ -951,62 +956,115 @@ router.post('/app-update', async (_req, res) => {
     let envContent = '';
     if (fs.existsSync(envPath)) {
       envContent = fs.readFileSync(envPath, 'utf8');
-      log('[1/4] .env backed up');
+      log('[1/5] .env backed up');
+    } else {
+      log('[1/5] No .env found — skipping backup');
     }
 
-    // ── Step 2: Git pull ─────────────────────────────────────────────────────
-    log('[2/4] Pulling latest code from GitHub…');
+    // ── Step 2: Download latest zip from GitHub ───────────────────────────────
+    const zipUrl = 'https://github.com/mauricegift/vps-manager/archive/refs/heads/main.zip';
+    log(`[2/5] Downloading latest code from GitHub…`);
+    let downloaded = false;
+    // Try curl first
     try {
-      const gitOut = await runStrict(
-        `cd "${appDir}" && git fetch origin main 2>&1 && git reset --hard origin/main 2>&1`,
+      const curlOut = await runStrict(
+        `curl -fsSL --connect-timeout 15 --retry 3 --retry-delay 3 -o "${tmpZip}" "${zipUrl}" && echo "OK"`,
         90000
       );
-      log(gitOut || 'git: up to date');
-    } catch (e: any) {
-      const msg = (e.stdout || e.stderr || e.message || '').trim();
-      // "Already up to date" prints to stdout with exit 0 so runStrict succeeds.
-      // Anything here is a real failure.
-      throw new Error(`Git pull failed:\n${msg}`);
+      log(`curl: ${curlOut || 'done'}`);
+      downloaded = true;
+    } catch (curlErr: any) {
+      log(`curl failed, trying wget…`);
+      try {
+        const wgetOut = await runStrict(
+          `wget -q --timeout=15 --tries=3 -O "${tmpZip}" "${zipUrl}" && echo "OK"`,
+          90000
+        );
+        log(`wget: ${wgetOut || 'done'}`);
+        downloaded = true;
+      } catch (wgetErr: any) {
+        const msg = (wgetErr.stdout || wgetErr.stderr || wgetErr.message || '').trim();
+        throw new Error(`Download failed (tried curl & wget):\n${msg}`);
+      }
     }
 
-    // Restore .env immediately so the app doesn't lose credentials
+    if (!downloaded) throw new Error('Download produced no output');
+
+    // ── Step 3: Extract & rsync files ────────────────────────────────────────
+    log('[3/5] Extracting and applying update…');
+    try {
+      fs.mkdirSync(tmpExtract, { recursive: true });
+
+      await runStrict(`unzip -o "${tmpZip}" -d "${tmpExtract}" 2>&1`, 60000);
+
+      // GitHub zip creates a "vps-manager-main" subdirectory inside
+      const extractedDir = `${tmpExtract}/vps-manager-main`;
+      const checkDir = await run(`test -d "${extractedDir}" && echo yes || echo no`);
+      if (checkDir.trim() !== 'yes') {
+        // Fallback: find the single extracted dir
+        const firstDir = (await run(`ls -1 "${tmpExtract}" 2>/dev/null | head -1`)).trim();
+        if (!firstDir) throw new Error('Extracted zip is empty or has unexpected structure');
+        log(`Note: using extracted subdir "${firstDir}"`);
+      }
+
+      const srcDir = (await run(`test -d "${extractedDir}" && echo "${extractedDir}" || ls -1d "${tmpExtract}"/*/  2>/dev/null | head -1`)).trim();
+
+      const rsyncOut = await runStrict(
+        `rsync -a --delete \
+          --exclude='.env' \
+          --exclude='node_modules' \
+          --exclude='dist' \
+          --exclude='.git' \
+          --exclude='*.log' \
+          "${srcDir}/" "${appDir}/" 2>&1`,
+        60000
+      );
+      log(rsyncOut ? `rsync: ${rsyncOut.split('\n').slice(-3).join(' | ')}` : 'rsync: files updated');
+    } catch (e: any) {
+      throw new Error(`Extract/apply failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
+    }
+
+    // ── Restore .env immediately ──────────────────────────────────────────────
     if (envContent) {
       fs.writeFileSync(envPath, envContent);
-      log('.env restored after git reset');
+      log('.env restored');
     }
 
-    // ── Step 3: npm install ──────────────────────────────────────────────────
-    log('[3/4] Installing dependencies…');
+    // ── Step 4: npm install ───────────────────────────────────────────────────
+    log('[4/5] Installing dependencies…');
     try {
       const npmOut = await runStrict(
         `${nvmPrefix} cd "${appDir}" && "${npmBin}" install --prefer-offline --no-fund --no-audit 2>&1`,
-        180000
+        240000
       );
-      log(npmOut.split('\n').slice(-6).join('\n') || 'npm install: done');
+      log(npmOut.split('\n').slice(-8).join('\n') || 'npm install: done');
     } catch (e: any) {
       throw new Error(`npm install failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
     }
 
-    // ── Step 4: Build frontend ───────────────────────────────────────────────
-    log('[4/4] Building frontend…');
+    // ── Step 5: Build frontend ────────────────────────────────────────────────
+    log('[5/5] Building frontend…');
     try {
       const buildOut = await runStrict(
-        `${nvmPrefix} cd "${appDir}" && NODE_OPTIONS="--max-old-space-size=512" "${npmBin}" run build 2>&1`,
-        300000
+        `${nvmPrefix} cd "${appDir}" && NODE_OPTIONS="--max-old-space-size=768" "${npmBin}" run build 2>&1`,
+        360000
       );
-      log(buildOut.split('\n').filter(l => l.includes('dist/') || l.includes('built') || l.includes('✓') || l.includes('kB')).join('\n') || 'build: done');
+      const summary = buildOut.split('\n')
+        .filter(l => l.includes('dist/') || l.includes('built') || l.includes('✓') || l.includes('kB') || l.includes('error'))
+        .join('\n');
+      log(summary || 'build: complete');
     } catch (e: any) {
       throw new Error(`Frontend build failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
     }
 
-    // ── Step 5: PM2 restart ──────────────────────────────────────────────────
-    // Done last; if this fails the update is already applied — just log it
-    log('Restarting via PM2…');
+    // ── PM2 restart ───────────────────────────────────────────────────────────
+    log('Restarting app via PM2…');
+    // Try by name first, then by index 0, then reload all
     const pm2Out = await run(
-      'pm2 restart vps-manager --update-env 2>&1 || pm2 restart 0 --update-env 2>&1',
-      20000
+      `pm2 restart vps-manager --update-env 2>&1 || pm2 restart 0 --update-env 2>&1 || pm2 reload all --update-env 2>&1`,
+      30000
     );
-    log(pm2Out || 'pm2: restarted');
+    log(pm2Out ? `pm2: ${pm2Out.split('\n').slice(0, 3).join(' | ')}` : 'pm2: restarted');
 
     res.json({ success: true, output: lines.join('\n') });
   } catch (e: any) {
@@ -1015,6 +1073,10 @@ router.post('/app-update', async (_req, res) => {
       error: e.message || 'Update failed',
       output: lines.join('\n'),
     });
+  } finally {
+    // Always clean up temp files
+    try { if (fs.existsSync(tmpZip)) fs.unlinkSync(tmpZip); } catch {}
+    try { await run(`rm -rf "${tmpExtract}" 2>/dev/null`); } catch {}
   }
 });
 
