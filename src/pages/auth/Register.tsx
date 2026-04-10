@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Activity, User, Mail, Lock, Eye, EyeOff, UserPlus } from "lucide-react";
+import { User, Mail, Lock, Eye, EyeOff, UserPlus } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "react-toastify";
 
@@ -35,22 +35,17 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12" style={{ background: "var(--background)" }}>
+    <div className="flex flex-col items-center justify-center flex-1 px-4 py-12">
       <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="p-3 rounded-2xl mb-3" style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}>
-            <Activity size={28} className="text-white" />
-          </div>
-          <h1 className="text-2xl font-bold">VPS Manager</h1>
-          <p className="text-sm text-[var(--muted)] mt-1">Create your admin account to get started</p>
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-[var(--main)]">Create Admin Account</h1>
+          <p className="text-sm text-[var(--muted)] mt-1">Set up your VPS Manager account to get started</p>
         </div>
 
-        {/* Card */}
         <div className="rounded-2xl border border-[var(--line)] p-8" style={{ background: "var(--secondary)" }}>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Username</label>
+              <label className="text-sm font-medium text-[var(--main)]">Username</label>
               <div className="relative">
                 <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
                 <input
@@ -66,7 +61,7 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Email</label>
+              <label className="text-sm font-medium text-[var(--main)]">Email</label>
               <div className="relative">
                 <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
                 <input
@@ -82,7 +77,7 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Password</label>
+              <label className="text-sm font-medium text-[var(--main)]">Password</label>
               <div className="relative">
                 <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
                 <input
@@ -102,7 +97,7 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Confirm Password</label>
+              <label className="text-sm font-medium text-[var(--main)]">Confirm Password</label>
               <div className="relative">
                 <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
                 <input
@@ -132,13 +127,6 @@ export default function RegisterPage() {
           Already have an account?{" "}
           <Link to="/login" className="text-[var(--accent)] font-medium hover:underline">Sign in</Link>
         </p>
-
-        <div className="flex justify-center gap-4 mt-6 text-xs text-[var(--muted)]">
-          <Link to="/home" className="hover:text-[var(--main)] transition-colors">Home</Link>
-          <Link to="/about" className="hover:text-[var(--main)] transition-colors">About</Link>
-          <Link to="/privacy" className="hover:text-[var(--main)] transition-colors">Privacy</Link>
-          <Link to="/terms" className="hover:text-[var(--main)] transition-colors">Terms</Link>
-        </div>
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
 import { Link, useLocation } from "react-router-dom";
-import { Activity, Sun, Moon } from "lucide-react";
+import { Activity, Sun, Moon, LayoutDashboard, LogIn } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 import Pattern from "@/components/ui/Pattern";
 
 const publicNav = [
-  { path: "/", label: "Home" },
+  { path: "/home", label: "Home" },
   { path: "/about", label: "About" },
   { path: "/contact", label: "Contact" },
   { path: "/terms", label: "Terms" },
@@ -14,12 +15,15 @@ const publicNav = [
 export default function PublicLayout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const { theme, toggleTheme } = useTheme();
+  const { user } = useAuth();
+  const isLoginPage = pathname === "/login";
 
   return (
     <Pattern>
       <div className="flex flex-col min-h-screen">
-        {/* Public header */}
-        <header className="fixed top-0 left-0 right-0 z-40"
+        {/* Header */}
+        <header
+          className="fixed top-0 left-0 right-0 z-40"
           style={{
             background: "var(--secondary)",
             backdropFilter: "blur(20px)",
@@ -27,10 +31,12 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             borderBottom: "1px solid var(--line)",
             borderRadius: "0 0 18px 18px",
             boxShadow: "0 2px 20px rgba(0,0,0,0.08)",
-          }}>
+          }}
+        >
           <div className="main">
             <div className="flex items-center justify-between h-12 gap-3">
-              <Link to="/" className="flex items-center gap-2.5 group shrink-0">
+              {/* Logo */}
+              <Link to={user ? "/" : "/home"} className="flex items-center gap-2.5 group shrink-0">
                 <div className="p-2 rounded-xl" style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}>
                   <Activity size={17} className="text-white" />
                 </div>
@@ -40,42 +46,77 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
                 </div>
               </Link>
 
-              <nav className="hidden md:flex items-center gap-0.5">
-                {publicNav.map(({ path, label }) => {
-                  const active = pathname === path;
-                  return (
-                    <Link key={path} to={path}
-                      className={`px-3 py-2 rounded-xl text-[13px] font-medium transition-all ${
-                        active
-                          ? "bg-[var(--accent)] text-white shadow-sm"
-                          : "text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)]"
-                      }`}>
-                      {label}
-                    </Link>
-                  );
-                })}
-              </nav>
+              {/* Nav — only on public info pages, hide on auth pages */}
+              {!isLoginPage && pathname !== "/register" && (
+                <nav className="hidden md:flex items-center gap-0.5">
+                  {publicNav.map(({ path, label }) => {
+                    const active = pathname === path;
+                    return (
+                      <Link
+                        key={path}
+                        to={path}
+                        className={`px-3 py-2 rounded-xl text-[13px] font-medium transition-all ${
+                          active
+                            ? "bg-[var(--accent)] text-white shadow-sm"
+                            : "text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)]"
+                        }`}
+                      >
+                        {label}
+                      </Link>
+                    );
+                  })}
+                </nav>
+              )}
 
+              {/* Right side */}
               <div className="flex items-center gap-2 shrink-0">
-                <button onClick={toggleTheme} title="Toggle theme"
-                  className="p-2 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)] transition-colors">
+                <button
+                  onClick={toggleTheme}
+                  title="Toggle theme"
+                  className="p-2 rounded-xl border border-[var(--line)] text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)] transition-colors"
+                >
                   {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                 </button>
-                <Link to="/login"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-white transition-all"
-                  style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}>
-                  Sign In
-                </Link>
+
+                {user ? (
+                  <Link
+                    to="/"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-white transition-all"
+                    style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}
+                  >
+                    <LayoutDashboard size={14} />
+                    Dashboard
+                  </Link>
+                ) : (
+                  !isLoginPage && (
+                    <Link
+                      to="/login"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-white transition-all"
+                      style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}
+                    >
+                      <LogIn size={14} />
+                      Sign In
+                    </Link>
+                  )
+                )}
               </div>
             </div>
           </div>
         </header>
 
-        <main className="flex-1 pt-20">
+        {/* Page content */}
+        <main className="flex-1 pt-14 flex flex-col">
           {children}
         </main>
 
-        <footer style={{ background: "var(--secondary)", borderTop: "1px solid var(--line)", borderRadius: "18px 18px 0 0" }}>
+        {/* Footer */}
+        <footer
+          style={{
+            background: "var(--secondary)",
+            borderTop: "1px solid var(--line)",
+            borderRadius: "18px 18px 0 0",
+          }}
+        >
           <div className="main py-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -90,9 +131,16 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
                 <Link to="/privacy" className="hover:text-[var(--main)] transition-colors">Privacy Policy</Link>
                 <Link to="/terms" className="hover:text-[var(--main)] transition-colors">Terms of Service</Link>
               </div>
-              <span className="text-xs text-[var(--muted)]">&copy; {new Date().getFullYear()} VPS Manager · Built by{" "}
-                <a href="https://me.giftedtech.co.ke" target="_blank" rel="noopener noreferrer"
-                  className="text-[var(--accent)] hover:underline font-medium">Gifted Tech</a>
+              <span className="text-xs text-[var(--muted)]">
+                &copy; {new Date().getFullYear()} VPS Manager &middot; Built by{" "}
+                <a
+                  href="https://me.giftedtech.co.ke"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--accent)] hover:underline font-medium"
+                >
+                  Gifted Tech
+                </a>
               </span>
             </div>
           </div>

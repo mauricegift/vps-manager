@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Activity, Mail, Lock, Eye, EyeOff, LogIn } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, LogIn } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "react-toastify";
 import axios from "axios";
@@ -36,22 +36,17 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12" style={{ background: "var(--background)" }}>
+    <div className="flex flex-col items-center justify-center flex-1 px-4 py-12">
       <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="p-3 rounded-2xl mb-3" style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}>
-            <Activity size={28} className="text-white" />
-          </div>
-          <h1 className="text-2xl font-bold">VPS Manager</h1>
-          <p className="text-sm text-[var(--muted)] mt-1">Sign in to your account</p>
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-bold text-[var(--main)]">Welcome back</h1>
+          <p className="text-sm text-[var(--muted)] mt-1">Sign in to your account to continue</p>
         </div>
 
-        {/* Card */}
         <div className="rounded-2xl border border-[var(--line)] p-8" style={{ background: "var(--secondary)" }}>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Email</label>
+              <label className="text-sm font-medium text-[var(--main)]">Email</label>
               <div className="relative">
                 <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
                 <input
@@ -67,7 +62,7 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Password</label>
+              <label className="text-sm font-medium text-[var(--main)]">Password</label>
               <div className="relative">
                 <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
                 <input
@@ -89,13 +84,14 @@ export default function LoginPage() {
             <button type="submit" disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-60"
               style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}>
-              {loading ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> : <LogIn size={15} />}
+              {loading
+                ? <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                : <LogIn size={15} />}
               {loading ? "Signing in…" : "Sign In"}
             </button>
           </form>
         </div>
 
-        {/* Show "Create account" only on first-time setup (no users yet) */}
         {setupRequired && (
           <p className="text-center text-sm text-[var(--muted)] mt-5">
             First time?{" "}
@@ -104,13 +100,6 @@ export default function LoginPage() {
             </Link>
           </p>
         )}
-
-        <div className="flex justify-center gap-4 mt-6 text-xs text-[var(--muted)]">
-          <Link to="/home" className="hover:text-[var(--main)] transition-colors">Home</Link>
-          <Link to="/about" className="hover:text-[var(--main)] transition-colors">About</Link>
-          <Link to="/privacy" className="hover:text-[var(--main)] transition-colors">Privacy</Link>
-          <Link to="/terms" className="hover:text-[var(--main)] transition-colors">Terms</Link>
-        </div>
       </div>
     </div>
   );

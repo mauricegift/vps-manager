@@ -15,6 +15,7 @@ import TerminalPage from "@/pages/Terminal";
 import ServersPage from "@/pages/Servers";
 import ExtrasPage from "@/pages/Extras";
 import NginxPage from "@/pages/Nginx";
+import NotFoundPage from "@/pages/NotFound";
 
 import LoginPage from "@/pages/auth/Login";
 import RegisterPage from "@/pages/auth/Register";
@@ -24,6 +25,7 @@ import TermsPage from "@/pages/public/Terms";
 import PrivacyPage from "@/pages/public/Privacy";
 import ContactPage from "@/pages/public/Contact";
 
+// All pages that share the public header/footer
 function PublicWrapper() {
   return (
     <PublicLayout>
@@ -46,33 +48,37 @@ export default function App() {
         theme="dark"
       />
       <Routes>
-        {/* ── Auth pages (standalone, redirect to / if already logged in) ── */}
-        <Route
-          path="/login"
-          element={
-            <GuestRoute>
-              <LoginPage />
-            </GuestRoute>
-          }
-        />
-
-        {/* /register: only if setup required (no users yet) OR already logged in */}
-        <Route
-          path="/register"
-          element={
-            <SetupRoute>
-              <RegisterPage />
-            </SetupRoute>
-          }
-        />
-
-        {/* ── Public pages (public header/footer) ──────────────────────── */}
+        {/* ── Routes wrapped in PublicLayout (header + footer) ─────────── */}
         <Route element={<PublicWrapper />}>
+          {/* Public info pages */}
           <Route path="/home" element={<LandingPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/contact" element={<ContactPage />} />
+
+          {/* Auth pages — redirect to / if already logged in */}
+          <Route
+            path="/login"
+            element={
+              <GuestRoute>
+                <LoginPage />
+              </GuestRoute>
+            }
+          />
+
+          {/* Register — only accessible during first-time setup (no users), else 404 */}
+          <Route
+            path="/register"
+            element={
+              <SetupRoute>
+                <RegisterPage />
+              </SetupRoute>
+            }
+          />
+
+          {/* Catch-all 404 — any unknown URL */}
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
 
         {/* ── Protected pages (app layout, requires auth) ───────────────── */}
