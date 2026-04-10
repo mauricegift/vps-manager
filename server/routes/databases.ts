@@ -823,18 +823,31 @@ router.delete('/mongodb/:dbname', async (req, res) => {
 });
 
 // ── Local DB: firewall status ────────────────────────────────────────────────
+// Source of truth = /var/lib/vpsm-fw-state.json written by allow/close-external.
+// Falls back to actual bind-address check only for types not yet in the state file.
+const FW_STATE_FILE = '/var/lib/vpsm-fw-state.json';
+
+async function readFwState(): Promise<Record<string, boolean>> {
+  try {
+    const raw = await run(`cat ${FW_STATE_FILE} 2>/dev/null || echo '{}'`, 3000);
+    return JSON.parse(raw.trim() || '{}');
+  } catch { return {}; }
+}
+
+async function writeFwState(state: Record<string, boolean>): Promise<void> {
+  const json = JSON.stringify(state);
+  await run(`echo ${JSON.stringify(json)} > ${FW_STATE_FILE}`, 3000);
+}
+
 router.get('/firewall-status', async (_req, res) => {
   try {
-    // Check actual bind addresses — most accurate indicator of external reachability.
-    // A database is "open" only if it is listening on 0.0.0.0 or * (not just 127.0.0.1).
+    const stored = await readFwState();
+    const serverIp = await getLocalServerIp();
+    // For types not in state file yet, fall back to bind-address check
     const script = `
 check_bind() {
   local port=$1
-  if ss -tlnp 2>/dev/null | grep ":$port " | grep -qE "\\*:|0\\.0\\.0\\.0:"; then
-    echo 1
-  else
-    echo 0
-  fi
+  ss -tlnp 2>/dev/null | grep ":$port " | grep -qE "\\*:|0\\.0\\.0\\.0:" && echo 1 || echo 0
 }
 echo "postgresql=$(check_bind 5432)"
 echo "mysql=$(check_bind 3306)"
@@ -843,13 +856,14 @@ echo "redis=$(check_bind 6379)"
 echo "mariadb=$(check_bind 3306)"
 `.trim();
     const out = await run(`bash -c ${JSON.stringify(script)}`, 10000);
-    const parse = (t: string) => out.includes(`${t}=1`);
-    const serverIp = await getLocalServerIp();
-    res.json({
-      postgresql: parse('postgresql'), mysql: parse('mysql'),
-      mongodb: parse('mongodb'), redis: parse('redis'), mariadb: parse('mariadb'),
-      serverIp,
-    });
+    const bindCheck = (t: string) => out.includes(`${t}=1`);
+    const dbs = ['postgresql', 'mysql', 'mongodb', 'redis', 'mariadb'];
+    const result: Record<string, boolean> = {};
+    for (const db of dbs) {
+      // Prefer stored state; fall back to live bind check
+      result[db] = db in stored ? stored[db] : bindCheck(db);
+    }
+    res.json({ ...result, serverIp });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
@@ -863,7 +877,6 @@ router.post('/:type/allow-external', async (req, res) => {
     // ── Step 1: Open firewall using iptables (always) + UFW (if active, no comment)
     const fwScript = `
 OPENED=0; ALREADY=0
-# Always use iptables — most reliable across all environments
 if command -v iptables &>/dev/null; then
   if iptables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null; then
     ALREADY=1
@@ -871,11 +884,9 @@ if command -v iptables &>/dev/null; then
     iptables -I INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null && OPENED=1
   fi
 fi
-# Also add UFW rule for persistence across reboots (no --comment flag for compatibility)
 if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw status 2>/dev/null | grep -q "${port}/tcp" || ufw allow ${port}/tcp 2>/dev/null
 fi
-# Also try firewall-cmd if present
 if command -v firewall-cmd &>/dev/null && firewall-cmd --state 2>/dev/null | grep -q running; then
   firewall-cmd --permanent --add-port=${port}/tcp 2>/dev/null; firewall-cmd --reload 2>/dev/null
   OPENED=1
@@ -883,22 +894,13 @@ fi
 [ "$OPENED" = "0" ] && [ "$ALREADY" = "1" ] && OPENED=1
 echo "FW_OPENED=$OPENED"
 echo "ALREADY=$ALREADY"
-if ss -tlnp 2>/dev/null | grep ":${port} " | grep -qE "\\*:|0\\.0\\.0\\.0:"; then
-  echo "BIND=all"
-else
-  echo "BIND=local"
-fi
 `.trim();
     const checkOut = await run(`bash -c ${JSON.stringify(fwScript)}`, 15000);
     const fwOpened = checkOut.includes('FW_OPENED=1');
     const alreadyOpen = checkOut.includes('ALREADY=1');
-    const bindAll = checkOut.includes('BIND=all');
 
-    // ── Step 2: Fix bind address if still on localhost
-    let bindFixed = false;
-    let bindErr = '';
-    if (!bindAll) {
-      const fixScript = `
+    // ── Step 2: ALWAYS update config files to bind 0.0.0.0 (ensures persistence after service restarts)
+    const fixScript = `
 case "${type}" in
   postgresql)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
@@ -914,33 +916,23 @@ case "${type}" in
       echo "BIND_FIXED=1"
     fi
     ;;
-  mysql)
-    CONF=$(find /etc/mysql -name "*.cnf" 2>/dev/null | xargs grep -l "^bind-address" 2>/dev/null | head -1)
-    if [ -n "$CONF" ]; then
-      sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$CONF"
-      systemctl restart mysql 2>/dev/null || service mysql restart 2>/dev/null || true
-      sleep 3
-      echo "BIND_FIXED=1"
-    fi
-    ;;
-  mariadb)
-    CONF=$(find /etc/mysql /etc/mariadb -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | head -1)
-    if [ -n "$CONF" ]; then
-      sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$CONF"
-      systemctl restart mariadb 2>/dev/null || systemctl restart mysql 2>/dev/null || service mariadb restart 2>/dev/null || true
-      sleep 3
-      echo "BIND_FIXED=1"
-    fi
+  mysql|mariadb)
+    # Update ALL cnf files that have bind-address (covers mysql.conf.d/ and conf.d/)
+    find /etc/mysql /etc/mariadb -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | while read f; do
+      sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$f"
+    done
+    # Also write a drop-in that always wins (highest sort order)
+    mkdir -p /etc/mysql/conf.d 2>/dev/null
+    printf '[mysqld]\nbind-address = 0.0.0.0\n' > /etc/mysql/conf.d/99-vpsm-bind.cnf
+    systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || service mysql restart 2>/dev/null || true
+    sleep 3
+    echo "BIND_FIXED=1"
     ;;
   mongodb)
     CONF=/etc/mongod.conf
     if [ -f "$CONF" ]; then
-      if grep -q "bindIp" "$CONF"; then
-        sed -i "s/bindIp:.*/bindIp: 0.0.0.0/" "$CONF"
-      else
-        sed -i '/^net:/a\\  bindIp: 0.0.0.0' "$CONF"
-      fi
-      # Ensure security.authorization is enabled so password is always required
+      grep -q "bindIp" "$CONF" && sed -i "s/bindIp:.*/bindIp: 0.0.0.0/" "$CONF" || sed -i '/^net:/a\\  bindIp: 0.0.0.0' "$CONF"
+      # Ensure security.authorization is always enabled
       if grep -q "^security:" "$CONF"; then
         grep -q "authorization:" "$CONF" || sed -i "/^security:/a\\  authorization: enabled" "$CONF"
         sed -i "s/.*authorization:.*/  authorization: enabled/" "$CONF"
@@ -964,10 +956,9 @@ case "${type}" in
     ;;
 esac
 `.trim();
-      const fixOut = await run(`bash -c ${JSON.stringify(fixScript)}`, 40000);
-      bindFixed = fixOut.includes('BIND_FIXED=1');
-      if (!bindFixed) bindErr = 'Could not update bind address — you may need to set bind 0.0.0.0 manually.';
-    }
+    const fixOut = await run(`bash -c ${JSON.stringify(fixScript)}`, 45000);
+    const bindFixed = fixOut.includes('BIND_FIXED=1');
+    const bindErr = bindFixed ? '' : 'Could not update bind address — set bind 0.0.0.0 manually.';
 
     // ── Step 3: Rate-limit (max 20 new connections/min per source IP)
     let rateLimited = false;
@@ -983,13 +974,17 @@ fi
     const rlOut = await run(`bash -c ${JSON.stringify(rlScript)}`, 10000);
     rateLimited = rlOut.includes('RL_OK=1');
 
+    // ── Step 4: Save state to file (source of truth for firewall-status)
+    const state = await readFwState();
+    state[type] = true;
+    await writeFwState(state);
+
     const serverIp = await getLocalServerIp();
     const warnings: string[] = [];
     if (type === 'redis') warnings.push('Redis has no per-database auth — ensure requirepass is set via Change Password.');
-    if (type === 'mongodb') warnings.push('Ensure security.authorization is enabled in /etc/mongod.conf.');
-    if (!bindFixed && !bindAll) warnings.push(bindErr || 'Database may still only accept local connections.');
+    if (!bindFixed) warnings.push(bindErr);
 
-    res.json({ success: true, port, firewallOpened: fwOpened, alreadyOpen, bindAll: bindAll || bindFixed, bindFixed, rateLimited, warnings, serverIp });
+    res.json({ success: true, port, firewallOpened: fwOpened, alreadyOpen, bindAll: bindFixed, bindFixed, rateLimited, warnings, serverIp });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
@@ -1006,11 +1001,9 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   ufw delete allow ${port}/tcp 2>&1 || true
   ufw reload 2>/dev/null || true
 fi
-# Flush ALL iptables ACCEPT rules for this port (loop until none remain)
 for i in 1 2 3 4 5 6 7 8; do
   iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || break
 done
-# Remove rate-limit rules
 for i in 1 2 3; do
   iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || true
   iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || true
@@ -1018,22 +1011,25 @@ done
 REMAINING=$(iptables -L INPUT -n 2>/dev/null | grep -c "dpt:${port}" || echo 0)
 echo "FW_CLOSED=1 remaining_rules=$REMAINING"
 
-# 2. Revert bind address back to localhost and restart
+# 2. Revert bind address back to localhost in ALL config files, then restart
 case "${type}" in
   postgresql)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
       sed -i -E "s/^listen_addresses.*/listen_addresses = 'localhost'/" "$CONF"
-      # Remove external pg_hba.conf entry
       HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
       [ -n "$HBA" ] && sed -i "/^host.*all.*all.*0\\.0\\.0\\.0\\/0/d" "$HBA"
       systemctl restart postgresql 2>&1 || service postgresql restart 2>&1 || true
     fi
     ;;
   mysql|mariadb)
-    CONF=$(find /etc/mysql -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | head -1)
-    [ -n "$CONF" ] && sed -i "s/^bind-address.*/bind-address = 127.0.0.1/" "$CONF"
-    systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || true
+    # Revert ALL cnf files that have bind-address
+    find /etc/mysql /etc/mariadb -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | while read f; do
+      sed -i "s/^bind-address.*/bind-address = 127.0.0.1/" "$f"
+    done
+    # Remove the vpsm drop-in override
+    rm -f /etc/mysql/conf.d/99-vpsm-bind.cnf 2>/dev/null || true
+    systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || service mysql restart 2>/dev/null || true
     ;;
   mongodb)
     CONF=/etc/mongod.conf
@@ -1049,6 +1045,10 @@ esac
 echo "DONE"
 `.trim();
     const out = await run(`bash -c ${JSON.stringify(script)}`, 45000);
+    // Save closed state to file (source of truth)
+    const state = await readFwState();
+    state[type] = false;
+    await writeFwState(state);
     res.json({ success: true, port, closed: out.includes('FW_CLOSED=1') || out.includes('DONE') });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
