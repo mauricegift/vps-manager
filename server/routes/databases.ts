@@ -249,38 +249,69 @@ router.post('/:type/restart', async (req, res) => {
   catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+// ── APT lock helper ───────────────────────────────────────────────────────────
+// Prepend to every apt-get call to safely wait for the dpkg lock to be released.
+// flock -w 120 waits up to 2 minutes; if still locked after that we forcibly
+// remove stale lock files and reconfigure dpkg before proceeding.
+const APT_WAIT = [
+  `flock -w 120 /var/lib/dpkg/lock-frontend /bin/true 2>/dev/null`,
+  `|| (rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null`,
+  `&& dpkg --configure -a 2>/dev/null)`,
+  `|| true`,
+].join(' ');
+
+const APT_UPDATE = `${APT_WAIT} && DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1`;
+const APT_INSTALL = (pkgs: string) => `${APT_WAIT} && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkgs} 2>&1`;
+const APT_REMOVE  = (pkgs: string) => `${APT_WAIT} && DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ${pkgs} 2>&1 && apt-get autoremove -y 2>&1`;
+
+// MongoDB install works across Ubuntu 20/22/24 and Debian 11/12
+const MONGO_INSTALL = [
+  `export DEBIAN_FRONTEND=noninteractive`,
+  `${APT_WAIT}`,
+  `OS_ID=$(. /etc/os-release 2>/dev/null && echo "$ID" || echo ubuntu)`,
+  `CODENAME=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "$VERSION_CODENAME") || echo jammy)`,
+  `if [ "$OS_ID" = "debian" ]; then`,
+  `  MONGO_DIST=debian; MV=7.0`,
+  `  case "$CODENAME" in bookworm|trixie) MV=8.0 ;; esac`,
+  `else`,
+  `  MONGO_DIST=ubuntu; MV=7.0`,
+  `  case "$CODENAME" in focal|jammy|noble) MV=8.0 ;; esac`,
+  `fi`,
+  `curl -fsSL "https://www.mongodb.org/static/pgp/server-$MV.asc" | gpg -o "/usr/share/keyrings/mongodb-server-$MV.gpg" --dearmor 2>&1`,
+  `echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-$MV.gpg ] https://repo.mongodb.org/apt/$MONGO_DIST $CODENAME/mongodb-org/$MV multiverse" > /etc/apt/sources.list.d/mongodb-org-$MV.list`,
+  `${APT_UPDATE}`,
+  `${APT_INSTALL('mongodb-org')}`,
+  `systemctl enable mongod 2>&1 && systemctl start mongod 2>&1`,
+].join(' && \\\n');
+
 // ── Install / Uninstall ───────────────────────────────────────────────────────
 const installCmds: Record<string, string> = {
-  postgresql: 'apt-get install -y postgresql postgresql-contrib 2>&1 && systemctl enable postgresql && systemctl start postgresql 2>&1',
-  mysql: 'apt-get install -y mysql-server 2>&1 && systemctl enable mysql && systemctl start mysql 2>&1',
-  mongodb: `export DEBIAN_FRONTEND=noninteractive && \
-CODENAME=$(lsb_release -cs 2>/dev/null || echo jammy) && \
-MV=$([ "$CODENAME" = "noble" ] && echo 8.0 || echo 7.0) && \
-curl -fsSL "https://www.mongodb.org/static/pgp/server-$MV.asc" | gpg -o "/usr/share/keyrings/mongodb-server-$MV.gpg" --dearmor 2>&1 && \
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-$MV.gpg ] https://repo.mongodb.org/apt/ubuntu $CODENAME/mongodb-org/$MV multiverse" > /etc/apt/sources.list.d/mongodb-org-$MV.list && \
-apt-get update -qq 2>&1 && \
-apt-get install -y mongodb-org 2>&1 && \
-systemctl enable mongod 2>&1 && systemctl start mongod 2>&1`,
-  redis: 'apt-get install -y redis-server 2>&1 && systemctl enable redis-server && systemctl start redis-server 2>&1',
-  mariadb: 'apt-get install -y mariadb-server 2>&1 && systemctl enable mariadb && systemctl start mariadb 2>&1',
+  postgresql: `${APT_INSTALL('postgresql postgresql-contrib')} && systemctl enable postgresql && systemctl start postgresql 2>&1`,
+  mysql:      `${APT_INSTALL('mysql-server')} && systemctl enable mysql && systemctl start mysql 2>&1`,
+  mongodb:    MONGO_INSTALL,
+  redis:      `${APT_INSTALL('redis-server')} && systemctl enable redis-server && systemctl start redis-server 2>&1`,
+  mariadb:    `${APT_INSTALL('mariadb-server')} && systemctl enable mariadb && systemctl start mariadb 2>&1`,
 };
 
 const uninstallCmds: Record<string, string> = {
-  postgresql: 'systemctl stop postgresql 2>&1; apt-get remove --purge -y postgresql postgresql-* 2>&1 && apt-get autoremove -y 2>&1',
-  mysql: 'systemctl stop mysql 2>&1; apt-get remove --purge -y mysql-server mysql-client mysql-common 2>&1 && apt-get autoremove -y 2>&1',
-  mongodb: 'systemctl stop mongod 2>&1; apt-get remove --purge -y mongodb-org mongodb 2>&1 && apt-get autoremove -y 2>&1',
-  redis: 'systemctl stop redis-server 2>&1; apt-get remove --purge -y redis-server 2>&1 && apt-get autoremove -y 2>&1',
-  mariadb: 'systemctl stop mariadb 2>&1; apt-get remove --purge -y mariadb-server mariadb-client 2>&1 && apt-get autoremove -y 2>&1',
+  postgresql: `systemctl stop postgresql 2>&1; ${APT_REMOVE('postgresql postgresql-*')}`,
+  mysql:      `systemctl stop mysql 2>&1; ${APT_REMOVE('mysql-server mysql-client mysql-common')}`,
+  mongodb:    `systemctl stop mongod 2>&1; ${APT_REMOVE('mongodb-org mongodb')}`,
+  redis:      `systemctl stop redis-server 2>&1; ${APT_REMOVE('redis-server')}`,
+  mariadb:    `systemctl stop mariadb 2>&1; ${APT_REMOVE('mariadb-server mariadb-client')}`,
 };
 
 router.post('/:type/install', async (req, res) => {
-  const cmd = installCmds[req.params.type];
+  const { type } = req.params;
+  const cmd = installCmds[type];
   if (!cmd) return res.status(400).json({ success: false, error: 'Unknown database type' });
   try {
-    const { stdout, stderr } = await execAsync(`apt-get update -qq 2>&1 && ${cmd}`, { timeout: 120000 });
-    res.json({ success: true, output: stdout + stderr });
+    // For non-mongodb types, run apt update first; mongodb cmd already includes update
+    const full = type === 'mongodb' ? cmd : `${APT_UPDATE} && ${cmd}`;
+    const { stdout, stderr } = await execAsync(full, { timeout: 180000 });
+    res.json({ success: true, output: (stdout + stderr).slice(0, 32000) });
   } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message, output: e.stdout || '' });
+    res.status(500).json({ success: false, error: e.message, output: (e.stdout || '') + (e.stderr || '') });
   }
 });
 
@@ -288,10 +319,10 @@ router.post('/:type/uninstall', async (req, res) => {
   const cmd = uninstallCmds[req.params.type];
   if (!cmd) return res.status(400).json({ success: false, error: 'Unknown database type' });
   try {
-    const { stdout, stderr } = await execAsync(cmd, { timeout: 60000 });
-    res.json({ success: true, output: stdout + stderr });
+    const { stdout, stderr } = await execAsync(cmd, { timeout: 120000 });
+    res.json({ success: true, output: (stdout + stderr).slice(0, 32000) });
   } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message, output: e.stdout || '' });
+    res.status(500).json({ success: false, error: e.message, output: (e.stdout || '') + (e.stderr || '') });
   }
 });
 
