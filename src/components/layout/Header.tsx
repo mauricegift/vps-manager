@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Server, Container, Database,
   FolderOpen, Terminal, Menu, Activity, Globe, Sun, Moon,
   Unplug, Wifi, Sparkles, Shield, LogOut, User,
-  Users, ChevronDown, Settings
+  ChevronDown, Settings
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { useRemoteServer } from "@/context/RemoteServerContext";
@@ -148,14 +148,6 @@ export default function Header({ onMenuToggle }: Props) {
                       >
                         <Settings size={13} />
                         Settings
-                      </Link>
-                      <Link
-                        to="/settings?tab=users"
-                        onClick={() => setDropOpen(false)}
-                        className="flex items-center gap-2.5 px-3 py-2.5 text-xs text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)] transition-colors"
-                      >
-                        <Users size={13} />
-                        Manage Users
                       </Link>
                       <button
                         onClick={handleLogout}
