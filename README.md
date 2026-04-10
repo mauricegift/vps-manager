@@ -1,11 +1,12 @@
 # VPS Manager
 
-A modern, self-hosted web control panel for managing your Linux VPS — PM2, Docker, Nginx, databases, files and a full web terminal, all in one place.
+A modern, self-hosted web control panel for managing your Linux VPS — PM2 processes, Docker, Nginx, databases, files and a full interactive terminal, all from one clean dashboard.
 
 [![GitHub](https://img.shields.io/badge/GitHub-mauricegift%2Fvps--manager-blue?logo=github)](https://github.com/mauricegift/vps-manager)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-24-green?logo=node.js)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green?logo=node.js)](https://nodejs.org)
 [![React](https://img.shields.io/badge/React-18-blue?logo=react)](https://react.dev)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-blue?logo=postgresql)](https://postgresql.org)
 
 ---
 
@@ -17,74 +18,98 @@ A modern, self-hosted web control panel for managing your Linux VPS — PM2, Doc
 | **PM2** | Start / stop / restart processes, view logs, deploy from GitHub |
 | **Docker** | Manage containers, images and volumes |
 | **Databases** | Browse and query PostgreSQL, MySQL, SQLite |
-| **File Manager** | Upload, edit (syntax-highlighted), download, zip files |
-| **Terminal** | Full interactive bash shell — local and remote SSH |
+| **File Manager** | Upload, rename, edit (syntax-highlighted), download, compress files |
+| **Terminal** | Full interactive bash shell — local and SSH to any remote server |
 | **Nginx** | Create / edit reverse-proxy configs, manage SSL via Let's Encrypt |
-| **Extras** | Cron jobs, firewall, env editor, system tools |
-| **Servers** | Connect and manage unlimited remote VPS servers |
-| **Settings** | Configure SMTP email provider (Resend or Brevo) |
+| **Extras** | Cron jobs, firewall rules, env editor, system tools |
+| **Servers** | Save and manage unlimited remote VPS connections |
+| **Settings** | SMTP email, user management, account settings |
 
 ---
 
 ## Quick Install
 
-  > **Run as root for the smoothest experience** — no sudo prompts, no permission issues.
-  > Non-root users with sudo access are also supported.
-
-  **As root (recommended):**
-
-  ```bash
-  curl -fsSL https://vps-manager.giftedtech.co.ke/install.sh | bash
-  ```
-
-  **As a non-root user (with sudo access):**
-
-  ```bash
-  curl -fsSL https://vps-manager.giftedtech.co.ke/install.sh | sudo bash
-  ```
-
-  The installer will:
-  1. Install system packages (`git`, `nginx`, `dnsutils`, etc.)
-  2. Install Node.js 24 via NVM
-  3. Install PM2 globally
-  4. Clone this repository to `$HOME/vps-manager` (your home directory)
-  5. Install npm dependencies
-  6. Generate a random `SESSION_SECRET` and write a base `.env` file
-  7. Configure UFW firewall rules
-  8. Start the app with PM2 (auto-restart on reboot)
-  9. Set up an Nginx reverse proxy on port 80
-  10. Optionally issue a free SSL certificate via Let's Encrypt (with automatic DNS polling via `dig`)
-
-  > **SMTP / email is optional** — configure it any time after install via the **Settings** page (user dropdown → Settings → Email / SMTP tab).
-
-  ---
-
-  ## Manual Install
+### As root
 
 ```bash
-# Clone
+curl -4 -fsSL https://vps-manager.giftedtech.co.ke/install.sh | bash
+```
+
+### As a non-root sudo user
+
+```bash
+curl -4 -fsSL https://vps-manager.giftedtech.co.ke/install.sh | sudo bash
+```
+
+> **SMTP is optional.** If you skip it, password reset codes are printed to the PM2 log instead of emailed.
+
+---
+
+## What the installer does
+
+1. Installs system packages: `git`, `curl`, `nginx`, `postgresql`, `dnsutils`, `build-essential`, `sshpass`
+2. Installs **Node.js 20** via NVM (skips if already installed)
+3. Installs **PM2** globally
+4. Clones this repo to `/root/vps-manager` (or `~/vps-manager` for non-root)
+5. Runs `npm install`
+6. Runs `npm run build` — compiles the React frontend to `dist/public/`
+7. Sets up **PostgreSQL**: creates user `vpsmanager`, database `vpsmanager`, grants privileges
+8. Writes `.env` with auto-generated `SESSION_SECRET` and database credentials
+9. Prompts for SMTP (Resend or Brevo) — optional, press Enter to skip
+10. Configures **UFW** firewall: SSH, HTTP (80), HTTPS (443), API (5756)
+11. Generates an **Nginx** reverse-proxy config on port 80
+12. Starts the app with **PM2** (`npm run start`) and saves on-boot startup
+13. Optionally issues a free **SSL certificate** via Let's Encrypt with DNS polling and auto-renewal
+
+---
+
+## Ports
+
+| Port | Purpose |
+|---|---|
+| `5756` | Backend API + frontend static files (Express) |
+| `80` | Nginx reverse proxy (HTTP) |
+| `443` | Nginx reverse proxy (HTTPS, after SSL setup) |
+
+Everything is served through one process on port 5756. Nginx proxies port 80/443 to it.  
+Direct access without nginx: `http://YOUR_SERVER_IP:5756`
+
+---
+
+## Manual Install
+
+```bash
+# 1. Clone
 git clone https://github.com/mauricegift/vps-manager.git
 cd vps-manager
 
-# Install dependencies
+# 2. Install dependencies
 npm install
 
-# Create .env (copy and edit)
+# 3. Copy and edit the environment file
 cp .env.example .env
-# Edit .env with your settings (SESSION_SECRET, database, SMTP, etc.)
+# At minimum set SESSION_SECRET and PostgreSQL credentials
 
-# Development — runs backend + frontend concurrently
-npm run dev
-
-# Production build + start
+# 4. Build the frontend
 npm run build
+
+# 5. Start
 npm start
 ```
+
+### Development mode (Replit / local)
+
+```bash
+npm run dev
+```
+
+Starts the Express backend on port 5756 and the Vite dev server on port 5000 concurrently.
 
 ### Run with PM2
 
 ```bash
-pm2 start npm --name vps-manager -- run dev
+# Production (uses built frontend from dist/public/)
+pm2 start npm --name vps-manager -- run start
 pm2 save && pm2 startup
 ```
 
@@ -96,10 +121,9 @@ Copy `.env.example` to `.env` and fill in your values.
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `5756` | Backend API port |
-| `SESSION_SECRET` | — | **Required** — JWT signing secret (generate with `openssl rand -hex 32`) |
-| `NODE_ENV` | `production` | Node environment |
-| `DATABASE_URL` | — | Full PostgreSQL connection string (or use individual vars below) |
+| `PORT` | `5756` | Backend API + frontend port |
+| `SESSION_SECRET` | — | **Required** — JWT signing secret. Generate: `openssl rand -hex 32` |
+| `DATABASE_URL` | — | Full PostgreSQL connection string (overrides individual vars below) |
 | `PGHOST` | `localhost` | PostgreSQL host |
 | `PGPORT` | `5432` | PostgreSQL port |
 | `PGUSER` | `vpsmanager` | PostgreSQL user |
@@ -107,13 +131,13 @@ Copy `.env.example` to `.env` and fill in your values.
 | `PGDATABASE` | `vpsmanager` | PostgreSQL database name |
 | `EMAIL_PROVIDER` | `none` | Email provider: `resend`, `brevo`, or `none` |
 | `EMAIL_FROM_NAME` | `VPS Manager` | Sender display name |
-| `EMAIL_FROM_ADDRESS` | — | Sender email address (must be verified with your provider) |
+| `EMAIL_FROM_ADDRESS` | — | Sender address (must be verified with your provider) |
 | `RESEND_API_KEY` | — | API key from [resend.com](https://resend.com) (if `EMAIL_PROVIDER=resend`) |
 | `BREVO_SMTP_USER` | — | Brevo SMTP login (if `EMAIL_PROVIDER=brevo`) |
 | `BREVO_SMTP_PASS` | — | Brevo SMTP password / API key (if `EMAIL_PROVIDER=brevo`) |
-| `ALLOWED_ORIGIN` — set to your domain (e.g. `https://vps.example.com`) to lock CORS to that domain only; omit to allow only the server's own IP
+| `ALLOWED_ORIGIN` | — | Your public domain for CORS in production (e.g. `https://vps.yourdomain.com`) |
 
-> **Note:** SMTP settings saved through the Settings page (stored in the database) take priority over environment variables.
+> **Note:** SMTP settings saved through the Settings page are stored in the database and always take priority over `.env` values.
 
 ---
 
@@ -121,40 +145,42 @@ Copy `.env.example` to `.env` and fill in your values.
 
 ### First-time setup
 
-On first visit — when no users exist — `/register` is available to create the admin account. Once created, **the registration route is permanently disabled (returns 404 for everyone)**. There is no way to self-register after setup.
+On first visit — when no users exist — `/register` is available to create the admin account.  
+Once created, **registration is permanently disabled** (returns 404 for all visitors).
 
-### Subsequent users
+### Additional users
 
-Only the logged-in admin can create additional accounts, via **Manage Users** in the header dropdown. Additional users never receive a login session automatically — the admin hands them credentials manually.
+Only the logged-in admin can create additional accounts via **Manage Users** in the header dropdown.  
+New accounts do not receive a session — the admin provides credentials manually.
 
-### Password Reset
+### Password reset
 
 1. Click **Forgot password?** on the login page
-2. Enter your email — a 6-digit reset code is sent (valid 10 minutes)
-3. Go to the reset page, enter the code and choose a new password
-4. All active sessions are invalidated and you must sign in again
+2. Enter your email — a 6-digit code is sent (valid 10 minutes)
+3. Enter the code and choose a new password
+4. All active sessions are immediately invalidated
 
-> If SMTP is not configured, the reset code is printed to the server console log as a fallback.
+> If SMTP is not configured, the reset code is printed to the PM2 log as a fallback.
 
-### How JWT works
+### JWT tokens
 
 | Token | Lifetime | Storage |
 |---|---|---|
 | Access token | 24 hours | `localStorage` |
-| Refresh token | 7 days | PostgreSQL DB (rotated on each use) |
+| Refresh token | 7 days | PostgreSQL (rotated on each use) |
 
-- All API routes except `/api/auth/*` require `Authorization: Bearer <token>`
-- The frontend silently refreshes the access token when it expires and retries the failed request
-- Logging out immediately invalidates the refresh token server-side
-- WebSocket (terminal) connections also require a valid JWT
+- All `/api/*` routes except `/api/auth/*` require `Authorization: Bearer <token>`
+- The frontend silently refreshes the access token when it expires and retries the original request
+- Logout immediately invalidates the refresh token server-side
+- WebSocket terminal connections also verify the JWT before accepting
 
 ### Routing rules
 
 | Scenario | Behaviour |
 |---|---|
-| Not logged in → protected page | Redirected to `/login` |
-| Logged in → `/login` | Redirected to `/` |
-| No users in DB → `/register` | Registration form shown |
+| Unauthenticated → protected page | Redirected to `/login` |
+| Authenticated → `/login` | Redirected to `/` |
+| No users in DB → `/register` | Registration form |
 | Users exist → `/register` | **404 Not Found** |
 | Unknown URL | **404 Not Found** |
 
@@ -162,31 +188,79 @@ Only the logged-in admin can create additional accounts, via **Manage Users** in
 
 ## SMTP / Email Setup
 
-  > **SMTP is optional.** The app works fully without it — you just won't receive password reset emails. Reset codes are printed to the server console as a fallback.
+Email is used for password reset codes. Three ways to configure:
 
-  Email is used for password reset codes. You can configure it three ways:
+### Option 1 — Settings page (recommended for production)
 
-### Option 1 — Settings page (recommended)
+Log in → header dropdown → **Settings** → **Email / SMTP** tab.  
+Choose Resend or Brevo, enter credentials, **Save**, then **Send test email**.
 
-Log in → user dropdown → **Settings** → Email/SMTP section.  
-Choose **Resend** or **Brevo**, fill in your credentials, click **Save**, then **Send test email** to verify.
-
-### Option 2 — `.env` file (development)
+### Option 2 — `.env` file
 
 ```env
-EMAIL_PROVIDER=resend          # or brevo
+EMAIL_PROVIDER=resend          # or: brevo
 EMAIL_FROM_NAME=VPS Manager
 EMAIL_FROM_ADDRESS=noreply@yourdomain.com
-RESEND_API_KEY=re_xxxxx        # Resend only
-BREVO_SMTP_USER=you@email.com  # Brevo only
-BREVO_SMTP_PASS=xsmtp-xxxxx    # Brevo only
+
+# Resend
+RESEND_API_KEY=re_xxxxxxxxxxxx
+
+# Brevo (either one, not both)
+BREVO_SMTP_USER=you@email.com
+BREVO_SMTP_PASS=xsmtp-xxxxxxxxxxxx
 ```
 
-### Option 3 — install.sh (production)
+### Option 3 — Installer prompt
 
-The installer will ask whether you want to use Resend or Brevo and write the values to `.env` automatically.
+The installer asks for provider and credentials and writes them to `.env` automatically.
 
-> **Sender domain must be verified** with your email provider (Resend or Brevo) before emails will deliver.
+> Your sender domain must be verified with the provider before emails will deliver.
+
+---
+
+## SSL / HTTPS
+
+The installer handles SSL automatically when you provide a custom domain:
+
+1. Polls `dig +short <domain> A` every 10 seconds (up to 5 minutes) to confirm DNS has propagated
+2. Creates `/var/www/html/.well-known/acme-challenge/` for the ACME challenge
+3. Adds a dedicated nginx location for `/.well-known/acme-challenge/` (served from disk, not proxied)
+4. Reloads nginx so the ACME location is live before certbot runs
+5. Runs `certbot certonly --webroot -w /var/www/html -d <domain>`
+6. Appends a port-443 SSL server block to the nginx config
+7. Adds an auto-renewal cron (daily at 03:00)
+
+To add SSL manually after install:
+
+```bash
+# Make sure nginx has the ACME challenge location in its config, then:
+sudo certbot certonly --webroot -w /var/www/html -d yourdomain.com
+```
+
+---
+
+## Remote Server Management
+
+1. Go to **Servers** → **Add Server** — enter IP, port, username, and password or SSH key
+2. Click **Connect** — a green banner confirms remote mode is active
+3. All pages (PM2, Docker, Files, Terminal, etc.) proxy operations to the remote server over SSH
+4. Click **Disconnect** to return to local mode
+
+---
+
+## Database
+
+The app uses **PostgreSQL**. Tables are auto-created on first startup:
+
+| Table | Contents |
+|---|---|
+| `users` | Admin and additional user accounts |
+| `refresh_tokens` | Active JWT refresh tokens (rotated on each use) |
+| `password_reset_codes` | One-time 6-digit reset codes (expire after 10 min) |
+| `vps_connections` | Saved remote server connections |
+| `smtp_settings` | SMTP configuration (stored as key/value pairs) |
+
+The installer provisions a local PostgreSQL instance automatically. For a remote or managed database, set `DATABASE_URL` in `.env`.
 
 ---
 
@@ -201,13 +275,13 @@ Authorization: Bearer <access_token>
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/auth/register` | Create first admin (only works when 0 users exist) |
-| `POST` | `/api/auth/login` | Sign in, receive tokens |
-| `POST` | `/api/auth/refresh` | Rotate refresh token, get new pair |
+| `POST` | `/api/auth/register` | Create first admin (only when 0 users exist) |
+| `POST` | `/api/auth/login` | Sign in, receive access + refresh tokens |
+| `POST` | `/api/auth/refresh` | Rotate refresh token, get a new pair |
 | `POST` | `/api/auth/logout` | Invalidate refresh token |
 | `GET` | `/api/auth/me` | Get current user (requires auth) |
-| `GET` | `/api/auth/setup-required` | Check if any users exist |
-| `POST` | `/api/auth/forgot-password` | Request 6-digit password reset code |
+| `GET` | `/api/auth/setup-required` | Returns `true` if no users exist |
+| `POST` | `/api/auth/forgot-password` | Send 6-digit reset code to email |
 | `POST` | `/api/auth/reset-password` | Verify code and set new password |
 
 ### User management (requires auth)
@@ -216,17 +290,17 @@ Authorization: Bearer <access_token>
 |---|---|---|
 | `POST` | `/api/auth/users` | Admin creates a new user |
 | `GET` | `/api/auth/users` | List all users |
-| `DELETE` | `/api/auth/users/:id` | Delete a user (cannot delete self) |
+| `DELETE` | `/api/auth/users/:id` | Delete a user (cannot delete yourself) |
 
 ### Settings (requires auth)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/settings/smtp` | Get current SMTP configuration (masked) |
+| `GET` | `/api/settings/smtp` | Get current SMTP config (keys masked) |
 | `POST` | `/api/settings/smtp` | Save SMTP configuration |
 | `POST` | `/api/settings/smtp/test` | Send a test email to the admin's address |
 
-### Protected
+### Protected modules
 
 | Prefix | Description |
 |---|---|
@@ -234,233 +308,103 @@ Authorization: Bearer <access_token>
 | `/api/pm2` | PM2 process management |
 | `/api/docker` | Docker containers, images, volumes |
 | `/api/databases` | Database browsing and queries |
-| `/api/files` | File manager operations |
+| `/api/files` | File manager (upload, rename, edit, download, compress) |
 | `/api/servers` | Remote VPS connection management |
-| `/api/remote/:id/*` | Proxy operations to a remote server |
-| `/api/extras` | System tools, cron, firewall, env |
+| `/api/remote/:id/*` | Proxy operations to a saved remote server |
+| `/api/extras` | System tools, cron, firewall, env editor |
 | `/api/nginx` | Nginx config management |
 | `/api/github` | GitHub repo detection |
 
 ---
 
-## Project Tree
-
-### Full tree
+## Project Structure
 
 ```
 vps-manager/
 ├── install.sh                   # One-command installer
 ├── package.json
-├── tsconfig.json
-├── vite.config.ts
-├── tailwind.config.js
-├── .env.example                 # Environment variable reference
+├── vite.config.ts               # Vite: dev server on :5000, build → dist/public/
+├── tsconfig*.json
+├── index.html                   # Vite entry point
+├── .env.example
 ├── .gitignore
 │
-├── server/                      # Express + TypeScript backend
-│   ├── index.ts                 # Entry point, Socket.IO, route wiring
-│   ├── db.ts                    # PostgreSQL pool + auto-migration
-│   ├── ssh.ts                   # SSH helper utilities
+├── server/                      # Express + TypeScript backend (port 5756)
+│   ├── index.ts                 # Entry point: CORS, Socket.IO, routes, static serving
+│   ├── db.ts                    # PostgreSQL pool + auto-migration (5 tables)
+│   ├── ssh.ts                   # SSH2 client helpers
 │   ├── middleware/
-│   │   └── auth.ts              # requireAuth middleware (JWT verify)
+│   │   └── auth.ts              # requireAuth — JWT Bearer verification
 │   ├── services/
-│   │   └── email.ts             # Email service: Resend + Brevo, HTML templates
+│   │   └── email.ts             # sendMail(): Resend + Brevo; HTML templates
 │   └── routes/
-│       ├── auth.ts              # /api/auth/* — register, login, refresh, users,
-│       │                        # forgot-password, reset-password
-│       ├── settings.ts          # /api/settings/smtp — SMTP config + test
-│       ├── system.ts            # /api/system — CPU, RAM, disk, uptime
-│       ├── pm2.ts               # /api/pm2 — process management
-│       ├── docker.ts            # /api/docker — containers, images, volumes
-│       ├── databases.ts         # /api/databases — query PostgreSQL/MySQL/SQLite
-│       ├── files.ts             # /api/files — file manager operations
-│       ├── nginx.ts             # /api/nginx — config management
-│       ├── extras.ts            # /api/extras — cron, firewall, env, tools
-│       ├── vps.ts               # /api/vps — legacy VPS helpers
-│       ├── vps-connections.ts   # /api/servers — saved server connections
-│       ├── remote.ts            # /api/remote/:id/* — remote proxy
-│       └── github.ts            # /api/github — repo detection
+│       ├── auth.ts              # register · login · refresh · logout · me
+│       │                        # setup-required · forgot-password · reset-password
+│       │                        # users CRUD
+│       ├── settings.ts          # SMTP config + test
+│       ├── system.ts            # CPU / RAM / disk / uptime
+│       ├── pm2.ts               # PM2 process management
+│       ├── docker.ts            # Containers · images · volumes
+│       ├── databases.ts         # PostgreSQL · MySQL · SQLite browser
+│       ├── files.ts             # File manager operations
+│       ├── nginx.ts             # Nginx config management
+│       ├── extras.ts            # Cron · firewall · env · tools
+│       ├── vps-connections.ts   # Saved server connections
+│       ├── remote.ts            # Remote proxy (/api/remote/:id/*)
+│       ├── vps.ts               # Legacy VPS helpers
+│       └── github.ts            # GitHub repo detection
 │
-└── src/                         # React + TypeScript frontend
-    ├── main.tsx                 # App root, providers, scroll-to-top
-    ├── App.tsx                  # Route tree (public / auth / protected)
-    ├── index.css                # Global styles + CSS variables
-    ├── lib/
-    │   └── api.ts               # Axios instance with JWT interceptors + auto-refresh
-    ├── context/
-    │   ├── AuthContext.tsx      # User state, login/register/logout/refresh
-    │   ├── ThemeContext.tsx     # Dark / light mode
-    │   └── RemoteServerContext.tsx
-    ├── types/
-    │   ├── index.ts
-    │   └── server.ts
-    ├── components/
-    │   ├── layout/
-    │   │   ├── Layout.tsx           # App shell (header + sidebar + footer)
-    │   │   ├── PublicLayout.tsx     # Public/auth shell with mobile sidebar
-    │   │   ├── Header.tsx           # App header with nav, user dropdown, settings
-    │   │   ├── Footer.tsx           # App footer (minimal)
-    │   │   └── MobileSidebar.tsx    # Mobile navigation drawer (app)
-    │   └── ui/
-    │       ├── ProtectedRoute.tsx
-    │       ├── GuestRoute.tsx
-    │       ├── SetupRoute.tsx
-    │       └── ...
-    └── pages/
-        ├── NotFound.tsx         # 404 page
-        ├── Dashboard.tsx
-        ├── PM2.tsx
-        ├── Docker.tsx
-        ├── Databases.tsx
-        ├── FileManager.tsx
-        ├── Terminal.tsx
-        ├── Servers.tsx
-        ├── Extras.tsx
-        ├── Nginx.tsx
-        ├── Settings.tsx         # SMTP configuration page
-        ├── auth/
-        │   ├── Login.tsx        # Sign-in form (with Forgot password link)
-        │   ├── Register.tsx     # First-time admin setup
-        │   ├── ForgotPassword.tsx   # Request reset code (60s resend cooldown)
-        │   └── ResetPassword.tsx    # Enter code + new password
-        └── public/
-            ├── Landing.tsx
-            ├── About.tsx
-            ├── Contact.tsx
-            ├── Terms.tsx
-            └── Privacy.tsx
+├── src/                         # React + TypeScript frontend
+│   ├── main.tsx                 # App root, React Query provider
+│   ├── App.tsx                  # Route tree (public / auth / protected)
+│   ├── index.css                # Global styles + CSS variables
+│   ├── lib/
+│   │   └── api.ts               # Axios + JWT interceptors + auto-refresh
+│   ├── context/
+│   │   ├── AuthContext.tsx      # User state, login / logout / refresh
+│   │   ├── ThemeContext.tsx     # Dark / light mode
+│   │   └── RemoteServerContext.tsx
+│   ├── types/
+│   │   ├── index.ts
+│   │   └── server.ts
+│   ├── components/
+│   │   ├── layout/
+│   │   │   ├── Layout.tsx           # Protected app shell
+│   │   │   ├── PublicLayout.tsx     # Public / auth shell
+│   │   │   ├── Header.tsx           # Top bar with nav, theme, user dropdown
+│   │   │   ├── Footer.tsx
+│   │   │   └── MobileSidebar.tsx
+│   │   └── ui/
+│   │       ├── ProtectedRoute.tsx   # → /login if unauthenticated
+│   │       ├── GuestRoute.tsx       # → / if already authenticated
+│   │       ├── SetupRoute.tsx       # → 404 if users already exist
+│   │       └── ...
+│   └── pages/
+│       ├── Dashboard.tsx
+│       ├── PM2.tsx
+│       ├── Docker.tsx
+│       ├── Databases.tsx
+│       ├── FileManager.tsx
+│       ├── Terminal.tsx
+│       ├── Servers.tsx
+│       ├── Extras.tsx
+│       ├── Nginx.tsx
+│       ├── Settings.tsx         # SMTP config + user management tabs
+│       ├── NotFound.tsx
+│       ├── auth/
+│       │   ├── Login.tsx
+│       │   ├── Register.tsx     # First-time admin setup only
+│       │   ├── ForgotPassword.tsx
+│       │   └── ResetPassword.tsx
+│       └── public/
+│           ├── Landing.tsx
+│           ├── About.tsx
+│           ├── Contact.tsx
+│           ├── Terms.tsx
+│           └── Privacy.tsx
+│
+└── public/                      # Static assets (favicon, OG image)
 ```
-
-### Backend tree
-
-```
-server/
-├── index.ts                 # Express + Socket.IO, route wiring, WS JWT auth
-├── db.ts                    # PostgreSQL pool; auto-creates 5 tables on startup:
-│                            #   vps_connections, users, refresh_tokens,
-│                            #   password_reset_codes, smtp_settings
-├── ssh.ts                   # SSH2 client helpers
-├── middleware/
-│   └── auth.ts              # requireAuth — verifies Bearer JWT, attaches req.user
-├── services/
-│   └── email.ts             # sendMail() — tries Resend then Brevo
-│                            # getSmtpConfig() — DB first, env vars fallback
-│                            # saveSmtpConfig() — upsert to smtp_settings table
-│                            # HTML email templates (reset code, confirmation, test)
-└── routes/
-    ├── auth.ts              # POST /register (setup only) · POST /login
-    │                        # POST /refresh · POST /logout · GET /me
-    │                        # GET /setup-required
-    │                        # POST /forgot-password → generates 6-digit OTP
-    │                        # POST /reset-password → verifies OTP, updates password
-    │                        # POST /users (admin) · GET /users · DELETE /users/:id
-    ├── settings.ts          # GET /smtp · POST /smtp · POST /smtp/test
-    ├── system.ts
-    ├── pm2.ts
-    ├── docker.ts
-    ├── databases.ts
-    ├── files.ts
-    ├── nginx.ts
-    ├── extras.ts
-    ├── vps.ts
-    ├── vps-connections.ts
-    ├── remote.ts
-    └── github.ts
-```
-
-### Frontend tree
-
-```
-src/
-├── main.tsx
-├── App.tsx                  # Route tree:
-│                            #   PublicLayout: /home /about /terms /privacy /contact
-│                            #                /login (GuestRoute)
-│                            #                /register (SetupRoute — 404 if users exist)
-│                            #                /forgot-password · /reset-password
-│                            #                * → NotFound
-│                            #   Protected (Layout): / /pm2 /docker /databases
-│                            #                       /files /terminal /servers
-│                            #                       /extras /nginx /settings
-├── index.css
-├── lib/
-│   └── api.ts
-├── context/
-│   ├── AuthContext.tsx
-│   ├── ThemeContext.tsx
-│   └── RemoteServerContext.tsx
-├── types/
-│   ├── index.ts
-│   └── server.ts
-├── components/
-│   ├── layout/
-│   │   ├── Layout.tsx           # Protected app shell
-│   │   ├── PublicLayout.tsx     # Public/auth shell:
-│   │   │                        #   · Auth-aware header (Dashboard or Sign In)
-│   │   │                        #   · Desktop nav (Home/About/Contact/Terms/Privacy)
-│   │   │                        #   · Mobile hamburger → sidebar with same nav
-│   │   │                        #   · Nav hidden on auth pages
-│   │   │                        #   · Minimal footer (logo + copyright)
-│   │   ├── Header.tsx           # Fixed top bar: logo, nav, theme, user dropdown
-│   │   │                        #   Dropdown: Settings → /settings
-│   │   │                        #             Manage Users → modal
-│   │   │                        #             Sign out
-│   │   ├── Footer.tsx
-│   │   └── MobileSidebar.tsx
-│   └── ui/
-│       ├── ProtectedRoute.tsx   # if !user → /login
-│       ├── GuestRoute.tsx       # if user  → /
-│       ├── SetupRoute.tsx       # if users exist → NotFoundPage
-│       └── ...
-└── pages/
-    ├── NotFound.tsx
-    ├── Settings.tsx         # SMTP config: provider, from name/email, credentials,
-    │                        # Save + Send test email
-    ├── Dashboard.tsx
-    ├── PM2.tsx
-    ├── Docker.tsx
-    ├── Databases.tsx
-    ├── FileManager.tsx
-    ├── Terminal.tsx
-    ├── Servers.tsx
-    ├── Extras.tsx
-    ├── Nginx.tsx
-    ├── auth/
-    │   ├── Login.tsx        # Email + password; "Forgot password?" link
-    │   ├── Register.tsx     # First-time admin setup
-    │   ├── ForgotPassword.tsx   # Step 1: enter email → send code
-    │   │                        # Step 2: success state + resend (60s cooldown)
-    │   └── ResetPassword.tsx    # Enter code + new password + confirm → change
-    └── public/
-        ├── Landing.tsx
-        ├── About.tsx
-        ├── Contact.tsx
-        ├── Terms.tsx
-        └── Privacy.tsx
-```
-
----
-
-## SSL / HTTPS
-
-The installer optionally sets up Let's Encrypt SSL:
-1. Polls `dig +short <domain> A` every 10 seconds (up to 5 minutes) until DNS resolves to this server
-2. Automatically proceeds without any manual prompts once DNS is confirmed
-3. Runs `certbot --nginx` and adds an auto-renewal cron
-
-To add SSL manually after install:
-```bash
-sudo certbot --nginx -d yourdomain.com
-```
-
----
-
-## Remote Server Management
-
-1. Go to **Servers**, click **Add Server** and enter IP, port, username, and password or SSH key
-2. Click **Connect** — a green banner appears confirming remote mode
-3. All pages (PM2, Docker, Files, Terminal, etc.) now proxy operations to the remote server
-4. Click **Disconnect** to return to local mode
 
 ---
 
@@ -472,29 +416,48 @@ sudo certbot --nginx -d yourdomain.com
 |---|---|
 | React 18 + TypeScript | UI framework |
 | Vite 6 | Build tool and dev server |
-| Tailwind CSS | Utility-first styling with CSS variables |
+| Tailwind CSS v4 | Utility-first styling |
 | React Router v6 | Client-side routing |
 | TanStack Query | Server state and data fetching |
 | Axios | HTTP client with JWT interceptors |
 | Socket.IO client | Real-time WebSocket terminal |
 | highlight.js | Syntax-highlighted file editor |
 | Framer Motion + AOS | Animations |
-| Lucide React | Icon library |
+| Lucide React | Icons |
 
 **Backend**
 
 | Library | Purpose |
 |---|---|
 | Node.js + Express | HTTP server |
-| TypeScript (tsx) | Type-safe backend |
+| TypeScript (tsx) | Type-safe backend, no compile step |
 | PostgreSQL (pg) | Primary database |
 | jsonwebtoken + bcryptjs | JWT auth and password hashing |
 | Socket.IO | WebSocket server (terminal) |
-| SSH2 | Remote server SSH connections |
-| Resend | Transactional email (primary) |
-| Nodemailer | Brevo SMTP transport (alternative) |
+| SSH2 | Remote server connections |
+| Resend | Transactional email (Option A) |
+| Nodemailer | Brevo SMTP transport (Option B) |
 | Multer | File uploads |
-| Nginx | Reverse proxy in production |
+
+**Infrastructure**
+
+| Tool | Purpose |
+|---|---|
+| Nginx | Reverse proxy (port 80 / 443) |
+| PM2 | Process manager + auto-restart on reboot |
+| PostgreSQL | Database (auto-provisioned by installer) |
+| Let's Encrypt / Certbot | Free SSL certificates (webroot mode) |
+| UFW | Firewall management |
+
+---
+
+## Scripts
+
+| Script | Command | Description |
+|---|---|---|
+| Development | `npm run dev` | Backend on :5756 + Vite dev server on :5000 |
+| Build | `npm run build` | Compile React app → `dist/public/` |
+| Production | `npm start` | Express serves API + built frontend from `dist/public/` |
 
 ---
 
