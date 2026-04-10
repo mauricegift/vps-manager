@@ -70,10 +70,16 @@ export default function TerminalPage() {
   }, []);
 
   useEffect(() => {
+    const activeUser = localStorage.getItem("vpsm_active_user") || "";
+    const subUser = !activeServer && activeUser && activeUser !== "root" ? activeUser : "";
+    const sessionLabel = activeServer
+      ? `SSH Terminal — ${activeServer.username}@${activeServer.ip} (${activeServer.name})`
+      : subUser
+        ? `Local Shell — running as ${subUser}`
+        : "Local Shell Terminal";
+
     setLines([
-      { type: "system", text: activeServer
-        ? `SSH Terminal — ${activeServer.username}@${activeServer.ip} (${activeServer.name})`
-        : "Local Shell Terminal" },
+      { type: "system", text: sessionLabel },
       { type: "system", text: 'Type commands and press Enter. "clear" clears the screen.' },
     ]);
     setInput("");
@@ -81,6 +87,7 @@ export default function TerminalPage() {
 
     const query: Record<string, string> = {};
     if (activeServer) query.serverId = String(activeServer.id);
+    if (subUser) query.activeUser = subUser;
     const token = localStorage.getItem("vpsm_access_token") || "";
 
     const s = io({ path: "/socket.io", query, auth: { token }, transports: ["websocket", "polling"] });
@@ -115,22 +122,28 @@ export default function TerminalPage() {
     });
   }, [lines]);
 
-  const reconnect = useCallback(() => {
+  const reconnect = useCallback((newUser?: string) => {
     const s = socketRef.current;
     if (s) { s.disconnect(); socketRef.current = null; }
     setConnected(false);
     setInput("");
-    addLine("system", "Reconnecting…");
+    addLine("system", newUser ? `Switching to user: ${newUser}…` : "Reconnecting…");
     setTimeout(() => {
+      const activeUser = newUser || localStorage.getItem("vpsm_active_user") || "";
+      const subUser = !activeServer && activeUser && activeUser !== "root" ? activeUser : "";
       const query: Record<string, string> = {};
       if (activeServer) query.serverId = String(activeServer.id);
+      if (subUser) query.activeUser = subUser;
       const token = localStorage.getItem("vpsm_access_token") || "";
       const newSock = io({ path: "/socket.io", query, auth: { token }, transports: ["websocket", "polling"] });
       socketRef.current = newSock;
       setSocket(newSock);
       newSock.on("connect", () => {
         setConnected(true);
-        addLine("system", activeServer ? `✓ Reconnected via SSH → ${activeServer.username}@${activeServer.ip}` : "✓ Shell ready");
+        const label = activeServer
+          ? `✓ Reconnected via SSH → ${activeServer.username}@${activeServer.ip}`
+          : subUser ? `✓ Shell ready as ${subUser}` : "✓ Shell ready";
+        addLine("system", label);
       });
       newSock.on("disconnect", () => { setConnected(false); addLine("system", "✗ Disconnected"); });
       newSock.on("output", (data: string) => {
@@ -142,6 +155,17 @@ export default function TerminalPage() {
       newSock.on("cwd", (data: string) => setCwd(data));
     }, 1200);
   }, [activeServer, addLine]);
+
+  // Reconnect terminal when the user context is switched from Extras
+  useEffect(() => {
+    if (activeServer) return;
+    const handler = (e: Event) => {
+      const username: string = (e as CustomEvent).detail?.username || "";
+      reconnect(username || undefined);
+    };
+    window.addEventListener("vpsm:user-change", handler);
+    return () => window.removeEventListener("vpsm:user-change", handler);
+  }, [activeServer, reconnect]);
 
   const send = () => {
     const s = socketRef.current;

@@ -241,22 +241,31 @@ io.on('connection', async (socket) => {
   }
 
   // ── LOCAL MODE: bash shell ─────────────────────────────────────────────
+  const activeUser = (socket.handshake.query?.activeUser as string | undefined)?.trim() || '';
+  const asSubUser = activeUser && activeUser !== 'root';
+  const userHome = asSubUser ? `/home/${activeUser}` : (process.env.HOME || '/root');
+
   let shellProc: ReturnType<typeof spawn> | null = null;
-  let cwd = process.env.HOME || '/root';
+  let cwd = userHome;
 
   const startShell = () => {
-    shellProc = spawn('/bin/bash', ['--login'], {
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-        FORCE_COLOR: '3',
-        CLICOLOR_FORCE: '1',
-        CLICOLOR: '1',
-        LS_COLORS: 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32',
-      },
-      cwd,
-    });
+    // If an active sub-user is set, run `su - <username>` so the shell runs
+    // with that user's full login environment, home dir, and PATH.
+    const shellEnv = {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      FORCE_COLOR: '3',
+      CLICOLOR_FORCE: '1',
+      CLICOLOR: '1',
+      LS_COLORS: 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:ow=34;42:st=37;44:ex=01;32',
+    };
+
+    if (asSubUser) {
+      shellProc = spawn('su', ['-', activeUser], { env: shellEnv, cwd: '/root' });
+    } else {
+      shellProc = spawn('/bin/bash', ['--login'], { env: shellEnv, cwd });
+    }
 
     shellProc.stdout?.on('data', (d: Buffer) => socket.emit('output', d.toString()));
     shellProc.stderr?.on('data', (d: Buffer) => socket.emit('output', d.toString()));
@@ -265,23 +274,30 @@ io.on('connection', async (socket) => {
       setTimeout(startShell, 1000);
     });
 
-    // Write color helpers immediately — stdin is pipe-buffered so these land
-    // before any user input even if bash's login scripts haven't finished yet.
-    shellProc.stdin?.write(
-      'ls()   { command ls   --color=always "$@"; }; export -f ls\n'   +
-      'll()   { command ls -la --color=always "$@"; }; export -f ll\n'  +
-      'grep() { command grep --color=always "$@"; }; export -f grep\n'  +
-      'diff() { command diff --color=always "$@"; }; export -f diff\n'  +
-      'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
-    );
+    // Write color helpers — for su sessions, add a short delay so the login
+    // shell is ready before we write to stdin.
+    const writeInit = () => {
+      shellProc?.stdin?.write(
+        'ls()   { command ls   --color=always "$@"; }; export -f ls\n'   +
+        'll()   { command ls -la --color=always "$@"; }; export -f ll\n'  +
+        'grep() { command grep --color=always "$@"; }; export -f grep\n'  +
+        'diff() { command diff --color=always "$@"; }; export -f diff\n'  +
+        'export PS1="\\[\\e[32m\\]\\u@\\h\\[\\e[0m\\]:\\[\\e[34m\\]\\w\\[\\e[0m\\]\\$ "\n'
+      );
+    };
 
-    // Emit a visible ANSI color test so the user can confirm rendering works.
+    if (asSubUser) {
+      setTimeout(writeInit, 800); // give `su` time to open the login shell
+    } else {
+      writeInit();
+    }
+
     setTimeout(() => {
       socket.emit('output',
         '\x1b[32m✓\x1b[0m Colors ready — ' +
         '\x1b[34mls\x1b[0m · \x1b[33mgrep\x1b[0m · \x1b[35mdiff\x1b[0m · \x1b[36mll\x1b[0m are colorized\n'
       );
-    }, 200);
+    }, asSubUser ? 1000 : 200);
   };
 
   socket.on('command', (cmd: string) => {
