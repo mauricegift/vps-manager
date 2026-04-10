@@ -1,7 +1,7 @@
 {
   "name": "vps-manager",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client:delayed\"",
