@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# When piped through curl (curl ... | bash) stdin is the pipe, not the terminal.
+# Re-open stdin from /dev/tty so interactive read prompts work correctly.
+# (Technique used by pterodactyl-installer and similar scripts)
+exec </dev/tty 2>/dev/null || true
+
 # VPS Manager — Installation Script
 # https://github.com/mauricegift/vps-manager
 
@@ -271,7 +276,7 @@ fi
 step "SSL / HTTPS setup (optional)"
 echo -e "${CYAN}Enter your domain name to enable free SSL via Let's Encrypt.${RESET}"
 echo -e "${YELLOW}Leave blank and press Enter to skip SSL (IP-only access).${RESET}"
-read -rp "Domain (e.g. vps.example.com) [blank = skip]: " DOMAIN
+read -rp "Domain (e.g. vps.example.com) [blank = skip]: " DOMAIN </dev/tty
 
 if [[ -z "${DOMAIN:-}" ]]; then
   log "No domain provided — skipping SSL (app accessible via IP on port 80)"
@@ -312,7 +317,7 @@ else
     warn "Expected: $DOMAIN → $SERVER_IP"
     warn "Re-run after DNS propagates: sudo certbot --nginx -d $DOMAIN"
   else
-    read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL
+    read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL </dev/tty
     SSL_EMAIL="${SSL_EMAIL:-admin@$DOMAIN}"
     if ! command -v certbot &>/dev/null; then
       warn "Installing certbot + nginx plugin..."
