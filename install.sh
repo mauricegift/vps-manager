@@ -261,7 +261,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
   listen 80;
-  server_name _;
+  server_name SERVER_IP_PLACEHOLDER;
 
   location /socket.io/ {
     proxy_pass         http://127.0.0.1:APP_PORT_PLACEHOLDER;
@@ -300,7 +300,7 @@ server {
 NGINXEOF
 
 # Replace port placeholders with actual values
-$SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g" "$NGINX_CONF"
+$SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g; s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g" "$NGINX_CONF"
 
 $SUDO ln -sf "$NGINX_CONF" "$NGINX_LINK"
 
@@ -371,12 +371,16 @@ else
 
     # Reload nginx so the ACME location block is live before certbot runs
     $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx
+    # Update server_name to include the domain (ensures OUR block handles domain requests)
+    $SUDO sed -i "s/server_name $SERVER_IP;/server_name $SERVER_IP $DOMAIN;/" "$NGINX_CONF"
+    $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx
+
 
     # ── Self-test: verify nginx is serving the ACME path before certbot ──────
     _TEST_TOKEN="installer-selftest-$$"
     echo "OK" | $SUDO tee "/var/www/html/.well-known/acme-challenge/${_TEST_TOKEN}" > /dev/null
-    _HTTP_CODE=$(curl -4 -s --max-time 8 -o /dev/null -w "%{http_code}" \
-      "http://${DOMAIN}/.well-known/acme-challenge/${_TEST_TOKEN}" 2>/dev/null || echo "0")
+    _HTTP_CODE=$(curl -s --max-time 8 -o /dev/null -w "%{http_code}" -H "Host: ${DOMAIN}" \
+      "http://127.0.0.1/.well-known/acme-challenge/${_TEST_TOKEN}" 2>/dev/null || echo "0")
     $SUDO rm -f "/var/www/html/.well-known/acme-challenge/${_TEST_TOKEN}"
     if [[ "$_HTTP_CODE" == "200" ]]; then
       log "ACME path self-test OK (HTTP 200) — nginx is serving challenges correctly"
