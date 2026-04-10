@@ -319,9 +319,6 @@ read -rp "Domain (e.g. vps.example.com) [blank = skip]: " DOMAIN </dev/tty
 
 if [[ -z "${DOMAIN:-}" ]]; then
   log "No domain provided — skipping SSL (app accessible via IP on port 80)"
-  # Open the frontend port directly so the app is reachable without a domain
-  if command -v ufw &>/dev/null; then
-  fi
 else
   DNS_TIMEOUT=300
   DNS_INTERVAL=10
