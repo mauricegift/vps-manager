@@ -79,9 +79,15 @@ export default function DatabasesPage() {
   const [changePwdResult, setChangePwdResult] = useState<{ type: string; name: string; username: string; password: string } | null>(null);
   const [changePwdResultCopied, setChangePwdResultCopied] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
-  // Firewall status per db type (local + remote)
-  const [firewallStatus, setFirewallStatus] = useState<Record<string, boolean>>({});
+  // Firewall status per db type — persisted in localStorage so UI survives page reloads
+  const [firewallStatus, setFirewallStatus] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("vpsm_fw_status") || "{}"); } catch { return {}; }
+  });
   const [firewallToggling, setFirewallToggling] = useState<string | null>(null);
+  // Persist firewallStatus whenever it changes
+  useEffect(() => {
+    try { localStorage.setItem("vpsm_fw_status", JSON.stringify(firewallStatus)); } catch {}
+  }, [firewallStatus]);
   // Real server IP used in connection strings when external access is open locally
   const [localServerIp, setLocalServerIp] = useState<string>("");
   // Track dedicated per-database users (persisted)
