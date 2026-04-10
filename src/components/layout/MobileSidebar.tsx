@@ -1,8 +1,10 @@
 import { Link, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Server, Container, Database,
   FolderOpen, Terminal, X, Activity, Globe, Sparkles, Shield
 } from "lucide-react";
+import api from "@/lib/api";
 
 const nav = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, desc: "System overview & health" },
@@ -20,6 +22,13 @@ interface Props { open: boolean; onClose: () => void; }
 
 export default function MobileSidebar({ open, onClose }: Props) {
   const { pathname } = useLocation();
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get("/extras/app-version")
+      .then(r => setVersion(r.data?.localVersion || null))
+      .catch(() => {});
+  }, []);
 
   return (
     <>
@@ -85,7 +94,9 @@ export default function MobileSidebar({ open, onClose }: Props) {
           </nav>
 
           <div className="p-4 border-t border-[var(--line)]">
-            <div className="text-[10px] text-[var(--muted)] text-center">VPS Manager v1.0</div>
+            <div className="text-[10px] text-[var(--muted)] text-center">
+              VPS Manager {version ? `v${version}` : "v1.0"}
+            </div>
           </div>
         </div>
       </aside>
