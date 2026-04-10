@@ -1,6 +1,11 @@
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import si from 'systeminformation';
 import os from 'os';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import type { AuthRequest } from '../middleware/auth.js';
+
+const execAsync = promisify(exec);
 
 const router = Router();
 
@@ -82,17 +87,30 @@ router.get('/', async (_req, res) => {
   }
 });
 
-router.get('/homedir', async (_req, res) => {
-  try {
-    const { execFile } = await import('child_process');
-    const { promisify } = await import('util');
-    const execFileAsync = promisify(execFile);
-    const username = os.userInfo().username;
-    const home = os.homedir();
-    res.json({ success: true, data: { home, username } });
-  } catch (e: any) {
-    res.json({ success: true, data: { home: os.homedir(), username: os.userInfo().username } });
+router.get('/homedir', async (req: AuthRequest, res) => {
+  // Priority 1: ?user= query param (e.g. switched system user sent by frontend)
+  // Priority 2: JWT-authenticated VPS Manager username (may be a matching system user)
+  // Priority 3: process owner (always 'root' when VPS Manager runs as root)
+  const processUsername = os.userInfo().username;
+  const processHome = os.homedir();
+
+  const candidates = [
+    (req.query.user as string) || '',
+    req.user?.username || '',
+  ].filter(u => u && u !== processUsername && u !== 'root');
+
+  for (const candidate of candidates) {
+    try {
+      // getent passwd returns: name:pwd:uid:gid:gecos:home:shell
+      const { stdout } = await execAsync(`getent passwd ${candidate} 2>/dev/null`);
+      const parts = stdout.trim().split(':');
+      if (parts.length >= 6 && parts[5]) {
+        return res.json({ success: true, data: { home: parts[5], username: candidate } });
+      }
+    } catch { /* not a system user — try next */ }
   }
+
+  res.json({ success: true, data: { home: processHome, username: processUsername } });
 });
 
 export default router;
