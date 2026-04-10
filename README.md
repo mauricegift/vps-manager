@@ -28,15 +28,22 @@ A modern, self-hosted web control panel for managing your Linux VPS — PM2, Doc
 
 ## Quick Install
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | bash
-```
+  > **Run as root for the smoothest experience** (no sudo prompts, no permission issues).
+  > Non-root users are also supported — the installer will automatically prefix system commands with `sudo`.
 
-The installer will:
+  ```bash
+  # As root (recommended)
+  curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | bash
+
+  # As a non-root user with sudo access
+  curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | sudo bash
+  ```
+
+  The installer will:
 1. Install system packages (`git`, `nginx`, `dnsutils`, etc.)
 2. Install Node.js 24 via NVM
 3. Install PM2 globally
-4. Clone this repository to `/root/web/vps-manager`
+4. Clone this repository to `$HOME/vps-manager` (your home directory)
 5. Install npm dependencies
 6. Prompt for SMTP provider (Resend or Brevo) and write settings to `.env`
 7. Generate a random `SESSION_SECRET` for JWT signing
@@ -436,7 +443,7 @@ The installer optionally sets up Let's Encrypt SSL:
 
 To add SSL manually after install:
 ```bash
-certbot --nginx -d yourdomain.com
+sudo certbot --nginx -d yourdomain.com
 ```
 
 ---

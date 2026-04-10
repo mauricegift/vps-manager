@@ -19,24 +19,33 @@
   echo "  ╚══════════════════════════════════════╝"
   echo -e "${RESET}"
 
-  INSTALL_DIR="${INSTALL_DIR:-/root/web/vps-manager}"
+  # ── Privilege detection ───────────────────────────────────────────────────────
+  if [[ $EUID -eq 0 ]]; then
+    SUDO=""
+    log "Running as root"
+  else
+    SUDO="sudo"
+    warn "Running as non-root user ($(whoami)) — sudo will be used for system commands"
+    warn "Run as root for the smoothest experience: sudo -i"
+    # Verify sudo works before proceeding
+    if ! sudo -n true 2>/dev/null; then
+      warn "Sudo requires a password — you may be prompted during installation"
+    fi
+  fi
+
+  INSTALL_DIR="${INSTALL_DIR:-$HOME/vps-manager}"
   APP_PORT="${APP_PORT:-5756}"
   FRONTEND_PORT="${FRONTEND_PORT:-5000}"
   APP_NAME="vps-manager"
 
-  # ── Root check ────────────────────────────────────────────────────────────────
-  if [[ $EUID -ne 0 ]]; then
-    err "This installer must be run as root. Try: sudo bash install.sh"
-  fi
-
   # ── Step 1: System packages ───────────────────────────────────────────────────
   step "Checking system packages"
-  apt-get update -qq 2>/dev/null
+  $SUDO apt-get update -qq 2>/dev/null
 
   for pkg in git curl unzip zip build-essential nginx sshpass dnsutils; do
     if ! dpkg -s "$pkg" &>/dev/null; then
       warn "$pkg not found — installing..."
-      apt-get install -y -qq "$pkg" 2>/dev/null
+      $SUDO apt-get install -y -qq "$pkg" 2>/dev/null
     else
       log "$pkg already installed"
     fi
@@ -54,7 +63,7 @@
     nvm install 24
     nvm use 24
     nvm alias default 24
-    log "Node.js \$(node --version) installed via NVM"
+    log "Node.js $(node --version) installed via NVM"
   }
 
   export NVM_DIR="$HOME/.nvm"
@@ -63,9 +72,9 @@
   if ! command -v node &>/dev/null; then
     install_node_nvm
   else
-    NODE_MAJOR=\$(node --version | sed 's/v//' | cut -d. -f1)
+    NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
     if [[ $NODE_MAJOR -lt 24 ]]; then
-      warn "Node.js \$(node --version) is too old — upgrading to 24 via NVM..."
+      warn "Node.js $(node --version) is too old — upgrading to 24 via NVM..."
       if [ ! -s "$NVM_DIR/nvm.sh" ]; then
         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
         [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
@@ -73,9 +82,9 @@
       nvm install 24
       nvm use 24
       nvm alias default 24
-      log "Node.js \$(node --version) upgraded via NVM"
+      log "Node.js $(node --version) upgraded via NVM"
     else
-      log "Node.js \$(node --version)"
+      log "Node.js $(node --version)"
     fi
   fi
 
@@ -84,34 +93,34 @@
   if ! command -v pm2 &>/dev/null; then
     warn "PM2 not found — installing globally..."
     npm install -g pm2 --quiet
-    log "PM2 \$(pm2 --version) installed"
+    log "PM2 $(pm2 --version) installed"
   else
-    log "PM2 \$(pm2 --version) already installed"
+    log "PM2 $(pm2 --version) already installed"
   fi
 
   # ── Step 3b: Python3 + ffmpeg ─────────────────────────────────────────────────
   step "Checking Python & ffmpeg"
   if ! command -v python3 &>/dev/null; then
     warn "python3 not found — installing..."
-    apt-get install -y -qq python3 python3-pip 2>/dev/null
+    $SUDO apt-get install -y -qq python3 python3-pip 2>/dev/null
   fi
-  log "Python \$(python3 --version 2>&1 | grep -oE '[0-9.]+' | head -1)"
+  log "Python $(python3 --version 2>&1 | grep -oE '[0-9.]+' | head -1)"
 
   mkdir -p "$HOME/bin"
   if ! grep -q 'export PATH="$HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
     echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
   fi
   if [[ ! -e "$HOME/bin/python" ]]; then
-    ln -sf "\$(which python3)" "$HOME/bin/python"
-    log "Created ~/bin/python → \$(which python3)"
+    ln -sf "$(which python3)" "$HOME/bin/python"
+    log "Created ~/bin/python → $(which python3)"
   else
     log "~/bin/python already exists"
   fi
 
   if ! command -v ffmpeg &>/dev/null; then
     warn "ffmpeg not found — installing..."
-    apt-get install -y -qq ffmpeg 2>/dev/null
-    log "ffmpeg \$(ffmpeg -version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1) installed"
+    $SUDO apt-get install -y -qq ffmpeg 2>/dev/null
+    log "ffmpeg $(ffmpeg -version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1) installed"
   else
     log "ffmpeg already installed"
   fi
@@ -126,7 +135,7 @@
     git pull
   else
     log "Cloning repository to $INSTALL_DIR..."
-    mkdir -p "\$(dirname "$INSTALL_DIR")"
+    mkdir -p "$INSTALL_DIR"
     git clone https://github.com/mauricegift/vps-manager.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
   fi
@@ -144,7 +153,7 @@
   step "Configuring environment"
   ENV_FILE="$APP_DIR/.env"
   if [[ ! -f "$ENV_FILE" ]]; then
-    SESSION_SECRET=\$(openssl rand -hex 32)
+    SESSION_SECRET=$(openssl rand -hex 32)
     cat > "$ENV_FILE" << EOF
   PORT=$APP_PORT
   NODE_ENV=production
@@ -158,11 +167,11 @@
   # ── Step 7: UFW firewall ──────────────────────────────────────────────────────
   step "Configuring firewall (UFW)"
   if command -v ufw &>/dev/null; then
-    ufw allow ssh >/dev/null 2>&1 || true
-    ufw allow "$APP_PORT"/tcp >/dev/null 2>&1 || true
-    ufw allow 80/tcp >/dev/null 2>&1 || true
-    ufw allow 443/tcp >/dev/null 2>&1 || true
-    ufw --force enable >/dev/null 2>&1 || true
+    $SUDO ufw allow ssh >/dev/null 2>&1 || true
+    $SUDO ufw allow "$APP_PORT"/tcp >/dev/null 2>&1 || true
+    $SUDO ufw allow 80/tcp >/dev/null 2>&1 || true
+    $SUDO ufw allow 443/tcp >/dev/null 2>&1 || true
+    $SUDO ufw --force enable >/dev/null 2>&1 || true
     log "UFW rules set: SSH, HTTP(80), HTTPS(443), App($APP_PORT)"
   else
     warn "UFW not found — skipping firewall configuration"
@@ -173,7 +182,15 @@
   pm2 delete "$APP_NAME" 2>/dev/null || true
   cd "$APP_DIR"
   pm2 start npm --name "$APP_NAME" -- run dev
-  pm2 startup systemd -u root --hp /root 2>/dev/null | grep -E '^sudo|^env' | bash || true
+  # Configure PM2 to start on system boot
+  PM2_STARTUP_CMD=$(pm2 startup 2>/dev/null | grep -E '^s*sudo|^s*env' | head -1 || true)
+  if [[ -n "$PM2_STARTUP_CMD" ]]; then
+    if [[ $EUID -eq 0 ]]; then
+      bash -c "$PM2_STARTUP_CMD" || true
+    else
+      $SUDO bash -c "$PM2_STARTUP_CMD" || true
+    fi
+  fi
   pm2 save
   log "VPS Manager started via PM2 (name: $APP_NAME)"
   log "  App running → http://localhost:$APP_PORT  (proxied via nginx on port 80)"
@@ -181,17 +198,17 @@
   # ── Step 9: Nginx reverse proxy ───────────────────────────────────────────────
   step "Configuring Nginx reverse proxy"
 
-  SERVER_IP=\$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  SERVER_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 
   NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
   NGINX_LINK="/etc/nginx/sites-enabled/$APP_NAME"
 
   if [[ -f /etc/nginx/sites-enabled/default ]]; then
-    rm -f /etc/nginx/sites-enabled/default
+    $SUDO rm -f /etc/nginx/sites-enabled/default
     log "Disabled nginx default site"
   fi
 
-  cat > "$NGINX_CONF" << NGINXEOF
+  $SUDO tee "$NGINX_CONF" > /dev/null << NGINXEOF
   # VPS Manager — generated by install.sh
   map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -231,10 +248,10 @@
   }
   NGINXEOF
 
-  ln -sf "$NGINX_CONF" "$NGINX_LINK"
+  $SUDO ln -sf "$NGINX_CONF" "$NGINX_LINK"
 
-  if nginx -t 2>/dev/null; then
-    systemctl reload nginx
+  if $SUDO nginx -t 2>/dev/null; then
+    $SUDO systemctl reload nginx
     log "Nginx configured — app accessible on port 80"
   else
     warn "Nginx config test failed — check $NGINX_CONF"
@@ -260,7 +277,7 @@
       log "Polling every ${DNS_INTERVAL}s (timeout ${DNS_TIMEOUT}s) — please wait..."
 
       while [[ $DNS_WAITED -lt $DNS_TIMEOUT ]]; do
-        DOMAIN_IP=\$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || true)
+        DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || true)
 
         if [[ "$DOMAIN_IP" == "$SERVER_IP" ]]; then
           log "DNS OK: $DOMAIN → $SERVER_IP ✓"
@@ -273,38 +290,38 @@
         fi
 
         sleep $DNS_INTERVAL
-        DNS_WAITED=\$(( DNS_WAITED + DNS_INTERVAL ))
+        DNS_WAITED=$(( DNS_WAITED + DNS_INTERVAL ))
       done
       echo ""  # newline after \r line
 
       if [[ "$DNS_OK" == false ]]; then
-        DOMAIN_IP=\$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || echo "unresolved")
+        DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || echo "unresolved")
         warn "DNS did not resolve within ${DNS_TIMEOUT}s."
         warn "Current:  $DOMAIN → $DOMAIN_IP"
         warn "Expected: $DOMAIN → $SERVER_IP"
         warn "Make sure your DNS A record points to this server, then re-run:"
-        warn "  certbot --nginx -d $DOMAIN"
+        warn "  sudo certbot --nginx -d $DOMAIN"
       else
         read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL
         SSL_EMAIL="${SSL_EMAIL:-admin@$DOMAIN}"
 
         if ! command -v certbot &>/dev/null; then
           warn "Installing certbot + nginx plugin..."
-          apt-get install -y -qq certbot python3-certbot-nginx 2>/dev/null
+          $SUDO apt-get install -y -qq certbot python3-certbot-nginx 2>/dev/null
         fi
 
-        certbot --nginx \
+        $SUDO certbot --nginx \
           -d "$DOMAIN" \
           --email "$SSL_EMAIL" \
           --agree-tos --non-interactive --redirect \
           && log "SSL certificate issued + nginx updated for $DOMAIN!" \
-          || warn "Certbot failed — verify DNS and try: certbot --nginx -d $DOMAIN"
+          || warn "Certbot failed — verify DNS and try: sudo certbot --nginx -d $DOMAIN"
 
-        sed -i "s/server_name _;/server_name $DOMAIN;/" "$NGINX_CONF"
-        nginx -t 2>/dev/null && systemctl reload nginx || true
+        $SUDO sed -i "s/server_name _;/server_name $DOMAIN;/" "$NGINX_CONF"
+        $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx || true
 
         if ! crontab -l 2>/dev/null | grep -q certbot; then
-          (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --nginx && systemctl reload nginx") | crontab -
+          (crontab -l 2>/dev/null; echo "0 3 * * * $SUDO certbot renew --quiet --nginx && $SUDO systemctl reload nginx") | crontab -
           log "Auto-renewal cron job added (runs daily at 03:00)"
         else
           log "Auto-renewal cron already exists"
@@ -331,8 +348,8 @@
   echo -e "    ${CYAN}pm2 logs $APP_NAME${RESET}    — view app logs"
   echo -e "    ${CYAN}pm2 restart $APP_NAME${RESET}  — restart the app"
   echo -e "    ${CYAN}pm2 stop $APP_NAME${RESET}     — stop the app"
-  echo -e "    ${CYAN}nginx -t${RESET}                 — test nginx config"
-  echo -e "    ${CYAN}systemctl reload nginx${RESET}   — reload nginx"
-  echo -e "    ${CYAN}certbot renew --dry-run${RESET}  — test SSL renewal"
+  echo -e "    ${CYAN}sudo nginx -t${RESET}            — test nginx config"
+  echo -e "    ${CYAN}sudo systemctl reload nginx${RESET}  — reload nginx"
+  echo -e "    ${CYAN}sudo certbot renew --dry-run${RESET}  — test SSL renewal"
   echo ""
   
