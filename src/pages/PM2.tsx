@@ -370,7 +370,10 @@ export default function PM2Page() {
   const openBrowse = async (target: "script" | "cwd", startPath?: string) => {
     const storedUser = localStorage.getItem("vpsm_active_user");
     const localHome = storedUser && storedUser !== "root" ? `/home/${storedUser}` : "/root";
-    const initPath = startPath || (activeServer ? `/home/${activeServer.username}` : localHome);
+    const remoteHome = activeServer
+      ? (activeServer.username === "root" ? "/root" : `/home/${activeServer.username}`)
+      : localHome;
+    const initPath = startPath || remoteHome;
     setBrowseTarget(target);
     setBrowsePath(initPath);
     setBrowseModal(true);
@@ -435,7 +438,7 @@ export default function PM2Page() {
         const repoName = data.data.repo || "myapp";
         const storedUser = localStorage.getItem("vpsm_active_user");
         const appsBase = activeServer
-          ? `/home/${activeServer.username}/apps`
+          ? (activeServer.username === "root" ? "/root/apps" : `/home/${activeServer.username}/apps`)
           : (storedUser && storedUser !== "root" ? `/home/${storedUser}/apps` : "/root/apps");
         setGhCloneDir(`${appsBase}/${repoName}`);
         if (!startForm.name) setStartForm(s => ({ ...s, name: repoName }));
