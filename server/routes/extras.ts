@@ -923,37 +923,98 @@ router.get('/app-version', async (_req, res) => {
   }
 });
 
+// runStrict: like run() but throws on non-zero exit so callers can detect failures
+async function runStrict(cmd: string, timeout = 30000): Promise<string> {
+  const { stdout, stderr } = await execAsync(cmd, {
+    timeout,
+    env: { ...process.env, HOME, DEBIAN_FRONTEND: 'noninteractive' },
+  });
+  return (stdout + stderr).trim();
+}
+
 router.post('/app-update', async (_req, res) => {
+  const lines: string[] = [];
+  const log = (msg: string) => { lines.push(msg); };
+
   try {
     const appDir = process.cwd();
     const envPath = path.join(appDir, '.env');
 
-    // Back up .env so git reset --hard doesn't wipe credentials
+    // Resolve npm — when running under PM2, NVM may not be sourced
+    const nodeDir = path.dirname(process.execPath);
+    const npmBin  = fs.existsSync(path.join(nodeDir, 'npm'))
+      ? path.join(nodeDir, 'npm')
+      : 'npm';
+    const nvmPrefix = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
+
+    // ── Step 1: Back up .env ─────────────────────────────────────────────────
     let envContent = '';
-    if (fs.existsSync(envPath)) envContent = fs.readFileSync(envPath, 'utf8');
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
+      log('[1/4] .env backed up');
+    }
 
-    // 1. Pull latest code from GitHub
-    const gitOut = await run(
-      `cd "${appDir}" && git fetch origin main 2>&1 && git reset --hard origin/main 2>&1`,
-      90000
+    // ── Step 2: Git pull ─────────────────────────────────────────────────────
+    log('[2/4] Pulling latest code from GitHub…');
+    try {
+      const gitOut = await runStrict(
+        `cd "${appDir}" && git fetch origin main 2>&1 && git reset --hard origin/main 2>&1`,
+        90000
+      );
+      log(gitOut || 'git: up to date');
+    } catch (e: any) {
+      const msg = (e.stdout || e.stderr || e.message || '').trim();
+      // "Already up to date" prints to stdout with exit 0 so runStrict succeeds.
+      // Anything here is a real failure.
+      throw new Error(`Git pull failed:\n${msg}`);
+    }
+
+    // Restore .env immediately so the app doesn't lose credentials
+    if (envContent) {
+      fs.writeFileSync(envPath, envContent);
+      log('.env restored after git reset');
+    }
+
+    // ── Step 3: npm install ──────────────────────────────────────────────────
+    log('[3/4] Installing dependencies…');
+    try {
+      const npmOut = await runStrict(
+        `${nvmPrefix} cd "${appDir}" && "${npmBin}" install --prefer-offline --no-fund --no-audit 2>&1`,
+        180000
+      );
+      log(npmOut.split('\n').slice(-6).join('\n') || 'npm install: done');
+    } catch (e: any) {
+      throw new Error(`npm install failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
+    }
+
+    // ── Step 4: Build frontend ───────────────────────────────────────────────
+    log('[4/4] Building frontend…');
+    try {
+      const buildOut = await runStrict(
+        `${nvmPrefix} cd "${appDir}" && NODE_OPTIONS="--max-old-space-size=512" "${npmBin}" run build 2>&1`,
+        300000
+      );
+      log(buildOut.split('\n').filter(l => l.includes('dist/') || l.includes('built') || l.includes('✓') || l.includes('kB')).join('\n') || 'build: done');
+    } catch (e: any) {
+      throw new Error(`Frontend build failed:\n${(e.stdout || e.stderr || e.message || '').trim()}`);
+    }
+
+    // ── Step 5: PM2 restart ──────────────────────────────────────────────────
+    // Done last; if this fails the update is already applied — just log it
+    log('Restarting via PM2…');
+    const pm2Out = await run(
+      'pm2 restart vps-manager --update-env 2>&1 || pm2 restart 0 --update-env 2>&1',
+      20000
     );
+    log(pm2Out || 'pm2: restarted');
 
-    // Restore .env immediately after git reset
-    if (envContent) fs.writeFileSync(envPath, envContent);
-
-    // 2. Install any new/updated dependencies
-    const npmOut = await run(`cd "${appDir}" && npm install --prefer-offline 2>&1`, 120000);
-
-    // 3. Rebuild the React frontend (Vite outputs to dist/public/)
-    //    Without this step new UI code would NOT be visible after restart
-    const buildOut = await run(`cd "${appDir}" && npm run build 2>&1`, 180000);
-
-    // 4. Restart via PM2 so the new backend + frontend are served
-    const pm2Out = await run('pm2 restart vps-manager --update-env 2>&1', 20000);
-
-    res.json({ success: true, output: [gitOut, npmOut, buildOut, pm2Out].join('\n---\n') });
+    res.json({ success: true, output: lines.join('\n') });
   } catch (e: any) {
-    res.status(500).json({ success: false, error: e.message });
+    res.status(500).json({
+      success: false,
+      error: e.message || 'Update failed',
+      output: lines.join('\n'),
+    });
   }
 });
 
