@@ -1,9 +1,23 @@
 import { Router } from 'express';
 import os from 'os';
+import net from 'net';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
 import { testSSHConnection, getRemoteSystemInfo } from '../ssh.js';
+
+function tcpPing(ip: string, port: number, timeoutMs = 3000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let done = false;
+    const finish = (ok: boolean) => { if (!done) { done = true; socket.destroy(); resolve(ok); } };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+    socket.connect(port, ip);
+  });
+}
 
 const execAsync = promisify(exec);
 
@@ -39,6 +53,22 @@ router.get('/', async (_req, res) => {
       'SELECT id, name, ip, port, username, tags, notes, created_at, last_tested, last_status FROM vps_connections ORDER BY created_at DESC'
     );
     res.json({ success: true, data: result.rows });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Quick TCP ping status for all servers (used by 3-second poller on frontend)
+router.get('/status', async (_req, res) => {
+  try {
+    const result = await pool.query('SELECT id, ip, port FROM vps_connections');
+    const checks = await Promise.all(
+      result.rows.map(async (row) => {
+        const online = await tcpPing(row.ip, row.port || 22, 3000);
+        return { id: row.id, online };
+      })
+    );
+    res.json({ success: true, data: checks });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
   }
