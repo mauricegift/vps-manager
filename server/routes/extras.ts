@@ -899,4 +899,52 @@ router.delete('/motd', async (_req, res) => {
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
+router.get('/app-version', async (_req, res) => {
+  try {
+    const pkgPath = path.resolve(process.cwd(), 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const localVersion: string = pkg.version || '0.0.0';
+
+    let remoteVersion: string | null = null;
+    try {
+      const ghRes = await fetch('https://raw.githubusercontent.com/mauricegift/vps-manager/main/package.json', {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (ghRes.ok) {
+        const ghPkg: any = await ghRes.json();
+        remoteVersion = ghPkg.version || null;
+      }
+    } catch { }
+
+    const updateAvailable = remoteVersion ? semverGt(remoteVersion, localVersion) : false;
+    res.json({ localVersion, remoteVersion, updateAvailable });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/app-update', async (_req, res) => {
+  try {
+    const appDir = process.cwd();
+    const envPath = path.join(appDir, '.env');
+
+    let envContent = '';
+    if (fs.existsSync(envPath)) envContent = fs.readFileSync(envPath, 'utf8');
+
+    const gitOut = await run(
+      `cd "${appDir}" && git fetch origin main 2>&1 && git reset --hard origin/main 2>&1`,
+      90000
+    );
+
+    if (envContent) fs.writeFileSync(envPath, envContent);
+
+    const npmOut = await run(`cd "${appDir}" && npm install --prefer-offline 2>&1`, 120000);
+    const pm2Out = await run('pm2 restart vps-manager --update-env 2>&1', 20000);
+
+    res.json({ success: true, output: [gitOut, npmOut, pm2Out].join('\n---\n') });
+  } catch (e: any) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 export default router;
