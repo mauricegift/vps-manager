@@ -254,7 +254,10 @@ function AppUpdateCard({ onOutput }: { onOutput: (title: string, output: string)
       qc.invalidateQueries({ queryKey: ["app-version"] });
     },
     onError: (e: any) => {
-      toast.error(e?.response?.data?.error || "Update failed");
+      const resp = e?.response?.data;
+      const msg = resp?.error || "Update failed";
+      toast.error(msg);
+      if (resp?.output) onOutput("App Update — Error Log", `ERROR: ${msg}\n\n${resp.output}`);
     },
   });
 
