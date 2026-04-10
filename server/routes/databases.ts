@@ -13,6 +13,13 @@ async function run(cmd: string, timeout = 12000): Promise<string> {
   } catch (e: any) { return (e.stdout || e.stderr || e.message || '').trim(); }
 }
 
+// runScript: safe multi-line bash script runner — uses base64 so newlines are never mangled.
+// Use this for any script that has multi-line logic (functions, if/then/fi, case/esac, etc.)
+async function runScript(script: string, timeout = 12000): Promise<string> {
+  const b64 = Buffer.from(script).toString('base64');
+  return run(`echo '${b64}' | base64 -d | bash`, timeout);
+}
+
 async function getLocalServerIp(): Promise<string> {
   const routeOut = await run(`ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \\K[\\d.]+'`, 5000);
   if (routeOut && /^\d+\.\d+\.\d+\.\d+$/.test(routeOut.trim())) return routeOut.trim();
@@ -855,7 +862,7 @@ echo "mongodb=$(check_bind 27017)"
 echo "redis=$(check_bind 6379)"
 echo "mariadb=$(check_bind 3306)"
 `.trim();
-    const out = await run(`bash -c ${JSON.stringify(script)}`, 10000);
+    const out = await runScript(script, 10000);
     const bindCheck = (t: string) => out.includes(`${t}=1`);
     const dbs = ['postgresql', 'mysql', 'mongodb', 'redis', 'mariadb'];
     const result: Record<string, boolean> = {};
@@ -895,7 +902,7 @@ fi
 echo "FW_OPENED=$OPENED"
 echo "ALREADY=$ALREADY"
 `.trim();
-    const checkOut = await run(`bash -c ${JSON.stringify(fwScript)}`, 15000);
+    const checkOut = await runScript(fwScript, 15000);
     const fwOpened = checkOut.includes('FW_OPENED=1');
     const alreadyOpen = checkOut.includes('ALREADY=1');
 
@@ -956,7 +963,7 @@ case "${type}" in
     ;;
 esac
 `.trim();
-    const fixOut = await run(`bash -c ${JSON.stringify(fixScript)}`, 45000);
+    const fixOut = await runScript(fixScript, 45000);
     const bindFixed = fixOut.includes('BIND_FIXED=1');
     const bindErr = bindFixed ? '' : 'Could not update bind address — set bind 0.0.0.0 manually.';
 
@@ -971,7 +978,7 @@ if command -v iptables &>/dev/null; then
   echo "RL_OK=1"
 fi
 `.trim();
-    const rlOut = await run(`bash -c ${JSON.stringify(rlScript)}`, 10000);
+    const rlOut = await runScript(rlScript, 10000);
     rateLimited = rlOut.includes('RL_OK=1');
 
     // ── Step 4: Save state to file (source of truth for firewall-status)
@@ -1044,7 +1051,7 @@ case "${type}" in
 esac
 echo "DONE"
 `.trim();
-    const out = await run(`bash -c ${JSON.stringify(script)}`, 45000);
+    const out = await runScript(script, 45000);
     // Save closed state to file (source of truth)
     const state = await readFwState();
     state[type] = false;
