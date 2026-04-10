@@ -267,6 +267,11 @@ export default function PM2Page() {
     } catch { toast.error("Failed to copy logs"); }
   };
 
+  useEffect(() => {
+    if (!termEndRef.current) return;
+    termEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [termHistory, termLoading]);
+
   const runTermCmd = async () => {
     const cmd = termCmd.trim();
     if (!cmd || termLoading) return;
@@ -284,11 +289,6 @@ export default function PM2Page() {
       setTermHistory(prev => [...prev, { type: "error", text: e.response?.data?.error || "Command failed" }]);
     }
     setTermLoading(false);
-    setTimeout(() => {
-      if (termContainerRef.current) {
-        termContainerRef.current.scrollTop = termContainerRef.current.scrollHeight;
-      }
-    }, 0);
   };
 
   const installPM2 = async () => {
@@ -761,7 +761,7 @@ export default function PM2Page() {
               <div
                 ref={termContainerRef}
                 className="font-mono p-4 h-72 overflow-y-auto leading-relaxed"
-                style={{ background: T.bg, color: T.text, fontSize: `${fontSize}px` }}
+                style={{ background: T.bg, color: T.text, fontSize: `${fontSize}px`, scrollBehavior: "smooth", overflowAnchor: "none" }}
               >
                 {termHistory.map((line, i) => (
                   <div key={i}>
