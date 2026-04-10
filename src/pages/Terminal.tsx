@@ -81,8 +81,9 @@ export default function TerminalPage() {
 
     const query: Record<string, string> = {};
     if (activeServer) query.serverId = String(activeServer.id);
+    const token = localStorage.getItem("vpsm_access_token") || "";
 
-    const s = io({ path: "/socket.io", query, transports: ["websocket", "polling"] });
+    const s = io({ path: "/socket.io", query, auth: { token }, transports: ["websocket", "polling"] });
     socketRef.current = s;
     setSocket(s);
 
@@ -119,7 +120,8 @@ export default function TerminalPage() {
     setTimeout(() => {
       const query: Record<string, string> = {};
       if (activeServer) query.serverId = String(activeServer.id);
-      const newSock = io({ path: "/socket.io", query, transports: ["websocket", "polling"] });
+      const token = localStorage.getItem("vpsm_access_token") || "";
+      const newSock = io({ path: "/socket.io", query, auth: { token }, transports: ["websocket", "polling"] });
       socketRef.current = newSock;
       setSocket(newSock);
       newSock.on("connect", () => {

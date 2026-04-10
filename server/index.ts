@@ -23,6 +23,7 @@ import authRouter from './routes/auth.js';
 import { requireAuth } from './middleware/auth.js';
 import { initDB } from './db.js';
 import pool from './db.js';
+import jwt from 'jsonwebtoken';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +56,22 @@ const io = new SocketIO(httpServer, {
 
 app.use(cors(corsOpts));
 app.use(express.json());
+
+// ── Socket.IO auth middleware — require valid JWT on every WS connection ────
+const ACCESS_SECRET = process.env.SESSION_SECRET || 'vpsmanager_access_secret';
+io.use((socket, next) => {
+  const token = (socket.handshake.auth as any)?.token as string | undefined;
+  if (!token) {
+    return next(new Error('Authentication required'));
+  }
+  try {
+    const payload = jwt.verify(token, ACCESS_SECRET);
+    (socket as any).user = payload;
+    next();
+  } catch {
+    next(new Error('Invalid or expired token'));
+  }
+});
 
 app.use('/api/auth', authRouter);
 

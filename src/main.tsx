@@ -15,10 +15,11 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10_000 } },
 });
 
-// Refresh AOS on every route change so elements animate in correctly
-function AOSRouteRefresh() {
+// Scroll to top + refresh AOS on every route change
+function RouteEffects() {
   const { pathname } = useLocation();
   useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     const t = setTimeout(() => AOS.refresh(), 80);
     return () => clearTimeout(t);
   }, [pathname]);
@@ -61,7 +62,7 @@ function Root() {
 
   return (
     <ErrorBoundary>
-      <AOSRouteRefresh />
+      <RouteEffects />
       <App />
     </ErrorBoundary>
   );
