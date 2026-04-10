@@ -19,3 +19,4 @@ Thumbs.db
 *.swp
 *.swo
 package-lock.json
+push-to-github.sh
