@@ -203,7 +203,9 @@ log "  → http://localhost:$APP_PORT  (proxied via nginx on port 80)"
 # ── Step 9: Nginx reverse proxy ──────────────────────────────────────────────
 step "Configuring Nginx reverse proxy"
 
-SERVER_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+SERVER_IP=$(curl -4 -s --max-time 8 ifconfig.me 2>/dev/null \
+  || ip -4 addr show scope global 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -1 \
+  || hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | head -1)
 
 NGINX_CONF="/etc/nginx/sites-available/$APP_NAME"
 NGINX_LINK="/etc/nginx/sites-enabled/$APP_NAME"
@@ -267,69 +269,65 @@ fi
 
 # ── Step 10: Optional SSL via Let's Encrypt ──────────────────────────────────
 step "SSL / HTTPS setup (optional)"
-echo -e "${YELLOW}Do you want to set up a free SSL certificate via Let's Encrypt?${RESET}"
-read -rp "Set up SSL now? (y/N): " SETUP_SSL
+echo -e "${CYAN}Enter your domain name to enable free SSL via Let's Encrypt.${RESET}"
+echo -e "${YELLOW}Leave blank and press Enter to skip SSL (IP-only access).${RESET}"
+read -rp "Domain (e.g. vps.example.com) [blank = skip]: " DOMAIN
 
-if [[ "${SETUP_SSL,,}" == "y" ]]; then
-  read -rp "Enter your domain name (e.g. vps.example.com): " DOMAIN
-  if [[ -z "${DOMAIN:-}" ]]; then
-    warn "No domain entered — skipping SSL"
-  else
-    DNS_TIMEOUT=300
-    DNS_INTERVAL=10
-    DNS_WAITED=0
-    DNS_OK=false
+if [[ -z "${DOMAIN:-}" ]]; then
+  log "No domain provided — skipping SSL (app accessible via IP on port 80)"
+else
+  DNS_TIMEOUT=300
+  DNS_INTERVAL=10
+  DNS_WAITED=0
+  DNS_OK=false
 
-    log "Checking DNS for ${DOMAIN} → expected IP: ${SERVER_IP}"
-    log "Polling every ${DNS_INTERVAL}s (timeout ${DNS_TIMEOUT}s) — please wait..."
+  log "Checking DNS for ${DOMAIN} → expected IP: ${SERVER_IP}"
+  log "Polling every ${DNS_INTERVAL}s (timeout ${DNS_TIMEOUT}s) — please wait..."
 
-    while [[ $DNS_WAITED -lt $DNS_TIMEOUT ]]; do
-      DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || true)
-      if [[ "$DOMAIN_IP" == "$SERVER_IP" ]]; then
-        log "DNS OK: $DOMAIN → $SERVER_IP ✓"
-        DNS_OK=true
-        break
-      elif [[ -n "$DOMAIN_IP" ]]; then
-        printf "${YELLOW}[!]${RESET}  DNS mismatch — $DOMAIN → $DOMAIN_IP (want $SERVER_IP)  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
-      else
-        printf "${YELLOW}[!]${RESET}  DNS not propagated yet for $DOMAIN  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
-      fi
-      sleep $DNS_INTERVAL
-      DNS_WAITED=$(( DNS_WAITED + DNS_INTERVAL ))
-    done
-    echo ""
-
-    if [[ "$DNS_OK" == false ]]; then
-      DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || echo "unresolved")
-      warn "DNS did not resolve within ${DNS_TIMEOUT}s."
-      warn "Current:  $DOMAIN → $DOMAIN_IP"
-      warn "Expected: $DOMAIN → $SERVER_IP"
-      warn "Re-run after DNS propagates: sudo certbot --nginx -d $DOMAIN"
+  while [[ $DNS_WAITED -lt $DNS_TIMEOUT ]]; do
+    DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || true)
+    if [[ "$DOMAIN_IP" == "$SERVER_IP" ]]; then
+      log "DNS OK: $DOMAIN → $SERVER_IP ✓"
+      DNS_OK=true
+      break
+    elif [[ -n "$DOMAIN_IP" ]]; then
+      printf "${YELLOW}[!]${RESET}  DNS mismatch — $DOMAIN → $DOMAIN_IP (want $SERVER_IP)  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
     else
-      read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL
-      SSL_EMAIL="${SSL_EMAIL:-admin@$DOMAIN}"
-      if ! command -v certbot &>/dev/null; then
-        warn "Installing certbot + nginx plugin..."
-        $SUDO apt-get install -y -qq certbot python3-certbot-nginx 2>/dev/null
-      fi
-      $SUDO certbot --nginx \
-        -d "$DOMAIN" \
-        --email "$SSL_EMAIL" \
-        --agree-tos --non-interactive --redirect \
-        && log "SSL certificate issued for $DOMAIN!" \
-        || warn "Certbot failed — try: sudo certbot --nginx -d $DOMAIN"
-      $SUDO sed -i "s/server_name _;/server_name $DOMAIN;/" "$NGINX_CONF"
-      $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx || true
-      if ! crontab -l 2>/dev/null | grep -q certbot; then
-        (crontab -l 2>/dev/null; echo "0 3 * * * $SUDO certbot renew --quiet --nginx && $SUDO systemctl reload nginx") | crontab -
-        log "Auto-renewal cron job added (runs daily at 03:00)"
-      else
-        log "Auto-renewal cron already exists"
-      fi
+      printf "${YELLOW}[!]${RESET}  DNS not propagated yet for $DOMAIN  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
+    fi
+    sleep $DNS_INTERVAL
+    DNS_WAITED=$(( DNS_WAITED + DNS_INTERVAL ))
+  done
+  echo ""
+
+  if [[ "$DNS_OK" == false ]]; then
+    DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || echo "unresolved")
+    warn "DNS did not resolve within ${DNS_TIMEOUT}s."
+    warn "Current:  $DOMAIN → $DOMAIN_IP"
+    warn "Expected: $DOMAIN → $SERVER_IP"
+    warn "Re-run after DNS propagates: sudo certbot --nginx -d $DOMAIN"
+  else
+    read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL
+    SSL_EMAIL="${SSL_EMAIL:-admin@$DOMAIN}"
+    if ! command -v certbot &>/dev/null; then
+      warn "Installing certbot + nginx plugin..."
+      $SUDO apt-get install -y -qq certbot python3-certbot-nginx 2>/dev/null
+    fi
+    $SUDO certbot --nginx \
+      -d "$DOMAIN" \
+      --email "$SSL_EMAIL" \
+      --agree-tos --non-interactive --redirect \
+      && log "SSL certificate issued for $DOMAIN!" \
+      || warn "Certbot failed — try: sudo certbot --nginx -d $DOMAIN"
+    $SUDO sed -i "s/server_name _;/server_name $DOMAIN;/" "$NGINX_CONF"
+    $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx || true
+    if ! crontab -l 2>/dev/null | grep -q certbot; then
+      (crontab -l 2>/dev/null; echo "0 3 * * * $SUDO certbot renew --quiet --nginx && $SUDO systemctl reload nginx") | crontab -
+      log "Auto-renewal cron job added (runs daily at 03:00)"
+    else
+      log "Auto-renewal cron already exists"
     fi
   fi
-else
-  log "Skipping SSL setup"
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
