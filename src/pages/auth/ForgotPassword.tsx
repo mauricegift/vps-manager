@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Mail, ArrowLeft, RefreshCw, CheckCircle, KeyRound, AlertTriangle, Terminal } from "lucide-react";
+import { Mail, ArrowLeft, RefreshCw, CheckCircle, KeyRound, AlertTriangle, Terminal, AlertCircle } from "lucide-react";
 import { toast } from "react-toastify";
 import axios from "axios";
 
@@ -16,6 +16,7 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ResetResponse | null>(null);
   const [cooldown, setCooldown] = useState(0);
+  const [emailError, setEmailError] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -34,6 +35,7 @@ export default function ForgotPasswordPage() {
 
   const submit = async (isResend = false) => {
     if (!email.trim() || loading) return;
+    setEmailError("");
     setLoading(true);
     try {
       const { data } = await axios.post<ResetResponse>("/api/auth/forgot-password", { email: email.trim() });
@@ -41,7 +43,13 @@ export default function ForgotPasswordPage() {
       startCooldown();
       if (isResend) toast.success("Reset code regenerated!");
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "Failed to send reset code");
+      const status = err.response?.status;
+      const msg: string = err.response?.data?.error || "Failed to send reset code";
+      if (status === 404) {
+        setEmailError(msg);
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -186,11 +194,21 @@ export default function ForgotPasswordPage() {
                   required
                   autoComplete="email"
                   value={email}
-                  onChange={e => setEmail(e.target.value)}
+                  onChange={e => { setEmail(e.target.value); setEmailError(""); }}
                   placeholder="you@example.com"
-                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40 transition"
+                  className={`w-full pl-9 pr-4 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${
+                    emailError
+                      ? "border-red-400 focus:ring-red-400/30 bg-red-500/5"
+                      : "border-[var(--line)] bg-[var(--foreground)] focus:ring-[var(--accent)]/40"
+                  }`}
                 />
               </div>
+              {emailError && (
+                <p className="flex items-center gap-1.5 text-xs text-red-400 mt-1">
+                  <AlertCircle size={12} className="shrink-0" />
+                  {emailError}
+                </p>
+              )}
             </div>
 
             <button
