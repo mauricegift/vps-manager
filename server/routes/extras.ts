@@ -1103,14 +1103,22 @@ router.post('/app-update', async (_req, res) => {
     }
 
     // ── PM2 restart ───────────────────────────────────────────────────────────
-    log('Restarting via PM2…');
-    const pm2Out = await run(
-      `pm2 restart vps-manager --update-env 2>&1 || pm2 restart 0 --update-env 2>&1 || pm2 reload all --update-env 2>&1`,
-      30000
-    );
-    log(pm2Out ? `pm2: ${pm2Out.split('\n').filter(Boolean).slice(0, 3).join(' | ')}` : 'pm2: restarted');
-
+    // IMPORTANT: send the response FIRST, then restart.
+    // If we restart before responding, PM2 kills this process and the client
+    // never receives the HTTP response → ECONNRESET → "update failed" toast
+    // even though the update actually worked.
+    log('Update complete — restarting server in background…');
     res.json({ success: true, output: lines.join('\n') });
+
+    // Give the response ~800ms to flush to the client, then restart
+    setTimeout(async () => {
+      try {
+        await run(
+          `${nvmPrefix} pm2 restart vps-manager --update-env 2>&1 || pm2 restart 0 --update-env 2>&1 || pm2 reload all --update-env 2>&1`,
+          30000
+        );
+      } catch { /* process will be dead — that's fine */ }
+    }, 800);
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message || 'Update failed', output: lines.join('\n') });
   } finally {
