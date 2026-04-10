@@ -3,6 +3,8 @@ import { ToastContainer } from "react-toastify";
 import Layout from "@/components/layout/Layout";
 import PublicLayout from "@/components/layout/PublicLayout";
 import ProtectedRoute from "@/components/ui/ProtectedRoute";
+import GuestRoute from "@/components/ui/GuestRoute";
+import SetupRoute from "@/components/ui/SetupRoute";
 
 import Dashboard from "@/pages/Dashboard";
 import PM2Page from "@/pages/PM2";
@@ -44,11 +46,27 @@ export default function App() {
         theme="dark"
       />
       <Routes>
-        {/* ── Auth pages (standalone, no shell) ─────────────── */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        {/* ── Auth pages (standalone, redirect to / if already logged in) ── */}
+        <Route
+          path="/login"
+          element={
+            <GuestRoute>
+              <LoginPage />
+            </GuestRoute>
+          }
+        />
 
-        {/* ── Public pages (public header/footer) ────────────── */}
+        {/* /register: only if setup required (no users yet) OR already logged in */}
+        <Route
+          path="/register"
+          element={
+            <SetupRoute>
+              <RegisterPage />
+            </SetupRoute>
+          }
+        />
+
+        {/* ── Public pages (public header/footer) ──────────────────────── */}
         <Route element={<PublicWrapper />}>
           <Route path="/home" element={<LandingPage />} />
           <Route path="/about" element={<AboutPage />} />
@@ -57,7 +75,7 @@ export default function App() {
           <Route path="/contact" element={<ContactPage />} />
         </Route>
 
-        {/* ── Protected pages (app layout, requires auth) ─────── */}
+        {/* ── Protected pages (app layout, requires auth) ───────────────── */}
         <Route
           element={
             <ProtectedRoute>

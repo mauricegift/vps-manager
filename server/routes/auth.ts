@@ -9,7 +9,7 @@ const router = Router();
 const ACCESS_SECRET = process.env.SESSION_SECRET || 'vpsmanager_access_secret';
 const REFRESH_SECRET = (process.env.SESSION_SECRET || 'vpsmanager_access_secret') + '_refresh';
 const ACCESS_TTL = '1d';
-const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function signAccess(user: { id: number; username: string; email: string }) {
   return jwt.sign(
@@ -23,7 +23,21 @@ function signRefresh(userId: number) {
   return jwt.sign({ id: userId }, REFRESH_SECRET, { expiresIn: '7d' });
 }
 
+// Helper: extract and verify optional bearer token (does not block request)
+function tryGetAuthUser(req: Request): { id: number; username: string; email: string } | null {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return null;
+  try {
+    const payload = jwt.verify(header.slice(7), ACCESS_SECRET) as any;
+    return { id: payload.id, username: payload.username, email: payload.email };
+  } catch {
+    return null;
+  }
+}
+
 // ── POST /api/auth/register ────────────────────────────────────────────────
+// Allowed if: (a) no users exist yet (initial setup), OR
+//             (b) caller has a valid access token (admin creating another user)
 router.post('/register', async (req: Request, res: Response) => {
   const { username, email, password } = req.body;
   if (!username || !email || !password) {
@@ -34,7 +48,18 @@ router.post('/register', async (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
     return;
   }
+
   try {
+    const countRes = await pool.query('SELECT COUNT(*) FROM users');
+    const userCount = parseInt(countRes.rows[0].count);
+    const caller = tryGetAuthUser(req);
+
+    // Reject if users exist AND caller is not authenticated
+    if (userCount > 0 && !caller) {
+      res.status(403).json({ success: false, error: 'Registration is closed. Ask an existing admin to create your account.' });
+      return;
+    }
+
     const exists = await pool.query(
       'SELECT id FROM users WHERE email = $1 OR username = $2',
       [email.toLowerCase(), username.toLowerCase()]
@@ -43,27 +68,38 @@ router.post('/register', async (req: Request, res: Response) => {
       res.status(409).json({ success: false, error: 'Username or email already taken' });
       return;
     }
+
     const hash = await bcrypt.hash(password, 12);
     const result = await pool.query(
       'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, created_at',
       [username.trim(), email.toLowerCase().trim(), hash]
     );
-    const user = result.rows[0];
-    const accessToken = signAccess(user);
-    const refreshToken = signRefresh(user.id);
-    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
-    await pool.query(
-      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, refreshToken, expiresAt]
-    );
-    res.status(201).json({
-      success: true,
-      data: {
-        user: { id: user.id, username: user.username, email: user.email, created_at: user.created_at },
-        accessToken,
-        refreshToken,
-      },
-    });
+    const newUser = result.rows[0];
+
+    // First user (initial setup): issue tokens so they land on dashboard directly
+    // Admin creating another user: just return user info (no tokens for the new user)
+    if (caller) {
+      res.status(201).json({
+        success: true,
+        data: { user: { id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at } },
+      });
+    } else {
+      const accessToken = signAccess(newUser);
+      const refreshToken = signRefresh(newUser.id);
+      const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
+      await pool.query(
+        'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+        [newUser.id, refreshToken, expiresAt]
+      );
+      res.status(201).json({
+        success: true,
+        data: {
+          user: { id: newUser.id, username: newUser.username, email: newUser.email, created_at: newUser.created_at },
+          accessToken,
+          refreshToken,
+        },
+      });
+    }
   } catch (e: any) {
     console.error('[auth] register error:', e.message);
     res.status(500).json({ success: false, error: 'Registration failed' });
@@ -78,10 +114,7 @@ router.post('/login', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const result = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
-      [email.toLowerCase().trim()]
-    );
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase().trim()]);
     const user = result.rows[0];
     if (!user) {
       res.status(401).json({ success: false, error: 'Invalid email or password' });
@@ -136,7 +169,6 @@ router.post('/refresh', async (req: Request, res: Response) => {
       res.status(401).json({ success: false, error: 'User not found' });
       return;
     }
-    // Rotate: delete old, issue new
     await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshToken]);
     const newAccessToken = signAccess(user);
     const newRefreshToken = signRefresh(user.id);
@@ -178,6 +210,31 @@ router.get('/setup-required', async (_req: Request, res: Response) => {
     res.json({ success: true, data: { required: parseInt(r.rows[0].count) === 0 } });
   } catch {
     res.json({ success: true, data: { required: true } });
+  }
+});
+
+// ── GET /api/auth/users ─── list all users (requires auth) ────────────────
+router.get('/users', requireAuth, async (_req: AuthRequest, res: Response) => {
+  try {
+    const r = await pool.query('SELECT id, username, email, created_at FROM users ORDER BY id');
+    res.json({ success: true, data: { users: r.rows } });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to fetch users' });
+  }
+});
+
+// ── DELETE /api/auth/users/:id ─── delete a user (requires auth) ──────────
+router.delete('/users/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  const targetId = parseInt(req.params.id);
+  if (targetId === req.user!.id) {
+    res.status(400).json({ success: false, error: 'You cannot delete your own account' });
+    return;
+  }
+  try {
+    await pool.query('DELETE FROM users WHERE id = $1', [targetId]);
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to delete user' });
   }
 });
 

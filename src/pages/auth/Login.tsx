@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Activity, Mail, Lock, Eye, EyeOff, LogIn } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "react-toastify";
+import axios from "axios";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -13,6 +14,13 @@ export default function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
+
+  useEffect(() => {
+    axios.get("/api/auth/setup-required")
+      .then(({ data }) => setSetupRequired(data.data?.required ?? false))
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,6 +57,7 @@ export default function LoginPage() {
                 <input
                   type="email"
                   required
+                  autoComplete="email"
                   value={form.email}
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   placeholder="you@example.com"
@@ -64,6 +73,7 @@ export default function LoginPage() {
                 <input
                   type={showPw ? "text" : "password"}
                   required
+                  autoComplete="current-password"
                   value={form.password}
                   onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                   placeholder="••••••••"
@@ -85,13 +95,18 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-sm text-[var(--muted)] mt-5">
-          Don't have an account?{" "}
-          <Link to="/register" className="text-[var(--accent)] font-medium hover:underline">Create one</Link>
-        </p>
+        {/* Show "Create account" only on first-time setup (no users yet) */}
+        {setupRequired && (
+          <p className="text-center text-sm text-[var(--muted)] mt-5">
+            First time?{" "}
+            <Link to="/register" className="text-[var(--accent)] font-medium hover:underline">
+              Create your admin account
+            </Link>
+          </p>
+        )}
 
         <div className="flex justify-center gap-4 mt-6 text-xs text-[var(--muted)]">
-          <Link to="/" className="hover:text-[var(--main)] transition-colors">Home</Link>
+          <Link to="/home" className="hover:text-[var(--main)] transition-colors">Home</Link>
           <Link to="/about" className="hover:text-[var(--main)] transition-colors">About</Link>
           <Link to="/privacy" className="hover:text-[var(--main)] transition-colors">Privacy</Link>
           <Link to="/terms" className="hover:text-[var(--main)] transition-colors">Terms</Link>
