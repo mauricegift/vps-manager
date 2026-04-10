@@ -910,8 +910,8 @@ echo "ALREADY=$ALREADY"
     const fixScript = `
 case "${type}" in
   postgresql)
-    # Check if already bound to 0.0.0.0 — skip restart if so (avoids killing VPS Manager's own DB connection)
-    ALREADY_BOUND=$(ss -tlnp 2>/dev/null | grep ':5432 ' | grep -cE '\\*:|0\\.0\\.0\\.0:' || echo 0)
+    # Check if already bound to 0.0.0.0 — only check the LOCAL address column (awk $4), not peer column
+    ALREADY_BOUND=$(ss -tlnp 2>/dev/null | awk 'NR>1 && ($4=="0.0.0.0:5432" || $4=="*:5432")' | wc -l || echo 0)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
       sed -i -E "s/^#?[[:space:]]*listen_addresses.*/listen_addresses = '*'/" "$CONF"
@@ -1027,8 +1027,8 @@ case "${type}" in
   postgresql)
     CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
     if [ -n "$CONF" ]; then
-      # Only restart if currently open — avoids killing VPS Manager's own DB connection unnecessarily
-      CURRENTLY_OPEN=$(ss -tlnp 2>/dev/null | grep ':5432 ' | grep -cE '\\*:|0\\.0\\.0\\.0:' || echo 0)
+      # Only restart if currently open — check LOCAL address column only (not peer column)
+      CURRENTLY_OPEN=$(ss -tlnp 2>/dev/null | awk 'NR>1 && ($4=="0.0.0.0:5432" || $4=="*:5432")' | wc -l || echo 0)
       sed -i -E "s/^listen_addresses.*/listen_addresses = 'localhost'/" "$CONF"
       HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
       [ -n "$HBA" ] && sed -i "/^host.*all.*all.*0\\.0\\.0\\.0\\/0/d" "$HBA"
