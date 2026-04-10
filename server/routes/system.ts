@@ -82,4 +82,17 @@ router.get('/', async (_req, res) => {
   }
 });
 
+router.get('/homedir', async (_req, res) => {
+  try {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFileAsync = promisify(execFile);
+    const username = os.userInfo().username;
+    const home = os.homedir();
+    res.json({ success: true, data: { home, username } });
+  } catch (e: any) {
+    res.json({ success: true, data: { home: os.homedir(), username: os.userInfo().username } });
+  }
+});
+
 export default router;
