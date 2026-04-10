@@ -10,6 +10,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    outDir: 'dist/public',
+    emptyOutDir: true,
+  },
   server: {
     port: 5000,
     host: true,

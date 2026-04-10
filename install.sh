@@ -34,7 +34,6 @@ fi
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/vps-manager}"
 APP_PORT="${APP_PORT:-5756}"
-FRONTEND_PORT="${FRONTEND_PORT:-5758}"
 APP_NAME="vps-manager"
 
 # ── Step 1: System packages ───────────────────────────────────────────────────
@@ -157,6 +156,11 @@ log "App directory: $APP_DIR"
 # ── Step 5: Install dependencies ─────────────────────────────────────────────
 step "Installing dependencies"
 npm install --quiet
+
+# ── Step 5c: Build frontend ──────────────────────────────────────────────────
+step "Building frontend (React → dist/public)"
+npm run build
+log "Frontend built successfully"
 log "Dependencies installed"
 
 # ── Step 5b: PostgreSQL setup ───────────────────────────────────────────────
@@ -204,7 +208,7 @@ fi
 step "Starting application with PM2"
 pm2 delete "$APP_NAME" 2>/dev/null || true
 cd "$APP_DIR"
-pm2 start npm --name "$APP_NAME" -- run dev:prod
+pm2 start npm --name "$APP_NAME" -- run start
 PM2_STARTUP_CMD=$(pm2 startup 2>/dev/null | grep -E '^\s*sudo|^\s*env' | head -1 || true)
 if [[ -n "$PM2_STARTUP_CMD" ]]; then
   if [[ $EUID -eq 0 ]]; then
@@ -269,7 +273,7 @@ server {
   }
 
   location / {
-    proxy_pass         http://127.0.0.1:FRONTEND_PORT_PLACEHOLDER;
+    proxy_pass         http://127.0.0.1:APP_PORT_PLACEHOLDER;
     proxy_http_version 1.1;
     proxy_set_header   Upgrade $http_upgrade;
     proxy_set_header   Connection $connection_upgrade;
@@ -280,7 +284,7 @@ server {
 NGINXEOF
 
 # Replace port placeholders with actual values
-$SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g; s/FRONTEND_PORT_PLACEHOLDER/$FRONTEND_PORT/g" "$NGINX_CONF"
+$SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g" "$NGINX_CONF"
 
 $SUDO ln -sf "$NGINX_CONF" "$NGINX_LINK"
 
@@ -301,8 +305,6 @@ if [[ -z "${DOMAIN:-}" ]]; then
   log "No domain provided — skipping SSL (app accessible via IP on port 80)"
   # Open the frontend port directly so the app is reachable without a domain
   if command -v ufw &>/dev/null; then
-    $SUDO ufw allow "$FRONTEND_PORT"/tcp >/dev/null 2>&1 || true
-    log "Opened port $FRONTEND_PORT in UFW — direct frontend access: http://$SERVER_IP:$FRONTEND_PORT"
   fi
 else
   DNS_TIMEOUT=300
@@ -407,7 +409,7 @@ server {
   }
 
   location / {
-    proxy_pass         http://127.0.0.1:FRONTEND_PORT_PLACEHOLDER;
+    proxy_pass         http://127.0.0.1:APP_PORT_PLACEHOLDER;
     proxy_http_version 1.1;
     proxy_set_header   Upgrade \$http_upgrade;
     proxy_set_header   Connection \$connection_upgrade;
@@ -418,7 +420,7 @@ server {
 SSLEOF
 
       # Substitute port placeholders in the SSL server block too
-      $SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g; s/FRONTEND_PORT_PLACEHOLDER/$FRONTEND_PORT/g" "$NGINX_CONF"
+      $SUDO sed -i "s/APP_PORT_PLACEHOLDER/$APP_PORT/g" "$NGINX_CONF"
 
       # Add HTTP → HTTPS redirect to the port-80 block
       $SUDO sed -i "/listen 80;/{n; /server_name $DOMAIN;/{ n; a\  return 301 https://\$host\$request_uri;}}}" "$NGINX_CONF" 2>/dev/null || true
@@ -449,7 +451,7 @@ echo -e "${BOLD}${GREEN}     VPS Manager is now running!          ${RESET}"
 echo -e "${BOLD}${GREEN}══════════════════════════════════════════${RESET}"
 echo ""
 echo -e "  ${BOLD}Access URL:${RESET}      http://${SERVER_IP}  (via Nginx on port 80)"
-echo -e "  ${BOLD}Direct URL:${RESET}      http://${SERVER_IP}:${FRONTEND_PORT}  (Vite)"
+echo -e "  ${BOLD}Direct URL:${RESET}      http://${SERVER_IP}:${APP_PORT}  "
 echo -e "  ${BOLD}PM2 name:${RESET}        $APP_NAME"
 echo -e "  ${BOLD}Install dir:${RESET}     $APP_DIR"
 echo ""

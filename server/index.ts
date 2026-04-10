@@ -63,7 +63,7 @@ const buildAllowedOrigins = (): string[] => {
   }
   return [
     `http://${SERVER_IP}`,       // via nginx port 80
-    `http://${SERVER_IP}:5758`,  // direct Vite port (production VPS)
+    `http://${SERVER_IP}:5756`,  // direct backend port (production VPS)
   ];
 };
 const ALLOWED_ORIGINS = buildAllowedOrigins();
@@ -129,6 +129,18 @@ app.use('/api/nginx', requireAuth, nginxRouter);
 app.use('/api/github', requireAuth, githubRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// ── Serve built frontend in production ──────────────────────────────────────
+// In dev (Replit) the Vite dev server handles the frontend.
+// In production the installer runs `npm run build` which puts the React app
+// into dist/public/; Express serves it directly — no separate Vite process.
+if (!IS_DEV) {
+  const frontendDist = path.join(__dirname, '../dist/public');
+  app.use(express.static(frontendDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // ── WebSocket Terminal ──────────────────────────────────────────────────────
 io.on('connection', async (socket) => {

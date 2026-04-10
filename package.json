@@ -5,13 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client:delayed\"",
-    "dev:prod": "concurrently \"npm run server\" \"bash -c 'until curl -sf http://localhost:5756/api/health > /dev/null 2>&1; do sleep 0.4; done && npx vite --port 5758 --host'\"",
     "client": "vite --port 5000",
     "client:delayed": "bash -c 'until curl -sf http://localhost:5756/api/health > /dev/null 2>&1; do sleep 0.4; done && npx vite --port 5000'",
     "server": "tsx watch server/index.ts",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "start": "node dist/server/index.js",
+    "build": "vite build",
+    "start": "tsx server/index.ts",
     "setup": "bash install.sh"
   },
   "dependencies": {
