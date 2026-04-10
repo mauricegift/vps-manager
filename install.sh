@@ -329,13 +329,20 @@ else
   log "Polling every ${DNS_INTERVAL}s (timeout ${DNS_TIMEOUT}s) — please wait..."
 
   while [[ $DNS_WAITED -lt $DNS_TIMEOUT ]]; do
-    DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || true)
-    if [[ "$DOMAIN_IP" == "$SERVER_IP" ]]; then
+    # Collect ALL A records for the domain (domain may have multiple)
+    DOMAIN_IPS=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' || true)
+    if echo "$DOMAIN_IPS" | grep -qxF "$SERVER_IP"; then
       log "DNS OK: $DOMAIN → $SERVER_IP ✓"
       DNS_OK=true
+      # Warn if extra A records exist — Let's Encrypt validates ALL of them
+      EXTRA_IPS=$(echo "$DOMAIN_IPS" | grep -vxF "$SERVER_IP" || true)
+      if [[ -n "$EXTRA_IPS" ]]; then
+        warn "Domain also resolves to: $EXTRA_IPS"
+        warn "Let's Encrypt validates ALL A records. Remove extra records from DNS or SSL will fail."
+      fi
       break
-    elif [[ -n "$DOMAIN_IP" ]]; then
-      printf "${YELLOW}[!]${RESET}  DNS mismatch — $DOMAIN → $DOMAIN_IP (want $SERVER_IP)  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
+    elif [[ -n "$DOMAIN_IPS" ]]; then
+      printf "${YELLOW}[!]${RESET}  DNS mismatch — $DOMAIN → $(echo $DOMAIN_IPS | tr '\n' ' ')(want $SERVER_IP)  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
     else
       printf "${YELLOW}[!]${RESET}  DNS not propagated yet for $DOMAIN  [${DNS_WAITED}s / ${DNS_TIMEOUT}s]\r"
     fi
@@ -345,41 +352,54 @@ else
   echo ""
 
   if [[ "$DNS_OK" == false ]]; then
-    DOMAIN_IP=$(dig +short "$DOMAIN" A 2>/dev/null | grep -E '^[0-9]+\.' | tail -1 || echo "unresolved")
     warn "DNS did not resolve within ${DNS_TIMEOUT}s."
-    warn "Current:  $DOMAIN → $DOMAIN_IP"
     warn "Expected: $DOMAIN → $SERVER_IP"
-    warn "Re-run after DNS propagates: sudo certbot --nginx -d $DOMAIN"
+    warn "Re-run after DNS propagates: sudo certbot certonly --webroot -w /var/www/html -d $DOMAIN"
   else
     read -rp "Your email for Let's Encrypt notifications: " SSL_EMAIL </dev/tty
     SSL_EMAIL="${SSL_EMAIL:-admin@$DOMAIN}"
 
-    # Install certbot with webroot plugin (not nginx plugin) for reliable challenges
+    # Install certbot if missing
     if ! command -v certbot &>/dev/null; then
       warn "Installing certbot..."
       $SUDO apt-get install -y -qq certbot 2>/dev/null
     fi
 
-    # Create webroot so certbot can serve the ACME challenge file from disk
+    # Create webroot so certbot can place the ACME challenge file
     $SUDO mkdir -p /var/www/html/.well-known/acme-challenge
+    $SUDO chmod -R 755 /var/www/html
 
-    # Reload nginx now so the ACME location block is live before certbot runs
+    # Reload nginx so the ACME location block is live before certbot runs
     $SUDO nginx -t 2>/dev/null && $SUDO systemctl reload nginx
 
-    # If a cert for this domain already exists (e.g. from a failed previous run),
-    # delete it first so certbot can issue a clean new certificate
+    # ── Self-test: verify nginx is serving the ACME path before certbot ──────
+    _TEST_TOKEN="installer-selftest-$$"
+    echo "OK" | $SUDO tee "/var/www/html/.well-known/acme-challenge/${_TEST_TOKEN}" > /dev/null
+    _HTTP_CODE=$(curl -4 -s --max-time 8 -o /dev/null -w "%{http_code}" \
+      "http://${DOMAIN}/.well-known/acme-challenge/${_TEST_TOKEN}" 2>/dev/null || echo "0")
+    $SUDO rm -f "/var/www/html/.well-known/acme-challenge/${_TEST_TOKEN}"
+    if [[ "$_HTTP_CODE" == "200" ]]; then
+      log "ACME path self-test OK (HTTP 200) — nginx is serving challenges correctly"
+    else
+      warn "ACME path self-test returned HTTP ${_HTTP_CODE} (expected 200)"
+      warn "Nginx may not be serving /.well-known/acme-challenge/ correctly."
+      warn "Certbot will likely fail. Check: curl http://${DOMAIN}/.well-known/acme-challenge/test"
+    fi
+
+    # Remove stale cert so certbot can issue a clean one
     if $SUDO certbot certificates 2>/dev/null | grep -q "Domains:.*$DOMAIN"; then
-      warn "Existing cert found for $DOMAIN — revoking and deleting before reissue..."
+      warn "Existing cert found — removing before reissue..."
       $SUDO certbot revoke --cert-name "$DOMAIN" --non-interactive 2>/dev/null || true
       $SUDO certbot delete  --cert-name "$DOMAIN" --non-interactive 2>/dev/null || true
       log "Old certificate removed"
     fi
 
-    # Issue the certificate using the webroot authenticator
+    # Issue certificate via webroot (does NOT modify nginx config)
     if $SUDO certbot certonly --webroot -w /var/www/html \
         -d "$DOMAIN" \
         --email "$SSL_EMAIL" \
         --agree-tos --non-interactive; then
+
 
       log "SSL certificate issued for $DOMAIN!"
 
