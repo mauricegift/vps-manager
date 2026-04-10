@@ -1,0 +1,28 @@
+title: VPS Manager
+description: >-
+  A modern, self-hosted web control panel for managing your Linux VPS —
+  PM2, Docker, Nginx, databases, files and a full interactive terminal,
+  all from one clean dashboard.
+
+url: "https://mauricegift.github.io"
+baseurl: "/vps-manager"
+
+remote_theme: pages-themes/cayman@v0.2.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+
+author: Gifted Tech
+github_username: mauricegift
+show_downloads: true
+
+repository: mauricegift/vps-manager
+
+markdown: kramdown
+highlighter: rouge
+
+kramdown:
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    block:
+      line_numbers: false
