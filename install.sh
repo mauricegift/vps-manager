@@ -41,7 +41,7 @@ APP_NAME="vps-manager"
 step "Checking system packages"
 $SUDO apt-get update -qq 2>/dev/null
 
-for pkg in git curl unzip zip build-essential nginx sshpass dnsutils; do
+for pkg in git curl unzip zip build-essential nginx sshpass dnsutils postgresql postgresql-contrib; do
   if ! dpkg -s "$pkg" &>/dev/null; then
     warn "$pkg not found — installing..."
     $SUDO apt-get install -y -qq "$pkg" 2>/dev/null
@@ -159,12 +159,29 @@ step "Installing dependencies"
 npm install --quiet
 log "Dependencies installed"
 
+# ── Step 5b: PostgreSQL setup ───────────────────────────────────────────────
+step "Setting up PostgreSQL database"
+$SUDO systemctl enable postgresql 2>/dev/null || true
+$SUDO systemctl start  postgresql 2>/dev/null || true
+# Wait up to 10s for postgres to be ready
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  $SUDO -u postgres psql -c "SELECT 1;" &>/dev/null && break
+  sleep 1
+done
+PG_PASS=$(openssl rand -hex 16)
+$SUDO -u postgres psql -c "CREATE USER vpsmanager WITH PASSWORD '$PG_PASS';" 2>/dev/null || \
+  $SUDO -u postgres psql -c "ALTER  USER vpsmanager WITH PASSWORD '$PG_PASS';"
+$SUDO -u postgres psql -c "CREATE DATABASE vpsmanager OWNER vpsmanager;" 2>/dev/null || true
+$SUDO -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpsmanager TO vpsmanager;" 2>/dev/null || true
+log "PostgreSQL ready (user: vpsmanager)"
+
+
 # ── Step 6: Environment setup ────────────────────────────────────────────────
 step "Configuring environment"
 ENV_FILE="$APP_DIR/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
   SESSION_SECRET=$(openssl rand -hex 32)
-  printf 'PORT=%s\nNODE_ENV=production\nSESSION_SECRET=%s\n' "$APP_PORT" "$SESSION_SECRET" > "$ENV_FILE"
+  printf 'PORT=%s\nSESSION_SECRET=%s\nPGHOST=localhost\nPGUSER=vpsmanager\nPGPASSWORD=%s\nPGDATABASE=vpsmanager\n' "$APP_PORT" "$SESSION_SECRET" "$PG_PASS" > "$ENV_FILE"
   log "Created .env with auto-generated session secret"
 else
   log ".env already exists — skipping"
@@ -187,7 +204,7 @@ fi
 step "Starting application with PM2"
 pm2 delete "$APP_NAME" 2>/dev/null || true
 cd "$APP_DIR"
-pm2 start npm --name "$APP_NAME" -- run dev
+pm2 start npm --name "$APP_NAME" -- run dev:prod
 PM2_STARTUP_CMD=$(pm2 startup 2>/dev/null | grep -E '^\s*sudo|^\s*env' | head -1 || true)
 if [[ -n "$PM2_STARTUP_CMD" ]]; then
   if [[ $EUID -eq 0 ]]; then
