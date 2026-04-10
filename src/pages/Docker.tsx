@@ -70,6 +70,11 @@ export default function DockerPage() {
   // Compose logs
   const [composeLogs, setComposeLogs] = useState<{ name: string; content: string } | null>(null);
 
+  // Run image
+  const [runImageModal, setRunImageModal] = useState<{ image: string; tag: string } | null>(null);
+  const [runContainerName, setRunContainerName] = useState("");
+  const [runContainerPort, setRunContainerPort] = useState("");
+
   // Dockerfile build
   const [buildModal, setBuildModal] = useState(false);
   const [buildName, setBuildName] = useState("");
@@ -169,6 +174,20 @@ export default function DockerPage() {
       setNewComposeDir("/root/web/my-project");
     },
     onError: (e: any) => toast.error(e.response?.data?.error || "Failed to create compose project"),
+  });
+
+  const runImageMutation = useMutation({
+    mutationFn: (opts: { image: string; name?: string; port?: string }) =>
+      api.post("/docker/images/run", opts),
+    onSuccess: (_, opts) => {
+      toast.success(`Container started from ${opts.image}`);
+      qc.invalidateQueries({ queryKey: ["docker-containers"] });
+      qc.invalidateQueries({ queryKey: ["docker-images"] });
+      setRunImageModal(null);
+      setRunContainerName("");
+      setRunContainerPort("");
+    },
+    onError: (e: any) => toast.error(e.response?.data?.error || "Failed to run container"),
   });
 
   const buildMutation = useMutation({
@@ -465,7 +484,22 @@ export default function DockerPage() {
                               <td className="font-mono text-xs text-[var(--muted)]">{img.Id.replace("sha256:", "").slice(0, 12)}</td>
                               <td className="text-sm">{fmtSize(img.Size)}</td>
                               <td>
-                                <button onClick={() => setConfirm({ action: "delete-image", id: img.Id, name: img.RepoTags?.[0] || img.Id.slice(0, 12) })} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors"><Trash2 size={14} /></button>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => {
+                                      const imgName = img.RepoTags?.[0]?.split(":")[0] || "container";
+                                      const safeName = imgName.replace(/[^a-zA-Z0-9_.-]/g, "_").replace(/^_+|_+$/g, "").slice(0, 64);
+                                      setRunContainerName(safeName);
+                                      setRunContainerPort("");
+                                      setRunImageModal({ image: img.RepoTags?.[0] || img.Id, tag: tag || "latest" });
+                                    }}
+                                    className="p-1.5 rounded-lg hover:bg-green-500/10 text-green-400 transition-colors"
+                                    title="Run container from this image"
+                                  >
+                                    <Play size={14} />
+                                  </button>
+                                  <button onClick={() => setConfirm({ action: "delete-image", id: img.Id, name: img.RepoTags?.[0] || img.Id.slice(0, 12) })} className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete image"><Trash2 size={14} /></button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -555,6 +589,32 @@ export default function DockerPage() {
         <pre className="code-block text-[11px] max-h-96 overflow-y-auto whitespace-pre-wrap break-all">
           {logs?.content || "No logs"}
         </pre>
+      </Modal>
+
+      {/* Run Image */}
+      <Modal isOpen={!!runImageModal} onClose={() => { setRunImageModal(null); setRunContainerName(""); setRunContainerPort(""); }} title="Run Container from Image">
+        <form onSubmit={(e) => { e.preventDefault(); if (!runImageModal) return; runImageMutation.mutate({ image: runImageModal.image, name: runContainerName || undefined, port: runContainerPort || undefined }); }} className="space-y-4">
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">Image</label>
+            <div className="px-3 py-2 text-sm rounded-xl border border-[var(--line)] bg-[var(--foreground)] font-mono text-[var(--muted)]">
+              {runImageModal?.image}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">Container Name</label>
+            <input value={runContainerName} onChange={e => setRunContainerName(e.target.value)} placeholder="my-container" className={inpCls + " font-mono"} />
+          </div>
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">Port Mapping <span className="font-normal text-[var(--muted)]">(optional, e.g. 8080:80)</span></label>
+            <input value={runContainerPort} onChange={e => setRunContainerPort(e.target.value)} placeholder="8080:80" className={inpCls + " font-mono"} />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={() => { setRunImageModal(null); setRunContainerName(""); setRunContainerPort(""); }} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
+            <button type="submit" disabled={runImageMutation.isPending} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-green-600 text-white hover:opacity-90 disabled:opacity-50">
+              <Play size={14} /> {runImageMutation.isPending ? "Starting..." : "Run Container"}
+            </button>
+          </div>
+        </form>
       </Modal>
 
       {/* Pull */}
