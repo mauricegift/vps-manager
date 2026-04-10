@@ -12,18 +12,106 @@ A modern, self-hosted web control panel for managing your Linux VPS — PM2 proc
 
 ## Features
 
-| Module | What you can do |
-|---|---|
-| **Dashboard** | Real-time CPU, RAM, disk and uptime stats |
-| **PM2** | Start / stop / restart processes, view logs, deploy from GitHub |
-| **Docker** | Manage containers, images and volumes |
-| **Databases** | Browse and query PostgreSQL, MySQL, SQLite |
-| **File Manager** | Upload, rename, edit (syntax-highlighted), download, compress files |
-| **Terminal** | Full interactive bash shell — local and SSH to any remote server |
-| **Nginx** | Create / edit reverse-proxy configs, manage SSL via Let's Encrypt |
-| **Extras** | Cron jobs, firewall rules, env editor, system tools |
-| **Servers** | Save and manage unlimited remote VPS connections |
-| **Settings** | SMTP email, user management, account settings |
+### Dashboard
+- Real-time CPU, RAM, disk usage and uptime
+- System info: OS, kernel version, hostname, public IP, load average, process count
+- Live memory breakdown and swap stats
+- Quick-links to all modules
+
+### PM2 — Process Manager
+- List all processes with status, CPU %, memory and uptime
+- Start, stop, restart, reload and delete processes
+- View live logs (stdout and stderr combined)
+- Launch a new process from a file path **or** a command (`npm start`, `bun run dev`, `python3 app.py`, etc.)
+- Clone and deploy directly from a **GitHub repository** — auto-installs deps, auto-starts with the correct pm2 command
+- Configure **environment variables** and **PORT** at launch time (written to `.env` in the working directory)
+- Choose package manager (npm / bun) and optionally auto-run `install` before start
+- Built-in **mini terminal** tab for quick commands without leaving the PM2 page
+- **Self-update**: pull the latest VPS Manager release from GitHub, rebuild and restart in one click
+
+### Docker
+- List containers with status, image, ports and resource usage
+- Start, stop, restart, remove containers
+- Browse **images** — pull new ones, remove unused
+- **Docker Compose** — view and manage compose files
+
+### Databases
+- Visual browser for **PostgreSQL**, **MySQL** and **SQLite**
+- Browse databases → tables → paginated row viewer with search
+- Run arbitrary **SQL queries** with results displayed in a table
+- Create and drop databases and tables
+- **Connection string generator** — one-click copy of PostgreSQL URL, psql CLI, MySQL URL, MySQL CLI, MongoDB URI and mongosh CLI
+- Per-database username context (saves credentials per database)
+
+### File Manager
+- Browse the full file system with directory navigation
+- **Upload files** (button or drag-and-drop), up to 200 MB per file
+- **Download** individual files or entire folders as a ZIP archive
+- **Create** new files (with optional content) and new folders
+- **Edit** any text/code file with a **syntax-highlighted editor** (auto-detects language)
+- **Rename**, **delete**, cut, copy and paste files and folders
+- Paste a **copy** to the same directory → auto-generates a unique name (`file-1.txt`, `folder-1`, …) and lets you rename before confirming
+- **Import from GitHub** — clone any public or private repo directly into a chosen path, with optional auto-install of dependencies
+- Full **remote file management** over SSH when a remote server is active
+
+### Terminal
+- Full **interactive bash shell** (local server)
+- **SSH terminal** for any saved remote server — opens a real PTY session
+- Colour output: `ls`, `grep`, `diff` and `ll` are colorized automatically
+- Keyboard shortcuts: `Ctrl+C`, `Ctrl+D`, `Ctrl+Z`, `ESC`, `Tab` completion, `↑ / ↓` history
+- Adjustable **font size**
+- **User context switching** — when you switch to a system user in Extras, the terminal automatically reconnects as that user (`su - username`) so the shell, home directory and PATH are all correct
+
+### Nginx
+- List all nginx **config files** — view, edit and save with syntax highlighting
+- **Create new** site configs with a built-in template (reverse proxy, static, PHP)
+- **Test** (`nginx -t`) and **reload** nginx after every save
+- **SSL certificate** management — list Let's Encrypt certs, issue new ones (certbot webroot), view expiry dates
+
+### Extras — System Management
+
+**System tab**
+- **System updates**: `apt update` and `apt upgrade` with live output
+- **Self-update VPS Manager** from GitHub (downloads zip, rsyncs, rebuilds, restarts)
+- **Hostname**: view and change the server hostname
+- **Swap**: create, resize or remove swap space
+- **MOTD**: set a custom message-of-the-day shown at login
+
+**Software tab** — one-click install, update and uninstall for:
+- *Runtimes*: Node.js (NVM), npm, Bun, Deno, PM2, pnpm, Yarn, Python, Go, Rust
+- *Servers & SSL*: Nginx, Apache, Certbot
+- *Dev Tools*: Git, curl, wget, rsync, Vim, Neovim
+- *System Tools*: htop, tmux, screen, UFW, Fail2ban, jq, unzip, Python venv, FFmpeg
+- *Browsers*: Chromium/Chrome (headless)
+- *Cloud*: Cloudflare Wrangler, Cloudflared tunnel, Tailscale VPN
+
+**Users tab** — full Linux user management
+- List all system users with UID, GID, home dir and shell
+- **Create users**: regular, system or sudo, with custom home dir and shell
+- Set or change **passwords**
+- Grant or revoke **sudo** access
+- **Delete users** (optionally remove their home directory)
+- **Switch active user context** — sets the working user for FileManager, Terminal and PM2 defaults across the entire UI
+
+### Servers — Remote VPS Management
+- Save **unlimited** remote server connections (IP, port, username, password or SSH key)
+- **Connect** to any saved server — all pages (PM2, Docker, Files, Terminal, Databases, Nginx, Extras) transparently proxy operations over SSH
+- View remote system info on connect
+- **Disconnect** to return to local mode instantly
+
+### Settings
+- **SMTP email** configuration — supports Resend and Brevo; save via UI (takes priority over `.env`)
+- **Send test email** to verify settings
+- **User management** — create additional login accounts, list and delete users
+- **Account settings** — change your own username and password
+
+### Authentication
+- First-visit registration for the admin account (permanently disabled once created)
+- Login with **email address or username** — inline per-field errors (wrong user vs wrong password)
+- **JWT** access tokens (24 h) with silent auto-refresh via rotating refresh tokens (7 days, stored in PostgreSQL)
+- **Forgot password** — sends a 6-digit code (valid 10 min); falls back to PM2 log if SMTP is not configured
+- Logout immediately invalidates the refresh token server-side
+- WebSocket terminal connections also verify the JWT before accepting
 
 ---
 
