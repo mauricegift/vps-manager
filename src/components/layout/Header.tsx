@@ -3,14 +3,13 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Server, Container, Database,
   FolderOpen, Terminal, Menu, Activity, Globe, Sun, Moon,
-  Unplug, Wifi, Sparkles, Shield, LogOut, User, UserPlus,
-  Users, Trash2, X, Eye, EyeOff, ChevronDown, Settings
+  Unplug, Wifi, Sparkles, Shield, LogOut, User,
+  Users, ChevronDown, Settings
 } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "react-toastify";
-import api from "@/lib/api";
 
 const nav = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -24,13 +23,6 @@ const nav = [
   { path: "/servers", label: "Servers", icon: Globe },
 ];
 
-interface UserRecord {
-  id: number;
-  username: string;
-  email: string;
-  created_at: string;
-}
-
 interface Props { onMenuToggle: () => void; menuOpen: boolean; }
 
 export default function Header({ onMenuToggle }: Props) {
@@ -41,7 +33,6 @@ export default function Header({ onMenuToggle }: Props) {
   const navigate = useNavigate();
 
   const [dropOpen, setDropOpen] = useState(false);
-  const [showUsersModal, setShowUsersModal] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -158,13 +149,14 @@ export default function Header({ onMenuToggle }: Props) {
                         <Settings size={13} />
                         Settings
                       </Link>
-                      <button
-                        onClick={() => { setDropOpen(false); setShowUsersModal(true); }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)] transition-colors text-left"
+                      <Link
+                        to="/settings?tab=users"
+                        onClick={() => setDropOpen(false)}
+                        className="flex items-center gap-2.5 px-3 py-2.5 text-xs text-[var(--muted)] hover:text-[var(--main)] hover:bg-[var(--foreground)] transition-colors"
                       >
                         <Users size={13} />
                         Manage Users
-                      </button>
+                      </Link>
                       <button
                         onClick={handleLogout}
                         className="w-full flex items-center gap-2.5 px-3 py-2.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors text-left border-t border-[var(--line)]"
@@ -219,203 +211,6 @@ export default function Header({ onMenuToggle }: Props) {
         )}
       </header>
 
-      {/* Manage Users Modal */}
-      {showUsersModal && (
-        <UsersModal onClose={() => setShowUsersModal(false)} currentUserId={user?.id ?? 0} />
-      )}
     </>
-  );
-}
-
-// ─── Manage Users Modal ────────────────────────────────────────────────────
-function UsersModal({ onClose, currentUserId }: { onClose: () => void; currentUserId: number }) {
-  const [users, setUsers] = useState<UserRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"list" | "create">("list");
-
-  const [uname, setUname] = useState("");
-  const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
-  const [showPass, setShowPass] = useState(false);
-  const [creating, setCreating] = useState(false);
-
-  const fetchUsers = async () => {
-    setLoading(true);
-    try {
-      const { data } = await api.get("/auth/users");
-      if (data.success) setUsers(data.data.users);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchUsers(); }, []);
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!uname.trim() || !email.trim() || !pass) return;
-    setCreating(true);
-    try {
-      const { data } = await api.post("/auth/users", { username: uname.trim(), email: email.trim(), password: pass });
-      if (data.success) {
-        toast.success(`User "${uname}" created`);
-        setUname(""); setEmail(""); setPass("");
-        setTab("list");
-        fetchUsers();
-      } else {
-        toast.error(data.error || "Failed to create user");
-      }
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "Failed to create user");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleDelete = async (u: UserRecord) => {
-    if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
-    try {
-      await api.delete(`/auth/users/${u.id}`);
-      toast.success(`User "${u.username}" deleted`);
-      fetchUsers();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "Failed to delete user");
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[99] flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
-      <div
-        className="w-full max-w-md rounded-2xl border border-[var(--line)] overflow-hidden"
-        style={{ background: "var(--secondary)", boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--line)]">
-          <div className="flex items-center gap-2">
-            <Users size={16} className="text-[var(--accent)]" />
-            <span className="text-sm font-semibold text-[var(--main)]">User Management</span>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--foreground)] text-[var(--muted)] transition-colors">
-            <X size={15} />
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b border-[var(--line)]">
-          {(["list", "create"] as const).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
-                tab === t ? "text-[var(--accent)] border-b-2 border-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--main)]"
-              }`}
-            >
-              {t === "list" ? <><Users size={12} className="inline mr-1.5" />All Users</> : <><UserPlus size={12} className="inline mr-1.5" />Add User</>}
-            </button>
-          ))}
-        </div>
-
-        <div className="p-5">
-          {tab === "list" ? (
-            loading ? (
-              <div className="flex justify-center py-8">
-                <div className="w-6 h-6 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : users.length === 0 ? (
-              <p className="text-center text-xs text-[var(--muted)] py-8">No users found</p>
-            ) : (
-              <div className="space-y-2">
-                {users.map(u => (
-                  <div
-                    key={u.id}
-                    className="flex items-center justify-between p-3 rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className="w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold text-white"
-                        style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}
-                      >
-                        {u.username[0].toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-[var(--main)] flex items-center gap-1.5">
-                          {u.username}
-                          {u.id === currentUserId && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent)]/15 text-[var(--accent)]">you</span>
-                          )}
-                        </p>
-                        <p className="text-[11px] text-[var(--muted)]">{u.email}</p>
-                      </div>
-                    </div>
-                    {u.id !== currentUserId && (
-                      <button
-                        onClick={() => handleDelete(u)}
-                        className="p-1.5 rounded-lg text-[var(--muted)] hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                        title="Delete user"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )
-          ) : (
-            <form onSubmit={handleCreate} className="space-y-3">
-              <div>
-                <label className="block text-xs text-[var(--muted)] mb-1.5">Username</label>
-                <input
-                  value={uname}
-                  onChange={e => setUname(e.target.value)}
-                  placeholder="johndoe"
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-sm text-[var(--main)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-[var(--muted)] mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="john@example.com"
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-sm text-[var(--main)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-[var(--muted)] mb-1.5">Password</label>
-                <div className="relative">
-                  <input
-                    type={showPass ? "text" : "password"}
-                    value={pass}
-                    onChange={e => setPass(e.target.value)}
-                    placeholder="Min. 6 characters"
-                    required
-                    minLength={6}
-                    className="w-full px-3 py-2 pr-10 rounded-xl border border-[var(--line)] bg-[var(--foreground)] text-sm text-[var(--main)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPass(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--main)] transition-colors"
-                  >
-                    {showPass ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={creating}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg, var(--accent), #7c3aed)" }}
-              >
-                {creating ? "Creating..." : "Create User"}
-              </button>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }

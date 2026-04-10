@@ -5,7 +5,7 @@ import {
   Scissors, Copy, Trash2, Eye, ArrowUp, FolderOpen,
   Plus, Upload, FilePlus, FolderPlus, Edit3, Save, X, ClipboardCopy, Code,
   CheckSquare, Square as SquareIcon, ArchiveIcon, Download, Loader2,
-  Github, Key, Eye as EyeIcon, EyeOff, XCircle, PackageOpen
+  Github, Key, Eye as EyeIcon, EyeOff, XCircle, PackageOpen, Pencil
 } from "lucide-react";
 import api from "@/lib/api";
 import type { FileItem } from "@/types";
@@ -83,6 +83,9 @@ export default function FileManagerPage() {
   const [newFileModal, setNewFileModal] = useState(false);
   const [newFileName, setNewFileName] = useState("");
   const [newFileContent, setNewFileContent] = useState("");
+  const [renameModal, setRenameModal] = useState(false);
+  const [renameItem, setRenameItem] = useState<FileItem | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [uploading, setUploading] = useState(false);
   const [folderDlLoading, setFolderDlLoading] = useState<string | null>(null);
   const [fileOpLoading, setFileOpLoading] = useState<string | null>(null);
@@ -172,6 +175,24 @@ export default function FileManagerPage() {
         : api.post("/files/save", { path: p, content }),
     onSuccess: () => { toast.success("File saved"); setIsEditing(false); if (viewContent) setViewContent({ ...viewContent, content: editContent }); },
     onError: () => toast.error("Failed to save file"),
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: ({ src, newName }: { src: string; newName: string }) => {
+      const parentDir = src.substring(0, src.lastIndexOf("/")) || "/";
+      const dest = parentDir === "/" ? `/${newName}` : `${parentDir}/${newName}`;
+      return activeServer
+        ? api.post(`/remote/${activeServer.id}/exec`, { command: `mv ${JSON.stringify(src)} ${JSON.stringify(dest)}` })
+        : api.post("/files/move", { src, dest });
+    },
+    onSuccess: () => {
+      toast.success("Renamed successfully");
+      qc.invalidateQueries({ queryKey: ["files"] });
+      setRenameModal(false);
+      setRenameItem(null);
+      setRenameValue("");
+    },
+    onError: () => toast.error("Rename failed"),
   });
 
   const viewFile = async (item: FileItem, op: "view" | "edit" = "view") => {
@@ -742,6 +763,10 @@ export default function FileManagerPage() {
                               className="p-1.5 rounded-lg hover:bg-blue-500/10 text-blue-400 transition-colors" title="Copy"
                             >{itemActionLoading === `${item.path}:copy` ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}</button>
                             <button
+                              onClick={() => { setRenameItem(item); setRenameValue(item.name); setRenameModal(true); }}
+                              className="p-1.5 rounded-lg hover:bg-cyan-500/10 text-cyan-400 transition-colors" title="Rename"
+                            ><Pencil size={13} /></button>
+                            <button
                               onClick={() => { setItemActionLoading(`${item.path}:del`); setDeleteConfirm(item); setTimeout(() => setItemActionLoading(null), 400); }}
                               className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-400 transition-colors" title="Delete"
                             >{itemActionLoading === `${item.path}:del` ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}</button>
@@ -808,6 +833,38 @@ export default function FileManagerPage() {
             <button type="button" onClick={() => setNewFileModal(false)} className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">Cancel</button>
             <button type="submit" disabled={createFileMutation.isPending} className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
               <FilePlus size={14} />{createFileMutation.isPending ? "Creating..." : "Create File"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Rename modal */}
+      <Modal isOpen={renameModal} onClose={() => { setRenameModal(false); setRenameItem(null); setRenameValue(""); }} title={`Rename ${renameItem?.type === "directory" ? "Folder" : "File"}`}>
+        <form onSubmit={e => { e.preventDefault(); if (renameItem && renameValue.trim() && renameValue.trim() !== renameItem.name) renameMutation.mutate({ src: renameItem.path, newName: renameValue.trim() }); }} className="space-y-4">
+          <div>
+            <label className="text-xs text-[var(--muted)] mb-1.5 block">New name</label>
+            <input
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              className={`${inp} font-mono`}
+              required
+              autoFocus
+              onFocus={e => {
+                const dotIdx = e.target.value.lastIndexOf(".");
+                if (dotIdx > 0) e.target.setSelectionRange(0, dotIdx);
+                else e.target.select();
+              }}
+            />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" onClick={() => { setRenameModal(false); setRenameItem(null); setRenameValue(""); }}
+              className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
+              Cancel
+            </button>
+            <button type="submit" disabled={renameMutation.isPending || !renameValue.trim() || renameValue.trim() === renameItem?.name}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50">
+              <Pencil size={13} />
+              {renameMutation.isPending ? "Renaming…" : "Rename"}
             </button>
           </div>
         </form>
