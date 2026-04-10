@@ -1,9 +1,34 @@
 import { Router } from 'express';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import os from 'os';
 
 const execAsync = promisify(exec);
 const router = Router();
+
+async function run(cmd: string, timeout = 12000): Promise<string> {
+  try {
+    const { stdout, stderr } = await execAsync(cmd, { timeout, env: { ...process.env, HOME: os.homedir() } });
+    return (stdout + stderr).trim();
+  } catch (e: any) { return (e.stdout || e.stderr || e.message || '').trim(); }
+}
+
+async function getLocalServerIp(): Promise<string> {
+  const routeOut = await run(`ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \\K[\\d.]+'`, 5000);
+  if (routeOut && /^\d+\.\d+\.\d+\.\d+$/.test(routeOut.trim())) return routeOut.trim();
+  const hnOut = await run(`hostname -I 2>/dev/null | awk '{print $1}'`, 5000);
+  if (hnOut && /^\d+\.\d+\.\d+\.\d+$/.test(hnOut.trim())) return hnOut.trim();
+  const nets = os.networkInterfaces();
+  for (const iface of Object.values(nets)) {
+    if (!iface) continue;
+    for (const addr of iface) {
+      if (addr.family === 'IPv4' && !addr.internal) return addr.address;
+    }
+  }
+  return '127.0.0.1';
+}
+
+const FW_PORT_MAP: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function checkPort(port: number): Promise<boolean> {
@@ -794,6 +819,168 @@ router.delete('/mongodb/:dbname', async (req, res) => {
   try {
     await mongoshRun(db, 'db.dropDatabase()');
     res.json({ success: true });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Local DB: firewall status ────────────────────────────────────────────────
+router.get('/firewall-status', async (_req, res) => {
+  try {
+    const script = `
+check_port() {
+  local port=$1
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw status 2>/dev/null | grep -q "$port/tcp" && echo 1 || echo 0
+  elif command -v iptables >/dev/null 2>&1; then
+    iptables -C INPUT -p tcp --dport $port -j ACCEPT 2>/dev/null && echo 1 || echo 0
+  else
+    echo 0
+  fi
+}
+echo "postgresql=$(check_port 5432)"
+echo "mysql=$(check_port 3306)"
+echo "mongodb=$(check_port 27017)"
+echo "redis=$(check_port 6379)"
+echo "mariadb=$(check_port 3306)"
+`.trim();
+    const out = await run(`bash -c ${JSON.stringify(script)}`, 15000);
+    const parse = (t: string) => out.includes(`${t}=1`);
+    const serverIp = await getLocalServerIp();
+    res.json({
+      postgresql: parse('postgresql'), mysql: parse('mysql'),
+      mongodb: parse('mongodb'), redis: parse('redis'), mariadb: parse('mariadb'),
+      serverIp,
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Local DB: open external access (UFW + bind 0.0.0.0) ─────────────────────
+router.post('/:type/allow-external', async (req, res) => {
+  try {
+    const { type } = req.params;
+    const port = FW_PORT_MAP[type];
+    if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
+
+    const checkScript = `
+OPENED=0; ALREADY=0
+if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+  if ufw status 2>/dev/null | grep -q "${port}/tcp"; then
+    ALREADY=1; OPENED=1
+  else
+    ufw allow ${port}/tcp comment "VPS Manager: ${type} external" 2>&1; ufw reload 2>/dev/null; OPENED=1
+  fi
+elif command -v firewall-cmd &>/dev/null; then
+  firewall-cmd --permanent --add-port=${port}/tcp 2>&1; firewall-cmd --reload 2>/dev/null; OPENED=1
+elif command -v iptables &>/dev/null; then
+  iptables -C INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null && ALREADY=1 || iptables -I INPUT -p tcp --dport ${port} -j ACCEPT 2>&1; OPENED=1
+fi
+echo "FW_OPENED=$OPENED"
+echo "ALREADY=$ALREADY"
+if ss -tlnp 2>/dev/null | grep -E "\\b${port}\\b" | grep -qE "\\*:|0\\.0\\.0\\.0"; then
+  echo "BIND=all"
+else
+  echo "BIND=local"
+fi
+`.trim();
+    const checkOut = await run(`bash -c ${JSON.stringify(checkScript)}`, 20000);
+    const fwOpened = checkOut.includes('FW_OPENED=1');
+    const alreadyOpen = checkOut.includes('ALREADY=1');
+    const bindAll = checkOut.includes('BIND=all');
+
+    let bindFixed = false;
+    let bindErr = '';
+    if (!bindAll) {
+      const fixScript = `
+case "${type}" in
+  postgresql)
+    CONF=$(find /etc/postgresql -name postgresql.conf 2>/dev/null | head -1)
+    if [ -n "$CONF" ]; then
+      sed -i "s/^[#]*listen_addresses.*/listen_addresses = '*'/" "$CONF"
+      grep -q "listen_addresses" "$CONF" || echo "listen_addresses = '*'" >> "$CONF"
+      systemctl restart postgresql 2>&1 || true
+      echo "BIND_FIXED=1"
+    fi
+    ;;
+  mysql|mariadb)
+    CONF=$(find /etc/mysql -name "*.cnf" 2>/dev/null | xargs grep -l "bind-address" 2>/dev/null | head -1)
+    if [ -n "$CONF" ]; then
+      sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" "$CONF"
+      systemctl restart mysql 2>/dev/null || systemctl restart mariadb 2>/dev/null || true
+      echo "BIND_FIXED=1"
+    fi
+    ;;
+  mongodb)
+    CONF=/etc/mongod.conf
+    if [ -f "$CONF" ]; then
+      if grep -q "bindIp" "$CONF"; then
+        sed -i "s/bindIp:.*/bindIp: 0.0.0.0/" "$CONF"
+      else
+        sed -i '/^net:/a\\  bindIp: 0.0.0.0' "$CONF"
+      fi
+      systemctl restart mongod 2>&1 || true
+      echo "BIND_FIXED=1"
+    fi
+    ;;
+  redis)
+    CONF=$(find /etc/redis -name "*.conf" 2>/dev/null | head -1)
+    if [ -n "$CONF" ]; then
+      sed -i "s/^bind .*/bind 0.0.0.0/" "$CONF"
+      systemctl restart redis-server 2>/dev/null || systemctl restart redis 2>/dev/null || true
+      echo "BIND_FIXED=1"
+    fi
+    ;;
+esac
+`.trim();
+      const fixOut = await run(`bash -c ${JSON.stringify(fixScript)}`, 30000);
+      bindFixed = fixOut.includes('BIND_FIXED=1');
+      if (!bindFixed) bindErr = 'Could not update bind address — you may need to set bind 0.0.0.0 manually.';
+    }
+
+    // Rate-limit: max 20 new connections/min per source IP
+    let rateLimited = false;
+    const rlScript = `
+if command -v iptables &>/dev/null; then
+  iptables -C INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || \
+    iptables -I INPUT 1 -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null
+  iptables -C INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || \
+    iptables -I INPUT 2 -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null
+  echo "RL_OK=1"
+fi
+`.trim();
+    const rlOut = await run(`bash -c ${JSON.stringify(rlScript)}`, 10000);
+    rateLimited = rlOut.includes('RL_OK=1');
+
+    const serverIp = await getLocalServerIp();
+    const warnings: string[] = [];
+    if (type === 'redis') warnings.push('Redis has no per-database auth — ensure requirepass is set via Change Password.');
+    if (type === 'mongodb') warnings.push('Ensure security.authorization is enabled in /etc/mongod.conf.');
+    if (!bindFixed && !bindAll) warnings.push(bindErr || 'Database may still only accept local connections.');
+
+    res.json({ success: true, port, firewallOpened: fwOpened, alreadyOpen, bindAll: bindAll || bindFixed, bindFixed, rateLimited, warnings, serverIp });
+  } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
+});
+
+// ── Local DB: close external access ─────────────────────────────────────────
+router.post('/:type/close-external', async (req, res) => {
+  try {
+    const { type } = req.params;
+    const port = FW_PORT_MAP[type];
+    if (!port) return res.status(400).json({ success: false, error: 'Unknown database type' });
+
+    const script = `
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw delete allow ${port}/tcp 2>&1 || true
+  ufw reload 2>/dev/null || true
+  echo "FW_CLOSED=1"
+elif command -v iptables >/dev/null 2>&1; then
+  iptables -D INPUT -p tcp --dport ${port} -j ACCEPT 2>/dev/null || true
+  echo "FW_CLOSED=1"
+fi
+iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --set --name VPSM_${type} 2>/dev/null || true
+iptables -D INPUT -p tcp --dport ${port} -m state --state NEW -m recent --update --seconds 60 --hitcount 20 --name VPSM_${type} -j DROP 2>/dev/null || true
+echo "DONE"
+`.trim();
+    const out = await run(`bash -c ${JSON.stringify(script)}`, 20000);
+    res.json({ success: true, port, closed: out.includes('FW_CLOSED=1') || out.includes('DONE') });
   } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
 });
 
