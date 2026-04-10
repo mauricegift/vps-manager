@@ -61,6 +61,26 @@ export async function initDB() {
       );
     `);
     console.log('[db] Refresh tokens table ready');
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_codes (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code VARCHAR(6) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('[db] Password reset codes table ready');
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS smtp_settings (
+        key VARCHAR(100) PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('[db] SMTP settings table ready');
   } catch (e: any) {
     console.warn('[db] Could not init DB (PostgreSQL may not be running locally):', e.message);
   }

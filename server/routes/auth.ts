@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
+import { sendMail, tplPasswordReset, tplPasswordChanged } from '../services/email.js';
 
 const router = Router();
 
@@ -250,6 +251,100 @@ router.delete('/users/:id', requireAuth, async (req: AuthRequest, res: Response)
     res.json({ success: true });
   } catch {
     res.status(500).json({ success: false, error: 'Failed to delete user' });
+  }
+});
+
+// ── POST /api/auth/forgot-password ────────────────────────────────────────
+router.post('/forgot-password', async (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email) {
+    res.status(400).json({ success: false, error: 'email is required' });
+    return;
+  }
+  try {
+    const userRes = await pool.query('SELECT id, username, email FROM users WHERE email = $1', [email.toLowerCase().trim()]);
+    // Always respond 200 to avoid user enumeration
+    if (!userRes.rows.length) {
+      res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
+      return;
+    }
+    const user = userRes.rows[0];
+
+    // Delete any existing codes for this user
+    await pool.query('DELETE FROM password_reset_codes WHERE user_id = $1', [user.id]);
+
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await pool.query(
+      'INSERT INTO password_reset_codes (user_id, code, expires_at) VALUES ($1, $2, $3)',
+      [user.id, code, expiresAt]
+    );
+
+    // Send email (non-blocking — don't fail if email is not configured)
+    sendMail({
+      to: user.email,
+      subject: 'VPS Manager — Your password reset code',
+      html: tplPasswordReset(user.username, code),
+      text: `Your VPS Manager password reset code is: ${code}\n\nValid for 10 minutes. If you didn't request this, ignore this email.`,
+    }).catch(e => console.error('[auth] forgot-password email error:', e));
+
+    console.log(`[auth] Reset code for ${user.email}: ${code}`); // fallback log if email not configured
+    res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
+  } catch (e: any) {
+    console.error('[auth] forgot-password error:', e.message);
+    res.status(500).json({ success: false, error: 'Failed to process request' });
+  }
+});
+
+// ── POST /api/auth/reset-password ──────────────────────────────────────────
+router.post('/reset-password', async (req: Request, res: Response) => {
+  const { email, code, password } = req.body;
+  if (!email || !code || !password) {
+    res.status(400).json({ success: false, error: 'email, code and password are required' });
+    return;
+  }
+  if (password.length < 6) {
+    res.status(400).json({ success: false, error: 'Password must be at least 6 characters' });
+    return;
+  }
+  try {
+    const userRes = await pool.query('SELECT id, username, email FROM users WHERE email = $1', [email.toLowerCase().trim()]);
+    if (!userRes.rows.length) {
+      res.status(400).json({ success: false, error: 'Invalid code or email' });
+      return;
+    }
+    const user = userRes.rows[0];
+
+    const codeRes = await pool.query(
+      'SELECT id FROM password_reset_codes WHERE user_id = $1 AND code = $2 AND expires_at > NOW()',
+      [user.id, code.trim()]
+    );
+    if (!codeRes.rows.length) {
+      res.status(400).json({ success: false, error: 'Invalid or expired reset code' });
+      return;
+    }
+
+    // Update password and delete the used code
+    const hash = await bcrypt.hash(password, 12);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, user.id]);
+    await pool.query('DELETE FROM password_reset_codes WHERE user_id = $1', [user.id]);
+    // Invalidate all refresh tokens (force re-login)
+    await pool.query('DELETE FROM refresh_tokens WHERE user_id = $1', [user.id]);
+
+    // Send confirmation email
+    sendMail({
+      to: user.email,
+      subject: 'VPS Manager — Password changed',
+      html: tplPasswordChanged(user.username),
+      text: `Your VPS Manager password has been changed. If you did not make this change, contact your administrator.`,
+    }).catch(e => console.error('[auth] password-changed email error:', e));
+
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (e: any) {
+    console.error('[auth] reset-password error:', e.message);
+    res.status(500).json({ success: false, error: 'Failed to reset password' });
   }
 });
 

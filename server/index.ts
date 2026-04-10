@@ -20,6 +20,7 @@ import extrasRouter from './routes/extras.js';
 import nginxRouter from './routes/nginx.js';
 import githubRouter from './routes/github.js';
 import authRouter from './routes/auth.js';
+import settingsRouter from './routes/settings.js';
 import { requireAuth } from './middleware/auth.js';
 import { initDB } from './db.js';
 import pool from './db.js';
@@ -74,6 +75,7 @@ io.use((socket, next) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/settings', settingsRouter);
 
 app.use('/api/system', requireAuth, systemRouter);
 app.use('/api/pm2', requireAuth, pm2Router);

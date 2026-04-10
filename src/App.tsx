@@ -19,6 +19,9 @@ import NotFoundPage from "@/pages/NotFound";
 
 import LoginPage from "@/pages/auth/Login";
 import RegisterPage from "@/pages/auth/Register";
+import ForgotPasswordPage from "@/pages/auth/ForgotPassword";
+import ResetPasswordPage from "@/pages/auth/ResetPassword";
+import SettingsPage from "@/pages/Settings";
 import LandingPage from "@/pages/public/Landing";
 import AboutPage from "@/pages/public/About";
 import TermsPage from "@/pages/public/Terms";
@@ -77,6 +80,10 @@ export default function App() {
             }
           />
 
+          {/* Auth helpers */}
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+
           {/* Catch-all 404 — any unknown URL */}
           <Route path="*" element={<NotFoundPage />} />
         </Route>
@@ -98,6 +105,7 @@ export default function App() {
           <Route path="/servers" element={<ServersPage />} />
           <Route path="/extras" element={<ExtrasPage />} />
           <Route path="/nginx" element={<NginxPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </>
