@@ -107,8 +107,12 @@ export default function TerminalPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeServer?.id]);
 
+  const bottomRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    outputRef.current?.scrollTo(0, outputRef.current.scrollHeight);
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ block: "nearest" });
+    });
   }, [lines]);
 
   const reconnect = useCallback(() => {
@@ -327,7 +331,7 @@ export default function TerminalPage() {
               </div>
             );
           })}
-          <div style={{ height: 1 }} />
+          <div ref={bottomRef} style={{ height: 1 }} />
         </div>
 
         {/* Mobile control keys */}
