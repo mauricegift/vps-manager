@@ -83,6 +83,7 @@ export default function PM2Page() {
   const [browsePath, setBrowsePath] = useState("/root");
   const [browseItems, setBrowseItems] = useState<{ name: string; type: string; path: string }[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseDots, setBrowseDots] = useState(false);
 
   // GitHub source state
   const [ghSource, setGhSource] = useState<"fs" | "github">("fs");
@@ -1260,7 +1261,7 @@ export default function PM2Page() {
           </div>
 
           {/* Actions */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {browsePath !== "/" && (
               <button type="button" onClick={browseParent}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--line)] text-sm hover:bg-[var(--foreground)] transition-colors">
@@ -1271,6 +1272,16 @@ export default function PM2Page() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--accent)]/40 text-[var(--accent)] text-sm hover:bg-[var(--accent)]/5 transition-colors">
               <Check size={13} /> Use <span className="font-mono text-xs truncate max-w-[120px]">{browsePath}</span> as Working Dir
             </button>
+            <button type="button" onClick={() => setBrowseDots(v => !v)}
+              title={browseDots ? "Hide dot files" : "Show dot files"}
+              className={`ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                browseDots
+                  ? "border-[var(--accent)]/60 text-[var(--accent)] bg-[var(--accent)]/10"
+                  : "border-[var(--line)] text-[var(--muted)] hover:bg-[var(--foreground)]"
+              }`}>
+              {browseDots ? <Eye size={13} /> : <EyeOff size={13} />}
+              Dotfiles
+            </button>
           </div>
 
           {/* File list */}
@@ -1279,10 +1290,13 @@ export default function PM2Page() {
               <div className="p-6 text-center">
                 <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin mx-auto" />
               </div>
-            ) : browseItems.length === 0 ? (
-              <div className="p-6 text-center text-sm text-[var(--muted)]">Empty folder</div>
+            ) : browseItems.filter(item => browseDots || !item.name.startsWith(".")).length === 0 ? (
+              <div className="p-6 text-center text-sm text-[var(--muted)]">
+                {browseItems.length === 0 ? "Empty folder" : "No visible files — toggle Dotfiles to see hidden entries"}
+              </div>
             ) : (
               browseItems
+                .filter(item => browseDots || !item.name.startsWith("."))
                 .sort((a, b) => (a.type !== b.type ? (a.type === "directory" ? -1 : 1) : a.name.localeCompare(b.name)))
                 .map(item => (
                   <button
