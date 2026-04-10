@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# When piped through curl (curl ... | bash) stdin is the pipe, not the terminal.
-# Re-open stdin from /dev/tty so interactive read prompts work correctly.
-# (Technique used by pterodactyl-installer and similar scripts)
-exec </dev/tty 2>/dev/null || true
-
 # VPS Manager — Installation Script
 # https://github.com/mauricegift/vps-manager
 
