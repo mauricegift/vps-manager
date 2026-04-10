@@ -125,19 +125,30 @@
     log "ffmpeg already installed"
   fi
 
-  # ── Step 4: Clone / update repo ───────────────────────────────────────────────
-  step "Setting up VPS Manager"
-  if [[ -d "$INSTALL_DIR/.git" ]]; then
-    log "Repository found at $INSTALL_DIR — pulling latest..."
-    cd "$INSTALL_DIR"
-    git fetch origin
-    git checkout -- .
-    git pull
-  else
-    log "Cloning repository to $INSTALL_DIR..."
-    mkdir -p "$INSTALL_DIR"
-    git clone https://github.com/mauricegift/vps-manager.git "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
+  # ── Step 4: Clone repo ──────────────────────────────────────────────────────
+  step "Cloning VPS Manager"
+
+  # Back up existing .env so we don't lose credentials on re-install
+  if [[ -f "$INSTALL_DIR/.env" ]]; then
+    cp "$INSTALL_DIR/.env" "/tmp/.vpsmanager_env_backup"
+    log "Backed up existing .env to /tmp/.vpsmanager_env_backup"
+  fi
+
+  # Always clone fresh (remove if exists)
+  if [[ -d "$INSTALL_DIR" ]]; then
+    warn "Existing installation found — removing for fresh clone..."
+    rm -rf "$INSTALL_DIR"
+  fi
+
+  log "Cloning repository to $INSTALL_DIR..."
+  git clone https://github.com/mauricegift/vps-manager.git "$INSTALL_DIR"
+  cd "$INSTALL_DIR"
+
+  # Restore .env backup if it existed
+  if [[ -f "/tmp/.vpsmanager_env_backup" ]]; then
+    cp "/tmp/.vpsmanager_env_backup" "$INSTALL_DIR/.env"
+    rm -f "/tmp/.vpsmanager_env_backup"
+    log "Restored .env from backup"
   fi
 
   APP_DIR="$INSTALL_DIR"

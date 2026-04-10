@@ -33,26 +33,27 @@ A modern, self-hosted web control panel for managing your Linux VPS — PM2, Doc
 
   ```bash
   # As root (recommended)
-  curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | bash
+  curl -fsSL https://vps-manager.giftedtech.co.ke/install.sh | bash
 
   # As a non-root user with sudo access
-  curl -fsSL https://raw.githubusercontent.com/mauricegift/vps-manager/main/install.sh | sudo bash
+  curl -fsSL https://vps-manager.giftedtech.co.ke/install.sh | sudo bash
   ```
 
   The installer will:
-1. Install system packages (`git`, `nginx`, `dnsutils`, etc.)
-2. Install Node.js 24 via NVM
-3. Install PM2 globally
-4. Clone this repository to `$HOME/vps-manager` (your home directory)
-5. Install npm dependencies
-6. Prompt for SMTP provider (Resend or Brevo) and write settings to `.env`
-7. Generate a random `SESSION_SECRET` for JWT signing
-8. Configure UFW firewall rules
-9. Start the app with PM2 (auto-restart on reboot)
-10. Set up an Nginx reverse proxy on port 80
-11. Optionally issue a free SSL certificate via Let's Encrypt (with automatic DNS polling via `dig`)
+  1. Install system packages (`git`, `nginx`, `dnsutils`, etc.)
+  2. Install Node.js 24 via NVM
+  3. Install PM2 globally
+  4. Clone this repository to `$HOME/vps-manager` (your home directory)
+  5. Install npm dependencies
+  6. Generate a random `SESSION_SECRET` and write a base `.env` file
+  7. Configure UFW firewall rules
+  8. Start the app with PM2 (auto-restart on reboot)
+  9. Set up an Nginx reverse proxy on port 80
+  10. Optionally issue a free SSL certificate via Let's Encrypt (with automatic DNS polling via `dig`)
 
----
+  > **SMTP / email is optional** — you can configure it any time after install via the **Settings** page inside the app (user dropdown → Settings → Email / SMTP tab).
+
+  ---
 
 ## Manual Install
 
@@ -157,7 +158,9 @@ Only the logged-in admin can create additional accounts, via **Manage Users** in
 
 ## SMTP / Email Setup
 
-Email is used for password reset codes. You can configure it three ways:
+  > **SMTP is optional.** The app works fully without it — you just won't receive password reset emails. Reset codes are printed to the server console as a fallback.
+
+  Email is used for password reset codes. You can configure it three ways:
 
 ### Option 1 — Settings page (recommended)
 
