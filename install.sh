@@ -275,6 +275,11 @@ read -rp "Domain (e.g. vps.example.com) [blank = skip]: " DOMAIN
 
 if [[ -z "${DOMAIN:-}" ]]; then
   log "No domain provided — skipping SSL (app accessible via IP on port 80)"
+  # Open the frontend port directly so the app is reachable without a domain
+  if command -v ufw &>/dev/null; then
+    $SUDO ufw allow "$FRONTEND_PORT"/tcp >/dev/null 2>&1 || true
+    log "Opened port $FRONTEND_PORT in UFW — direct frontend access: http://$SERVER_IP:$FRONTEND_PORT"
+  fi
 else
   DNS_TIMEOUT=300
   DNS_INTERVAL=10
