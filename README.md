@@ -60,6 +60,12 @@ curl -4 -fsSL https://vps-manager.giftedtech.co.ke/install.sh | sudo bash
 11. Generates an **Nginx** reverse-proxy config on port 80
 12. Starts the app with **PM2** (`npm run start`) and saves on-boot startup
 13. Optionally issues a free **SSL certificate** via Let's Encrypt with DNS polling and auto-renewal
+    - Rewrites the port-80 Nginx block to redirect all HTTP traffic to HTTPS
+    - Appends a clean port-443 SSL server block with `X-Forwarded-Proto` headers
+    - Writes `ALLOWED_ORIGIN=https://<domain>` to `.env` — required so CORS allows module script requests
+    - Removes port `5756` from the UFW firewall — all access goes through Nginx on 443
+    - Restarts the PM2 app with `--update-env` to apply the new env vars immediately
+    - Prints `https://<domain>` as the access URL in the final summary
 
 ---
 
@@ -68,11 +74,11 @@ curl -4 -fsSL https://vps-manager.giftedtech.co.ke/install.sh | sudo bash
 | Port | Purpose |
 |---|---|
 | `5756` | Backend API + frontend static files (Express) |
-| `80` | Nginx reverse proxy (HTTP) |
-| `443` | Nginx reverse proxy (HTTPS, after SSL setup) |
+| `80` | Nginx — HTTP (redirects to HTTPS when SSL is active) |
+| `443` | Nginx — HTTPS (after SSL setup) |
 
-Everything is served through one process on port 5756. Nginx proxies port 80/443 to it.  
-Direct access without nginx: `http://YOUR_SERVER_IP:5756`
+> After SSL is issued, port `5756` is **removed from the firewall**. All traffic must go through Nginx.  
+> Direct access without Nginx (pre-SSL only): `http://YOUR_SERVER_IP:5756`
 
 ---
 
@@ -135,7 +141,7 @@ Copy `.env.example` to `.env` and fill in your values.
 | `RESEND_API_KEY` | — | API key from [resend.com](https://resend.com) (if `EMAIL_PROVIDER=resend`) |
 | `BREVO_SMTP_USER` | — | Brevo SMTP login (if `EMAIL_PROVIDER=brevo`) |
 | `BREVO_SMTP_PASS` | — | Brevo SMTP password / API key (if `EMAIL_PROVIDER=brevo`) |
-| `ALLOWED_ORIGIN` | — | Your public domain for CORS in production (e.g. `https://vps.yourdomain.com`) |
+| `ALLOWED_ORIGIN` | — | Public domain for CORS (e.g. `https://vps.yourdomain.com`). **Set automatically by the installer when SSL is issued.** |
 
 > **Note:** SMTP settings saved through the Settings page are stored in the database and always take priority over `.env` values.
 
@@ -148,6 +154,14 @@ Copy `.env.example` to `.env` and fill in your values.
 On first visit — when no users exist — `/register` is available to create the admin account.  
 Once created, **registration is permanently disabled** (returns 404 for all visitors).
 
+### Login
+
+- Accepts **email address or username** — either works
+- Shows **inline field-level errors** for specific failures:
+  - Unknown email or username → error shown below the identifier field
+  - Wrong password → error shown below the password field
+- Backend returns `404` for unknown user and `401` for wrong password, so the UI always puts the error in the right place
+
 ### Additional users
 
 Only the logged-in admin can create additional accounts via **Manage Users** in the header dropdown.  
@@ -156,9 +170,10 @@ New accounts do not receive a session — the admin provides credentials manuall
 ### Password reset
 
 1. Click **Forgot password?** on the login page
-2. Enter your email — a 6-digit code is sent (valid 10 minutes)
-3. Enter the code and choose a new password
-4. All active sessions are immediately invalidated
+2. Enter your email — if no account is found, an **inline error** is shown immediately
+3. If the account exists, a 6-digit code is sent (valid 10 minutes)
+4. Enter the code on the reset page and choose a new password
+5. All active sessions are immediately invalidated
 
 > If SMTP is not configured, the reset code is printed to the PM2 log as a fallback.
 
@@ -223,18 +238,34 @@ The installer asks for provider and credentials and writes them to `.env` automa
 The installer handles SSL automatically when you provide a custom domain:
 
 1. Polls `dig +short <domain> A` every 10 seconds (up to 5 minutes) to confirm DNS has propagated
-2. Creates `/var/www/html/.well-known/acme-challenge/` for the ACME challenge
-3. Adds a dedicated nginx location for `/.well-known/acme-challenge/` (served from disk, not proxied)
-4. Reloads nginx so the ACME location is live before certbot runs
-5. Runs `certbot certonly --webroot -w /var/www/html -d <domain>`
-6. Appends a port-443 SSL server block to the nginx config
-7. Adds an auto-renewal cron (daily at 03:00)
+2. Warns if extra A records exist (Let's Encrypt validates all of them)
+3. Creates `/var/www/html/.well-known/acme-challenge/` for the ACME challenge
+4. Adds a dedicated nginx location for `/.well-known/acme-challenge/` (served from disk, not proxied)
+5. Runs a self-test — checks HTTP 200 on the ACME path before invoking certbot
+6. Runs `certbot certonly --webroot -w /var/www/html -d <domain>`
+7. On success:
+   - Rewrites the port-80 block to a clean HTTP → HTTPS redirect (ACME path kept for renewal)
+   - Appends a port-443 SSL block with `X-Forwarded-Proto: https` headers
+   - Writes `ALLOWED_ORIGIN=https://<domain>` to `.env`
+   - Removes port `5756` from the UFW firewall
+   - Runs `pm2 restart vps-manager --update-env` to apply the new env immediately
+   - Adds a daily auto-renewal cron (03:00)
+8. Prints `https://<domain> ← HTTPS secured` as the final access URL
 
 To add SSL manually after install:
 
 ```bash
-# Make sure nginx has the ACME challenge location in its config, then:
+# 1. Issue the certificate
 sudo certbot certonly --webroot -w /var/www/html -d yourdomain.com
+
+# 2. Add ALLOWED_ORIGIN to .env
+echo "ALLOWED_ORIGIN=https://yourdomain.com" >> /root/vps-manager/.env
+
+# 3. Restart the app to pick up the new env
+pm2 restart vps-manager --update-env
+
+# 4. Update nginx (add SSL block + HTTP redirect), then reload
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 ---
@@ -276,12 +307,12 @@ Authorization: Bearer <access_token>
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/auth/register` | Create first admin (only when 0 users exist) |
-| `POST` | `/api/auth/login` | Sign in, receive access + refresh tokens |
+| `POST` | `/api/auth/login` | Sign in with **email or username** + password |
 | `POST` | `/api/auth/refresh` | Rotate refresh token, get a new pair |
 | `POST` | `/api/auth/logout` | Invalidate refresh token |
 | `GET` | `/api/auth/me` | Get current user (requires auth) |
 | `GET` | `/api/auth/setup-required` | Returns `true` if no users exist |
-| `POST` | `/api/auth/forgot-password` | Send 6-digit reset code to email |
+| `POST` | `/api/auth/forgot-password` | Send 6-digit reset code (`404` if email not found) |
 | `POST` | `/api/auth/reset-password` | Verify code and set new password |
 
 ### User management (requires auth)
@@ -338,9 +369,9 @@ vps-manager/
 │   ├── services/
 │   │   └── email.ts             # sendMail(): Resend + Brevo; HTML templates
 │   └── routes/
-│       ├── auth.ts              # register · login · refresh · logout · me
-│       │                        # setup-required · forgot-password · reset-password
-│       │                        # users CRUD
+│       ├── auth.ts              # register · login (email OR username) · refresh
+│       │                        # logout · me · setup-required
+│       │                        # forgot-password · reset-password · users CRUD
 │       ├── settings.ts          # SMTP config + test
 │       ├── system.ts            # CPU / RAM / disk / uptime
 │       ├── pm2.ts               # PM2 process management
@@ -355,123 +386,114 @@ vps-manager/
 │       └── github.ts            # GitHub repo detection
 │
 ├── src/                         # React + TypeScript frontend
-│   ├── main.tsx                 # App root, React Query provider
+│   ├── main.tsx                 # App root, React Query provider, AOS init
 │   ├── App.tsx                  # Route tree (public / auth / protected)
-│   ├── index.css                # Global styles + CSS variables
+│   ├── index.css                # Global styles, CSS variables, hero keyframe animations
 │   ├── lib/
 │   │   └── api.ts               # Axios + JWT interceptors + auto-refresh
 │   ├── context/
 │   │   ├── AuthContext.tsx      # User state, login / logout / refresh
 │   │   ├── ThemeContext.tsx     # Dark / light mode
 │   │   └── RemoteServerContext.tsx
-│   ├── types/
-│   │   ├── index.ts
-│   │   └── server.ts
 │   ├── components/
 │   │   ├── layout/
 │   │   │   ├── Layout.tsx           # Protected app shell
-│   │   │   ├── PublicLayout.tsx     # Public / auth shell
-│   │   │   ├── Header.tsx           # Top bar with nav, theme, user dropdown
+│   │   │   ├── PublicLayout.tsx     # Public / auth shell with AOS scroll animations
+│   │   │   ├── Header.tsx
 │   │   │   ├── Footer.tsx
 │   │   │   └── MobileSidebar.tsx
 │   │   └── ui/
-│   │       ├── ProtectedRoute.tsx   # → /login if unauthenticated
-│   │       ├── GuestRoute.tsx       # → / if already authenticated
-│   │       ├── SetupRoute.tsx       # → 404 if users already exist
-│   │       └── ...
+│   │       └── ...                  # Shared UI components
 │   └── pages/
+│       ├── public/
+│       │   ├── Landing.tsx          # Hero: animated gradient text + floating glow blobs
+│       │   ├── About.tsx
+│       │   ├── Contact.tsx
+│       │   ├── Terms.tsx
+│       │   └── Privacy.tsx
+│       ├── auth/
+│       │   ├── Login.tsx            # Email or username; inline per-field errors
+│       │   ├── ForgotPassword.tsx   # Inline error for unknown email
+│       │   ├── Register.tsx
+│       │   └── ResetPassword.tsx
 │       ├── Dashboard.tsx
 │       ├── PM2.tsx
 │       ├── Docker.tsx
 │       ├── Databases.tsx
 │       ├── FileManager.tsx
 │       ├── Terminal.tsx
-│       ├── Servers.tsx
-│       ├── Extras.tsx
 │       ├── Nginx.tsx
-│       ├── Settings.tsx         # SMTP config + user management tabs
-│       ├── NotFound.tsx
-│       ├── auth/
-│       │   ├── Login.tsx
-│       │   ├── Register.tsx     # First-time admin setup only
-│       │   ├── ForgotPassword.tsx
-│       │   └── ResetPassword.tsx
-│       └── public/
-│           ├── Landing.tsx
-│           ├── About.tsx
-│           ├── Contact.tsx
-│           ├── Terms.tsx
-│           └── Privacy.tsx
-│
-└── public/                      # Static assets (favicon, OG image)
+│       ├── Extras.tsx
+│       ├── Servers.tsx
+│       └── Settings.tsx
 ```
 
 ---
 
-## Tech Stack
+## Troubleshooting
 
-**Frontend**
+### Blank page when visiting via custom HTTPS domain
 
-| Library | Purpose |
-|---|---|
-| React 18 + TypeScript | UI framework |
-| Vite 6 | Build tool and dev server |
-| Tailwind CSS v4 | Utility-first styling |
-| React Router v6 | Client-side routing |
-| TanStack Query | Server state and data fetching |
-| Axios | HTTP client with JWT interceptors |
-| Socket.IO client | Real-time WebSocket terminal |
-| highlight.js | Syntax-highlighted file editor |
-| Framer Motion + AOS | Animations |
-| Lucide React | Icons |
+**Cause:** Vite builds emit `<script type="module">`. Browsers include an `Origin` header when fetching module scripts, which hits the Express CORS middleware. Without `ALLOWED_ORIGIN` in `.env`, the middleware rejects the request and Express returns HTTP 500 on the JS bundle.
 
-**Backend**
+**Fix:**
+```bash
+echo "ALLOWED_ORIGIN=https://yourdomain.com" >> /root/vps-manager/.env
+pm2 restart vps-manager --update-env
+```
 
-| Library | Purpose |
-|---|---|
-| Node.js + Express | HTTP server |
-| TypeScript (tsx) | Type-safe backend, no compile step |
-| PostgreSQL (pg) | Primary database |
-| jsonwebtoken + bcryptjs | JWT auth and password hashing |
-| Socket.IO | WebSocket server (terminal) |
-| SSH2 | Remote server connections |
-| Resend | Transactional email (Option A) |
-| Nodemailer | Brevo SMTP transport (Option B) |
-| Multer | File uploads |
-
-**Infrastructure**
-
-| Tool | Purpose |
-|---|---|
-| Nginx | Reverse proxy (port 80 / 443) |
-| PM2 | Process manager + auto-restart on reboot |
-| PostgreSQL | Database (auto-provisioned by installer) |
-| Let's Encrypt / Certbot | Free SSL certificates (webroot mode) |
-| UFW | Firewall management |
+The installer now sets this automatically when SSL is issued.
 
 ---
 
-## Scripts
+### App not accessible after SSL setup
 
-| Script | Command | Description |
-|---|---|---|
-| Development | `npm run dev` | Backend on :5756 + Vite dev server on :5000 |
-| Build | `npm run build` | Compile React app → `dist/public/` |
-| Production | `npm start` | Express serves API + built frontend from `dist/public/` |
+1. Check nginx config is valid: `sudo nginx -t`
+2. Reload nginx: `sudo systemctl reload nginx`
+3. Confirm the cert was issued: `sudo certbot certificates`
+4. Check the nginx config: `cat /etc/nginx/sites-available/vps-manager`
 
 ---
 
-## Contributing
+### 502 Bad Gateway
 
-1. Fork the repo
-2. Create a branch: `git checkout -b feat/my-feature`
-3. Commit and push your changes
-4. Open a Pull Request
+Nginx can't reach the app on port 5756.
 
-Bug reports and feature requests → [GitHub Issues](https://github.com/mauricegift/vps-manager/issues)
+```bash
+pm2 status
+pm2 restart vps-manager
+pm2 logs vps-manager --lines 50
+```
+
+---
+
+### PM2 app crashes on start
+
+```bash
+pm2 logs vps-manager --lines 100
+```
+
+Common causes: missing `.env`, wrong PostgreSQL credentials, port already in use.
+
+---
+
+### Certbot ACME challenge fails
+
+```bash
+# Check the ACME location is in nginx config
+grep -A3 "well-known" /etc/nginx/sites-available/vps-manager
+
+# Reload nginx, then retry
+sudo systemctl reload nginx
+sudo certbot certonly --webroot -w /var/www/html -d yourdomain.com
+```
 
 ---
 
 ## License
 
-MIT © [Gifted Tech](https://me.giftedtech.co.ke)
+MIT — see [LICENSE](LICENSE).
+
+---
+
+*Built with ❤ by [Gifted Tech](https://giftedtech.co.ke)*
