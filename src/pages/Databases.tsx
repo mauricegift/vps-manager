@@ -178,18 +178,22 @@ export default function DatabasesPage() {
         redis: "redis-server", sqlite: "sqlite3", mariadb: "mariadb-server",
       };
       const pkg = pkgMap[db.type] || db.type;
-      let installCmd = `DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg} 2>&1`;
+      const _AW = "flock -w 120 /var/lib/dpkg/lock-frontend /bin/true 2>/dev/null || (rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null && dpkg --configure -a 2>/dev/null) || true";
+      let installCmd = `${_AW} && DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>&1 && ${_AW} && DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkg} 2>&1`;
 
-      // MongoDB requires the official repo setup first
+      // MongoDB requires official repo setup — works across Ubuntu 20/22/24 and Debian 11/12
       if (db.type === "mongodb") {
+        const AW = "flock -w 120 /var/lib/dpkg/lock-frontend /bin/true 2>/dev/null || (rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null && dpkg --configure -a 2>/dev/null) || true";
         installCmd = [
           `export DEBIAN_FRONTEND=noninteractive`,
-          `CODENAME=$(lsb_release -cs 2>/dev/null || echo jammy)`,
-          `MV=$([ "$CODENAME" = "noble" ] && echo 8.0 || echo 7.0)`,
+          `${AW}`,
+          `OS_ID=$(. /etc/os-release 2>/dev/null && echo "$ID" || echo ubuntu)`,
+          `CODENAME=$(lsb_release -cs 2>/dev/null || (. /etc/os-release && echo "$VERSION_CODENAME") || echo jammy)`,
+          `if [ "$OS_ID" = "debian" ]; then MONGO_DIST=debian; MV=7.0; case "$CODENAME" in bookworm|trixie) MV=8.0 ;; esac; else MONGO_DIST=ubuntu; MV=7.0; case "$CODENAME" in focal|jammy|noble) MV=8.0 ;; esac; fi`,
           `curl -fsSL "https://www.mongodb.org/static/pgp/server-$MV.asc" | gpg -o "/usr/share/keyrings/mongodb-server-$MV.gpg" --dearmor 2>&1`,
-          `echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-$MV.gpg ] https://repo.mongodb.org/apt/ubuntu $CODENAME/mongodb-org/$MV multiverse" > /etc/apt/sources.list.d/mongodb-org-$MV.list`,
-          `apt-get update -qq 2>&1`,
-          `apt-get install -y mongodb-org 2>&1`,
+          `echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-$MV.gpg ] https://repo.mongodb.org/apt/$MONGO_DIST $CODENAME/mongodb-org/$MV multiverse" > /etc/apt/sources.list.d/mongodb-org-$MV.list`,
+          `${AW} && apt-get update -qq 2>&1`,
+          `${AW} && apt-get install -y mongodb-org 2>&1`,
           `systemctl enable mongod 2>&1 && systemctl start mongod 2>&1`,
         ].join(" && ");
       }
@@ -227,13 +231,16 @@ export default function DatabasesPage() {
     setActionLoading(null);
   };
 
+  const APT_WAIT_SH = "flock -w 120 /var/lib/dpkg/lock-frontend /bin/true 2>/dev/null || (rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null && dpkg --configure -a 2>/dev/null) || true";
+  const aptRemove = (pkgs: string) => `${APT_WAIT_SH} && DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y ${pkgs} 2>&1 && apt-get autoremove -y 2>&1`;
+
   const REMOTE_UNINSTALL: Record<string, string> = {
-    postgresql: "systemctl stop postgresql 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y postgresql postgresql-* 2>&1 && apt-get autoremove -y 2>&1",
-    mysql: "systemctl stop mysql 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y mysql-server mysql-client mysql-common 2>&1 && apt-get autoremove -y 2>&1",
-    mongodb: "systemctl stop mongod 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y mongodb-org 2>&1 && apt-get autoremove -y 2>&1",
-    redis: "systemctl stop redis-server 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y redis-server 2>&1 && apt-get autoremove -y 2>&1",
-    mariadb: "systemctl stop mariadb 2>&1; DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y mariadb-server mariadb-client 2>&1 && apt-get autoremove -y 2>&1",
-    sqlite: "DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y sqlite3 2>&1 && apt-get autoremove -y 2>&1",
+    postgresql: `systemctl stop postgresql 2>&1; ${aptRemove("postgresql postgresql-*")}`,
+    mysql:      `systemctl stop mysql 2>&1; ${aptRemove("mysql-server mysql-client mysql-common")}`,
+    mongodb:    `systemctl stop mongod 2>&1; ${aptRemove("mongodb-org mongodb")}`,
+    redis:      `systemctl stop redis-server 2>&1; ${aptRemove("redis-server")}`,
+    mariadb:    `systemctl stop mariadb 2>&1; ${aptRemove("mariadb-server mariadb-client")}`,
+    sqlite:     aptRemove("sqlite3"),
   };
 
   const runUninstall = async (db: DB) => {
