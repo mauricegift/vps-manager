@@ -10,7 +10,7 @@ import {
 import api from "@/lib/api";
 import type { FileItem } from "@/types";
 import Modal from "@/components/ui/Modal";
-import CodeView, { getLang } from "@/components/ui/CodeView";
+import CodeView, { getLang, SyntaxEditor } from "@/components/ui/CodeView";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
@@ -60,8 +60,6 @@ export default function FileManagerPage() {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const editorTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const editorLineNumRef = useRef<HTMLDivElement>(null);
   const { activeServer } = useRemoteServer();
   const { theme } = useTheme();
   const dark = theme === "dark";
@@ -262,11 +260,6 @@ export default function FileManagerPage() {
     e.target.value = "";
   };
 
-  const syncEditorScroll = useCallback(() => {
-    if (editorTextareaRef.current && editorLineNumRef.current) {
-      editorLineNumRef.current.scrollTop = editorTextareaRef.current.scrollTop;
-    }
-  }, []);
 
   const toggleBulkItem = (itemPath: string) => {
     setBulkSelected(prev => {
@@ -839,43 +832,12 @@ export default function FileManagerPage() {
                   {editContent.split("\n").length} lines
                 </span>
               </div>
-              {/* Line-numbered editor */}
-              <div
-                className="rounded-xl overflow-hidden border border-[var(--line)] flex"
-                style={{ background: dark ? "#1e1e2e" : "#f8fafc", minHeight: "300px", maxHeight: "55vh" }}
-              >
-                {/* Gutter */}
-                <div
-                  ref={editorLineNumRef}
-                  className="select-none shrink-0 py-4 text-right font-mono text-[11px] leading-relaxed overflow-hidden"
-                  style={{
-                    minWidth: `${String(editContent.split("\n").length).length * 8 + 24}px`,
-                    paddingLeft: 8,
-                    paddingRight: 12,
-                    background: dark ? "#181825" : "#f1f5f9",
-                    borderRight: `1px solid ${dark ? "#2a2a3e" : "#e2e8f0"}`,
-                    color: dark ? "#4a4a6a" : "#94a3b8",
-                  }}
-                >
-                  {editContent.split("\n").map((_, i) => (
-                    <div key={i}>{i + 1}</div>
-                  ))}
-                </div>
-                {/* Textarea */}
-                <textarea
-                  ref={editorTextareaRef}
-                  value={editContent}
-                  onChange={e => setEditContent(e.target.value)}
-                  onScroll={syncEditorScroll}
-                  spellCheck={false}
-                  className="flex-1 font-mono text-[11px] resize-none focus:outline-none bg-transparent py-4 px-3 leading-relaxed"
-                  style={{
-                    color: dark ? "#cdd6f4" : "#1e293b",
-                    caretColor: dark ? "#cdd6f4" : "#1e293b",
-                    overflowY: "auto",
-                  }}
-                />
-              </div>
+              {/* Syntax-highlighted editor */}
+              <SyntaxEditor
+                value={editContent}
+                onChange={setEditContent}
+                filename={viewContent?.name || ""}
+              />
               <div className="flex gap-2 justify-end">
                 <button onClick={() => setIsEditing(false)} className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
                   <X size={13} /> Discard
