@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -17,6 +17,7 @@ import type { PM2Process } from "@/types";
 import { toast } from "react-toastify";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 
 function fmtMem(b: number) {
   if (b > 1e6) return (b / 1e6).toFixed(1) + " MB";
@@ -61,6 +62,7 @@ const MAX_FONT = 22;
 export default function PM2Page() {
   const qc = useQueryClient();
   const { theme } = useTheme();
+  const { user } = useAuth();
   const T = theme === "dark" ? DARK_TERM : LIGHT_TERM;
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -80,7 +82,10 @@ export default function PM2Page() {
   // File browser state
   const [browseModal, setBrowseModal] = useState(false);
   const [browseTarget, setBrowseTarget] = useState<"script" | "cwd">("script");
-  const [browsePath, setBrowsePath] = useState("/root");
+  const [browsePath, setBrowsePath] = useState(() => {
+    const su = localStorage.getItem("vpsm_active_user") || "";
+    return su && su !== "root" ? `/home/${su}` : "/root";
+  });
   const [browseItems, setBrowseItems] = useState<{ name: string; type: string; path: string }[]>([]);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseDots, setBrowseDots] = useState(false);
@@ -129,6 +134,35 @@ export default function PM2Page() {
 
   const pollInterval = activeServer ? 15000 : 5000;
 
+  // Active user context — vpsm_active_user takes priority, then JWT user, then root
+  const [pm2ActiveUser, setPm2ActiveUser] = useState<string>(() => {
+    const su = localStorage.getItem("vpsm_active_user") || "";
+    return su && su !== "root" ? su : "";
+  });
+
+  // After mount, if no stored user, fall back to JWT user
+  useEffect(() => {
+    if (!pm2ActiveUser && user?.username && user.username !== "root") {
+      setPm2ActiveUser(user.username);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.username]);
+
+  // Listen for active-user switch from Extras page
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const username: string = (e as CustomEvent).detail?.username || "";
+      const next = username && username !== "root" ? username : "";
+      setPm2ActiveUser(next);
+    };
+    window.addEventListener("vpsm:user-change", handler);
+    return () => window.removeEventListener("vpsm:user-change", handler);
+  }, []);
+
+  const localUserParam = useCallback(() =>
+    !activeServer && pm2ActiveUser ? `?activeUser=${encodeURIComponent(pm2ActiveUser)}` : ""
+  , [activeServer, pm2ActiveUser]);
+
   const { data: versionInfo, isLoading: versionLoading } = useQuery({
     queryKey: ["pm2-version", activeServer?.id ?? "local"],
     queryFn: () => {
@@ -141,8 +175,11 @@ export default function PM2Page() {
   });
 
   const { data: processes = [], isLoading, refetch, isFetching } = useQuery<PM2Process[]>({
-    queryKey: ["pm2", activeServer?.id ?? "local"],
-    queryFn: () => api.get(`${pfx}/pm2`).then((r) => r.data.data),
+    queryKey: ["pm2", activeServer?.id ?? "local", pm2ActiveUser],
+    queryFn: () => {
+      const url = activeServer ? `${pfx}/pm2` : `/pm2${localUserParam()}`;
+      return api.get(url).then((r) => r.data.data);
+    },
     refetchInterval: pollInterval,
     placeholderData: keepPreviousData,
     enabled: !!versionInfo?.installed,
@@ -153,11 +190,11 @@ export default function PM2Page() {
     mutationFn: ({ action, id }: { action: string; id: number }) =>
       activeServer
         ? api.post(`/remote/${activeServer.id}/pm2/${id}/${action}`)
-        : api.post(`/pm2/${id}/${action}`),
+        : api.post(`/pm2/${id}/${action}${localUserParam()}`),
     onSuccess: (_, { action }) => {
       const label = action === "delete" ? "deleted" : action + "ed";
       toast.success(`Process ${label}`);
-      qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local"] });
+      qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local", pm2ActiveUser] });
       setConfirm(null);
     },
     onError: () => toast.error("Action failed"),
@@ -250,11 +287,12 @@ export default function PM2Page() {
         envVars: envPairs,
         pkgManager,
         installDeps: installDepsBeforeStart,
+        activeUser: pm2ActiveUser || undefined,
       });
     },
     onSuccess: () => {
       toast.success("Process started");
-      qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local"] });
+      qc.refetchQueries({ queryKey: ["pm2", activeServer?.id ?? "local", pm2ActiveUser] });
       setStartModal(false);
       setStartForm({ name: "", script: "", cwd: "", port: "" });
       setStartEnvVars([]);
@@ -310,7 +348,10 @@ export default function PM2Page() {
       const endpoint = activeServer
         ? `/remote/${activeServer.id}/pm2/terminal`
         : "/pm2/terminal";
-      const { data } = await api.post(endpoint, { command: cmd });
+      const { data } = await api.post(endpoint, {
+        command: cmd,
+        activeUser: !activeServer && pm2ActiveUser ? pm2ActiveUser : undefined,
+      });
       setTermHistory(prev => [...prev, { type: "output", text: data.data || "(no output)" }]);
       qc.invalidateQueries({ queryKey: ["pm2"] });
     } catch (e: any) {
@@ -465,10 +506,9 @@ export default function PM2Page() {
         setGhRepoInfo(data.data);
         if (data.data.suggestions?.length) setGhSelectedSuggestion(data.data.suggestions[0]);
         const repoName = data.data.repo || "myapp";
-        const storedUser = localStorage.getItem("vpsm_active_user");
         const appsBase = activeServer
           ? (activeServer.username === "root" ? "/root/apps" : `/home/${activeServer.username}/apps`)
-          : (storedUser && storedUser !== "root" ? `/home/${storedUser}/apps` : "/root/apps");
+          : (pm2ActiveUser ? `/home/${pm2ActiveUser}/apps` : "/root/apps");
         setGhCloneDir(`${appsBase}/${repoName}`);
         if (!startForm.name) setStartForm(s => ({ ...s, name: repoName }));
       } else { toast.error(data.error || "Failed to detect repo"); }
