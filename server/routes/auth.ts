@@ -90,19 +90,24 @@ router.post('/register', async (req: Request, res: Response) => {
 router.post('/login', async (req: Request, res: Response) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    res.status(400).json({ success: false, error: 'email and password are required' });
+    res.status(400).json({ success: false, error: 'email/username and password are required' });
     return;
   }
   try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase().trim()]);
+    const identifier = email.toLowerCase().trim();
+    // Support login by email OR username
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1 OR username = $1',
+      [identifier]
+    );
     const user = result.rows[0];
     if (!user) {
-      res.status(401).json({ success: false, error: 'Invalid email or password' });
+      res.status(404).json({ success: false, error: 'No account found with that email or username' });
       return;
     }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      res.status(401).json({ success: false, error: 'Invalid email or password' });
+      res.status(401).json({ success: false, error: 'Incorrect password' });
       return;
     }
     const accessToken = signAccess(user);
@@ -269,15 +274,10 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
 
     const userRes = await pool.query('SELECT id, username, email FROM users WHERE email = $1', [email.toLowerCase().trim()]);
 
-    // Always respond 200 to avoid user enumeration (don't reveal whether email exists)
     if (!userRes.rows.length) {
-      res.json({
-        success: true,
-        emailSent: false,
-        emailConfigured,
-        message: emailConfigured
-          ? 'If that email exists, a reset code has been sent.'
-          : 'No email provider configured on this server.',
+      res.status(404).json({
+        success: false,
+        error: 'No account found with that email address',
       });
       return;
     }
