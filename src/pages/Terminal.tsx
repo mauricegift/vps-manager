@@ -4,6 +4,7 @@ import { TerminalIcon, Trash2, Minus, Plus } from "lucide-react";
 import AnsiText from "@/components/ui/AnsiText";
 import { useRemoteServer } from "@/context/RemoteServerContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
 
 interface Line { type: "input" | "output" | "error" | "system"; text: string; }
 
@@ -50,6 +51,7 @@ const DEFAULT_FONT = typeof window !== "undefined" && window.innerWidth < 640 ? 
 export default function TerminalPage() {
   const { activeServer } = useRemoteServer();
   const { theme } = useTheme();
+  const { user } = useAuth();
   const MONOKAI = theme === "dark" ? DARK_THEME : LIGHT_THEME;
   const OUT = MONOKAI;
 
@@ -71,7 +73,9 @@ export default function TerminalPage() {
   }, []);
 
   useEffect(() => {
-    const activeUser = localStorage.getItem("vpsm_active_user") || "";
+    const storedUser = localStorage.getItem("vpsm_active_user") || "";
+    const effectiveUser = storedUser || (!activeServer ? user?.username || "" : "");
+    const activeUser = effectiveUser;
     const subUser = !activeServer && activeUser && activeUser !== "root" ? activeUser : "";
     const sessionLabel = activeServer
       ? `SSH Terminal — ${activeServer.username}@${activeServer.ip} (${activeServer.name})`
@@ -112,7 +116,7 @@ export default function TerminalPage() {
 
     return () => { s.disconnect(); socketRef.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeServer?.id]);
+  }, [activeServer?.id, user?.username]);
 
   // Scroll to bottom when new lines arrive
   useEffect(() => {
@@ -139,7 +143,9 @@ export default function TerminalPage() {
     setInput("");
     addLine("system", newUser ? `Switching to user: ${newUser}…` : "Reconnecting…");
     setTimeout(() => {
-      const activeUser = newUser || localStorage.getItem("vpsm_active_user") || "";
+      const storedUser = localStorage.getItem("vpsm_active_user") || "";
+      const fallback = !activeServer ? user?.username || "" : "";
+      const activeUser = newUser || storedUser || fallback;
       const subUser = !activeServer && activeUser && activeUser !== "root" ? activeUser : "";
       const query: Record<string, string> = {};
       if (activeServer) query.serverId = String(activeServer.id);
