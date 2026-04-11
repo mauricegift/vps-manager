@@ -113,6 +113,7 @@ export default function PM2Page() {
   const [startEnvVars, setStartEnvVars] = useState<{ key: string; value: string }[]>([]);
   const [pkgManager, setPkgManager] = useState<"npm" | "bun">("npm");
   const [installDepsBeforeStart, setInstallDepsBeforeStart] = useState(false);
+  const [ecosystemApps, setEcosystemApps] = useState<any[] | null>(null);
 
   const [termCmd, setTermCmd] = useState("");
   const [termHistory, setTermHistory] = useState<TermLine[]>([
@@ -198,6 +199,48 @@ export default function PM2Page() {
     },
     onError: () => toast.error("Action failed"),
   });
+
+  // ── Derived: ecosystem detection & name-conflict check ──────────────────────
+  const isEcosystemScript = /ecosystem\.config\.c?js$/i.test(startForm.script.trim());
+  const existingProcessNames = (processes as any[]).map((p: any) => p.name?.toLowerCase());
+  const nameAlreadyTaken = !!startForm.name.trim() && !isEcosystemScript
+    && existingProcessNames.includes(startForm.name.trim().toLowerCase());
+
+  // ── Auto-read ecosystem config when script changes ───────────────────────
+  useEffect(() => {
+    if (!isEcosystemScript || !startForm.script.trim()) {
+      setEcosystemApps(null);
+      return;
+    }
+    // Resolve absolute path: if relative, prepend cwd
+    const scriptPath = startForm.script.trim();
+    const absPath = scriptPath.startsWith("/") ? scriptPath
+      : startForm.cwd ? `${startForm.cwd}/${scriptPath}` : scriptPath;
+
+    const readEco = async () => {
+      try {
+        let apps: any[] = [];
+        if (activeServer) {
+          const { data } = await api.post(`/remote/${activeServer.id}/exec`, {
+            command: `node -e "try{const c=require(${JSON.stringify(absPath)});const a=Array.isArray(c)?c:(c.apps||[]);process.stdout.write(JSON.stringify(a.map(function(x){return{name:x.name,script:x.script,env:Object.assign({},x.env||{},x.env_production||{})}})))}catch(e){process.stdout.write('[]')}"`,
+          });
+          const raw = typeof data.data === "string" ? data.data.trim() : "";
+          apps = JSON.parse(raw) || [];
+        } else {
+          const { data } = await api.get(`/pm2/ecosystem?path=${encodeURIComponent(absPath)}`);
+          apps = data.data || [];
+        }
+        setEcosystemApps(apps);
+        if (apps.length > 0) {
+          const first = apps[0];
+          if (first.name) setStartForm(s => ({ ...s, name: first.name }));
+          if (first.env?.PORT) setStartForm(s => ({ ...s, port: String(first.env.PORT) }));
+        }
+      } catch { setEcosystemApps(null); }
+    };
+    readEco();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startForm.script, startForm.cwd, isEcosystemScript, activeServer?.id]);
 
   const checkScript = async () => {
     if (!startForm.script) return;
@@ -433,6 +476,7 @@ export default function PM2Page() {
     setGhRepoInfo(null);
     setGhSelectedSuggestion(null);
     setGhCloneOutput("");
+    setEcosystemApps(null);
   };
 
   // ── File browser ──────────────────────────────────────────────────────────
@@ -976,7 +1020,21 @@ export default function PM2Page() {
           <div>
             <label className="block text-xs text-[var(--muted)] mb-1.5">Process Name</label>
             <input value={startForm.name} onChange={(e) => setStartForm(s => ({ ...s, name: e.target.value }))}
-              placeholder="my-app" className={`w-full ${inp}`} required />
+              placeholder="my-app"
+              className={`w-full ${inp} ${nameAlreadyTaken ? "border-red-500 focus:border-red-500" : ""}`}
+              required />
+            {nameAlreadyTaken && (
+              <p className="flex items-center gap-1 text-xs text-red-400 mt-1">
+                <XCircle size={11} /> Name already in use — choose a different name
+              </p>
+            )}
+            {isEcosystemScript && ecosystemApps && ecosystemApps.length > 0 && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-[var(--accent)]">
+                <Check size={10} />
+                Ecosystem detected — name &amp; port auto-filled from config
+                {ecosystemApps.length > 1 && <span className="text-[var(--muted)]">({ecosystemApps.length} apps)</span>}
+              </div>
+            )}
           </div>
 
           {/* ── File System mode ── */}
@@ -1329,7 +1387,8 @@ export default function PM2Page() {
               className="px-4 py-2 text-sm rounded-xl border border-[var(--line)] hover:bg-[var(--foreground)] transition-colors">
               Cancel
             </button>
-            <button type="submit" disabled={startMutation.isPending}
+            <button type="submit" disabled={startMutation.isPending || nameAlreadyTaken}
+              title={nameAlreadyTaken ? "Choose a different process name" : undefined}
               className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl bg-[var(--accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-50">
               {startMutation.isPending
                 ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Starting...</>
