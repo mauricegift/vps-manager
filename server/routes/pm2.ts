@@ -16,7 +16,10 @@ const WIDE_PATH = [
   '/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin',
 ].filter(Boolean).join(':');
 
-const BASE_ENV = { ...process.env, PATH: WIDE_PATH, FORCE_COLOR: '3', COLORTERM: 'truecolor', DEBIAN_FRONTEND: 'noninteractive' };
+// Strip server-specific vars (PORT etc.) so VPS Manager's own port never leaks
+// into child processes. Processes get their PORT only via the ecosystem env block.
+const { PORT: _stripPort, ...REST_ENV } = process.env as Record<string, string>;
+const BASE_ENV = { ...REST_ENV, PATH: WIDE_PATH, FORCE_COLOR: '3', COLORTERM: 'truecolor', DEBIAN_FRONTEND: 'noninteractive' };
 const COLOR_ENV = BASE_ENV;
 // Prefix for shell commands — sources NVM so node/npm/pm2 are in PATH
 const NVM_PREFIX = `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use; `;
@@ -91,6 +94,26 @@ router.get('/', async (req, res) => {
 // e.g. "npm start" → script="npm", args="start"
 const COMMAND_INTERPS = new Set(['npm', 'bun', 'node', 'python3', 'python', 'npx', 'pnpm', 'yarn', 'deno']);
 
+// ── Detect if an npm/yarn/pnpm/bun start script internally calls pm2 start ───
+// Returns the real entry file path so we can start it directly, using the
+// user's entered name instead of whatever --name is hardcoded in package.json.
+function resolveNpmStartEntry(scriptCmd: string, cwd: string): string | null {
+  if (!cwd) return null;
+  const parts = scriptCmd.trim().split(/\s+/);
+  const PKG_MANAGERS = ['npm', 'yarn', 'pnpm', 'bun'];
+  if (parts.length < 2 || !PKG_MANAGERS.includes(parts[0].toLowerCase()) || parts[1] !== 'start') return null;
+  try {
+    const pkgPath = path.join(cwd, 'package.json');
+    if (!fs.existsSync(pkgPath)) return null;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+    const startScript: string = pkg.scripts?.start || '';
+    // Match: pm2 start <file> (with optional flags after)
+    const m = startScript.match(/pm2\s+start\s+([^\s]+)/);
+    if (!m) return null;
+    return m[1]; // e.g. "index.js"
+  } catch { return null; }
+}
+
 router.post('/start', async (req, res) => {
   let ecosystemPath = '';
   try {
@@ -122,10 +145,18 @@ router.post('/start', async (req, res) => {
     }
 
     // ── Detect script type ────────────────────────────────────────────────────
-    const parts = script.trim().split(/\s+/);
+    // If "npm start" (etc.) internally calls "pm2 start <file>", bypass npm
+    // and start the entry file directly — this avoids a duplicate pm2 process
+    // with a hardcoded name and ensures the user's entered name is used.
+    const resolvedEntry = resolveNpmStartEntry(script, cwd);
+    const effectiveScript = resolvedEntry
+      ? path.isAbsolute(resolvedEntry) ? resolvedEntry : path.join(cwd, resolvedEntry)
+      : script;
+
+    const parts = effectiveScript.trim().split(/\s+/);
     const first = parts[0].toLowerCase();
-    const isCommandStyle = COMMAND_INTERPS.has(first);
-    const scriptIsSh = !isCommandStyle && /\.(sh|bash)$/i.test(script.trim());
+    const isCommandStyle = !resolvedEntry && COMMAND_INTERPS.has(first);
+    const scriptIsSh = !isCommandStyle && /\.(sh|bash)$/i.test(effectiveScript.trim());
     const useBash = scriptIsSh || interpreter === 'bash';
 
     // ── Build PM2 ecosystem config object ────────────────────────────────────
@@ -135,7 +166,7 @@ router.post('/start', async (req, res) => {
       appEntry.script = parts[0];
       if (parts.length > 1) appEntry.args = parts.slice(1).join(' ');
     } else {
-      appEntry.script = script.trim();
+      appEntry.script = effectiveScript.trim();
       if (useBash) appEntry.interpreter = 'bash';
     }
 
