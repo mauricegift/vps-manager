@@ -140,11 +140,10 @@ export default function PM2Page() {
     return su && su !== "root" ? su : "";
   });
 
-  // After mount, if no stored user, fall back to JWT user
+  // After mount, if no stored user, default to root (no sub-user switching)
+  // NOTE: user?.username is the app login name, not a Linux system user — do NOT use it here
   useEffect(() => {
-    if (!pm2ActiveUser && user?.username && user.username !== "root") {
-      setPm2ActiveUser(user.username);
-    }
+    // intentionally left empty — only localStorage "vpsm_active_user" drives sub-user mode
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.username]);
 
