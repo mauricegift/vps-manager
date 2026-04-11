@@ -943,14 +943,6 @@ case "${type}" in
     CONF=/etc/mongod.conf
     if [ -f "$CONF" ]; then
       grep -q "bindIp" "$CONF" && sed -i "s/bindIp:.*/bindIp: 0.0.0.0/" "$CONF" || sed -i '/^net:/a\\  bindIp: 0.0.0.0' "$CONF"
-      # Ensure security.authorization is always enabled
-      if grep -q "^security:" "$CONF"; then
-        grep -q "authorization:" "$CONF" || sed -i "/^security:/a\\  authorization: enabled" "$CONF"
-        sed -i "s/.*authorization:.*/  authorization: enabled/" "$CONF"
-      else
-        sed -i "s/#security:/security:\\n  authorization: enabled/" "$CONF"
-        grep -q "^security:" "$CONF" || printf '\nsecurity:\n  authorization: enabled\n' >> "$CONF"
-      fi
       systemctl restart mongod 2>&1 || service mongod restart 2>&1 || true
       sleep 3
       echo "BIND_FIXED=1"
@@ -993,6 +985,7 @@ fi
     const serverIp = await getLocalServerIp();
     const warnings: string[] = [];
     if (type === 'redis') warnings.push('Redis has no per-database auth — ensure requirepass is set via Change Password.');
+    if (type === 'mongodb') warnings.push('WARNING: MongoDB is now exposed without authentication. Anyone on the internet can access your databases. Set up MongoDB users and enable security.authorization in /etc/mongod.conf before exposing externally, or close this immediately after use.');
     if (!bindFixed) warnings.push(bindErr);
 
     res.json({ success: true, port, firewallOpened: fwOpened, alreadyOpen, bindAll: bindFixed, bindFixed, rateLimited, warnings, serverIp });
