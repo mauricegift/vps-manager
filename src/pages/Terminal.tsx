@@ -74,7 +74,7 @@ export default function TerminalPage() {
 
   useEffect(() => {
     const storedUser = localStorage.getItem("vpsm_active_user") || "";
-    const effectiveUser = storedUser || (!activeServer ? user?.username || "" : "");
+    const effectiveUser = storedUser;
     const activeUser = effectiveUser;
     const subUser = !activeServer && activeUser && activeUser !== "root" ? activeUser : "";
     const sessionLabel = activeServer
@@ -144,8 +144,7 @@ export default function TerminalPage() {
     addLine("system", newUser ? `Switching to user: ${newUser}…` : "Reconnecting…");
     setTimeout(() => {
       const storedUser = localStorage.getItem("vpsm_active_user") || "";
-      const fallback = !activeServer ? user?.username || "" : "";
-      const activeUser = newUser || storedUser || fallback;
+      const activeUser = newUser || storedUser;
       const subUser = !activeServer && activeUser && activeUser !== "root" ? activeUser : "";
       const query: Record<string, string> = {};
       if (activeServer) query.serverId = String(activeServer.id);
