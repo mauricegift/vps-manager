@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useTheme } from "@/context/ThemeContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Database, RefreshCw, Play, Square, RotateCcw, Table2,
   ChevronRight, X, Download, Trash2, FolderOpen,
   Plus, Edit3, Trash, AlertTriangle, PlusCircle, MinusCircle, LayoutGrid,
-  Search, Copy, Globe, Wifi, WifiOff, Check, Lock, Link2, ShieldCheck, ShieldOff, ShieldAlert
+  Search, Copy, Globe, Wifi, WifiOff, Check, Lock, Link2
 } from "lucide-react";
 import api from "@/lib/api";
 import StatusBadge from "@/components/ui/StatusBadge";
@@ -79,17 +79,6 @@ export default function DatabasesPage() {
   const [changePwdResult, setChangePwdResult] = useState<{ type: string; name: string; username: string; password: string } | null>(null);
   const [changePwdResultCopied, setChangePwdResultCopied] = useState(false);
   const [browserConnCopied, setBrowserConnCopied] = useState(false);
-  // Firewall status per db type — persisted in localStorage so UI survives page reloads
-  const [firewallStatus, setFirewallStatus] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem("vpsm_fw_status") || "{}"); } catch { return {}; }
-  });
-  const [firewallToggling, setFirewallToggling] = useState<string | null>(null);
-  // Persist firewallStatus whenever it changes
-  useEffect(() => {
-    try { localStorage.setItem("vpsm_fw_status", JSON.stringify(firewallStatus)); } catch {}
-  }, [firewallStatus]);
-  // Real server IP used in connection strings when external access is open locally
-  const [localServerIp, setLocalServerIp] = useState<string>("");
   // Track dedicated per-database users (persisted)
   const [dbUsers, setDbUsers] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem("vpsm_db_users") || "{}"); } catch { return {}; }
@@ -475,82 +464,6 @@ export default function DatabasesPage() {
     setCreatingTable(false);
   };
 
-  // ── Firewall status fetch (local + remote) ───────────────────────────────────
-  const fetchFirewallStatus = useCallback(async () => {
-    try {
-      if (activeServer) {
-        const { data } = await api.get(`/remote/${activeServer.id}/databases/firewall-status`);
-        setFirewallStatus(data);
-      } else {
-        const { data } = await api.get('/databases/firewall-status');
-        const { serverIp, ...status } = data;
-        setFirewallStatus(status);
-        if (serverIp && serverIp !== '127.0.0.1') setLocalServerIp(serverIp);
-      }
-    } catch {}
-  }, [activeServer]);
-
-  useEffect(() => { fetchFirewallStatus(); }, [fetchFirewallStatus]);
-
-  // ── Open external access (local or remote) ───────────────────────────────────
-  const openExternal = async (type: string) => {
-    if (type === "sqlite") return;
-    // If already open, just confirm quietly
-    if (firewallStatus[type]) {
-      toast(`Port already open — ${type} is accessible externally`, { icon: "✅", duration: 2500 });
-      return;
-    }
-    const isHighRisk = type === "redis" || type === "mongodb";
-    toast(
-      isHighRisk
-        ? `⚠️ Opening external access for ${type.toUpperCase()} — ensure a strong password is set!`
-        : `Opening firewall for external ${type} access…`,
-      { duration: 4500, icon: isHighRisk ? "🔓" : "🔐" }
-    );
-    setFirewallToggling(type);
-    try {
-      const url = activeServer
-        ? `/remote/${activeServer.id}/databases/${type}/allow-external`
-        : `/databases/${type}/allow-external`;
-      const { data } = await api.post(url);
-      const parts: string[] = [];
-      if (data.alreadyOpen) {
-        toast(`Port ${data.port} was already open — ${type} accessible externally`, { icon: "✅", duration: 3000 });
-      } else {
-        if (data.firewallOpened) parts.push(`port ${data.port} opened`);
-        if (data.bindFixed) parts.push("bind address → 0.0.0.0");
-        if (data.rateLimited) parts.push("rate-limited (20 conn/min per IP)");
-        if (parts.length) toast.success(`External access active: ${parts.join(" · ")}`, { duration: 6000 });
-      }
-      if (!activeServer && data.serverIp && data.serverIp !== '127.0.0.1') setLocalServerIp(data.serverIp);
-      setFirewallStatus(prev => ({ ...prev, [type]: true }));
-      if (data.warnings?.length) {
-        data.warnings.forEach((w: string) => toast(w, { icon: "⚠️", duration: 8000 }));
-      }
-    } catch (e: any) {
-      toast.error(`External setup failed: ${e.response?.data?.error ?? e.message}`);
-    }
-    setFirewallToggling(null);
-  };
-
-  // ── Close external firewall access (local or remote) ─────────────────────────
-  const closeExternal = async (type: string) => {
-    setFirewallToggling(type);
-    try {
-      const url = activeServer
-        ? `/remote/${activeServer.id}/databases/${type}/close-external`
-        : `/databases/${type}/close-external`;
-      const { data } = await api.post(url);
-      if (data.success) {
-        setFirewallStatus(prev => ({ ...prev, [type]: false }));
-        toast.success(`External access disabled — port ${data.port} closed`);
-      }
-    } catch (e: any) {
-      toast.error(`Could not close port: ${e.response?.data?.error ?? e.message}`);
-    }
-    setFirewallToggling(null);
-  };
-
   const createDatabase = async () => {
     const dbType = browserDb?.type || createDbType;
     if (!dbType || !newDbName.trim()) return;
@@ -586,7 +499,7 @@ export default function DatabasesPage() {
   };
 
   const makeConnStr = (type: string, dbname: string) => {
-    const host = activeServer?.ip ?? (firewallStatus[type] && localServerIp ? localServerIp : "127.0.0.1");
+    const host = activeServer?.ip ?? "127.0.0.1";
     const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
     const port = portMap[type] ?? 5432;
     const key = `${activeServer?.id ?? "local"}:${type}:${dbname}`;
@@ -725,10 +638,6 @@ export default function DatabasesPage() {
                       if (storedPwd) setConnPassword(storedPwd);
                       if (db.name) setConnDbName(db.name);
                     }}
-                    firewallOpen={db.type !== "sqlite" ? (firewallStatus[db.type] ?? false) : undefined}
-                    firewallToggling={firewallToggling === db.type}
-                    onOpenFirewall={() => openExternal(db.type)}
-                    onCloseFirewall={() => closeExternal(db.type)}
                   />
                 ))}
               </div>
@@ -853,7 +762,7 @@ export default function DatabasesPage() {
       {changePassModal && (
         <Modal isOpen onClose={() => { setChangePassModal(null); setChangePwdVal(""); setChangePwdResult(null); }} title={`Change Password — ${changePassModal.name}`} size="sm" zIndex={200} key={`${changePassModal.type}:${changePassModal.name}`}>
           {(changePwdResult && changePwdResult.name === changePassModal.name && changePwdResult.type === changePassModal.type) ? (() => {
-            const host = activeServer?.ip ?? (firewallStatus[changePwdResult.type] && localServerIp ? localServerIp : "127.0.0.1");
+            const host = activeServer?.ip ?? "127.0.0.1";
             const portMap: Record<string, number> = { postgresql: 5432, mysql: 3306, mongodb: 27017, redis: 6379, mariadb: 3306 };
             const port = portMap[changePwdResult.type] ?? 5432;
             const { type, name, username, password } = changePwdResult;
@@ -882,7 +791,6 @@ export default function DatabasesPage() {
                         navigator.clipboard.writeText(connStr);
                         setChangePwdResultCopied(true);
                         setTimeout(() => setChangePwdResultCopied(false), 2000);
-                        openExternal(changePwdResult.type);
                       }}
                       className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors text-[10px] font-medium"
                     >
@@ -1038,7 +946,6 @@ export default function DatabasesPage() {
                       navigator.clipboard.writeText(makeConnStr(browserDb.type, browserDb.name));
                       setBrowserConnCopied(true);
                       setTimeout(() => setBrowserConnCopied(false), 2000);
-                      openExternal(browserDb.type);
                     }}
                     className="shrink-0 text-[var(--muted)] hover:text-[var(--accent)] transition-colors"
                     title="Copy connection string"
@@ -1488,7 +1395,7 @@ export default function DatabasesPage() {
         <Modal isOpen onClose={() => { setConnectionModal(null); setConnCopied(null); setConnPassword(""); setConnDbName(""); }} title={`Connect to ${connectionModal.name || connectionModal.type}`} size="lg">
           {(() => {
             const db = connectionModal;
-            const host = activeServer?.ip ?? (firewallStatus[db.type] && localServerIp ? localServerIp : "127.0.0.1");
+            const host = activeServer?.ip ?? "127.0.0.1";
             const port = db.port;
             const pwd = connPassword || "PASSWORD";
             const dbName = connDbName.trim();
@@ -1527,7 +1434,6 @@ export default function DatabasesPage() {
               navigator.clipboard.writeText(val);
               setConnCopied(key);
               setTimeout(() => setConnCopied(null), 2000);
-              openExternal(db.type);
             };
             return (
               <div className="space-y-4">
@@ -1601,24 +1507,6 @@ export default function DatabasesPage() {
                     </div>
                   ))}
                 </div>
-                {/* External access note */}
-                {activeServer && db.type !== "sqlite" && (
-                  <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 text-xs text-[var(--muted)]">
-                    <p className="font-semibold text-amber-400 mb-1 flex items-center gap-1">
-                      <span>⚡</span> Automatic External Access
-                    </p>
-                    <p>Copying any string below will automatically open port <code className="font-mono bg-[var(--secondary)] px-1 rounded">{port}</code> in the firewall, update the bind address to <code className="font-mono bg-[var(--secondary)] px-1 rounded">0.0.0.0</code>, and enable rate limiting — so remote clients can connect immediately.</p>
-                    {(db.type === "redis" || db.type === "mongodb") && (
-                      <p className="mt-1 text-orange-400 font-medium">⚠️ {db.type === "redis" ? "Redis has no per-DB auth — set requirepass via Change Password." : "Ensure MongoDB auth is enabled in /etc/mongod.conf."}</p>
-                    )}
-                  </div>
-                )}
-                {!activeServer && host === "127.0.0.1" && (
-                  <div className="p-3 rounded-xl bg-[var(--foreground)] border border-[var(--line)] text-xs text-[var(--muted)]">
-                    <p className="font-semibold text-[var(--main)] mb-1">Need external access?</p>
-                    <p>Configure bind-address to <code className="font-mono bg-[var(--secondary)] px-1 rounded">0.0.0.0</code> and open port <code className="font-mono bg-[var(--secondary)] px-1 rounded">{port}</code> in UFW.</p>
-                  </div>
-                )}
                 <div className="flex items-center justify-between">
                   {db.type !== "sqlite" && (
                     <button
@@ -1641,7 +1529,7 @@ export default function DatabasesPage() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb, onConnect, firewallOpen, firewallToggling, onOpenFirewall, onCloseFirewall }: {
+function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstall, onDeleteDb, onCreateDb, onConnect }: {
   db: any;
   actionLoading: string | null;
   actionMutation: any;
@@ -1650,10 +1538,6 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
   onDeleteDb: (name: string) => void;
   onCreateDb: () => void;
   onConnect: () => void;
-  firewallOpen?: boolean;
-  firewallToggling?: boolean;
-  onOpenFirewall?: () => void;
-  onCloseFirewall?: () => void;
 }) {
   const [showDbs, setShowDbs] = useState(false);
   const busy = actionLoading === `install-${db.type}` || actionLoading === `uninstall-${db.type}` || actionMutation.isPending;
@@ -1764,35 +1648,6 @@ function InstalledCard({ db, actionLoading, actionMutation, onBrowse, onUninstal
       >
         <Globe size={11} /> Connection Strings
       </button>
-
-      {/* Firewall toggle (remote servers only) */}
-      {firewallOpen !== undefined && db.type !== "sqlite" && (
-        firewallOpen ? (
-          <button
-            onClick={onCloseFirewall}
-            disabled={firewallToggling}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] rounded-lg bg-green-500/10 border border-green-500/30 text-green-400 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-colors mb-2 disabled:opacity-50 group"
-            title="External access is open — click to close firewall port"
-          >
-            {firewallToggling
-              ? <><RefreshCw size={11} className="animate-spin" /> Closing…</>
-              : <><ShieldCheck size={11} className="group-hover:hidden" /><ShieldOff size={11} className="hidden group-hover:block" /> <span className="group-hover:hidden">External Access Open</span><span className="hidden group-hover:block">Disable External Access</span></>
-            }
-          </button>
-        ) : (
-          <button
-            onClick={onOpenFirewall}
-            disabled={firewallToggling}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] rounded-lg bg-[var(--foreground)] border border-[var(--line)] border-dashed text-[var(--muted)] hover:border-green-500/40 hover:text-green-400 hover:bg-green-500/5 transition-colors mb-2 disabled:opacity-50"
-            title="External access is closed — click to open firewall port"
-          >
-            {firewallToggling
-              ? <><RefreshCw size={11} className="animate-spin" /> Opening…</>
-              : <><ShieldAlert size={11} /> Enable External Access</>
-            }
-          </button>
-        )
-      )}
 
       {/* Service controls */}
       <div className="flex gap-2 pt-2 border-t border-[var(--line)]">
