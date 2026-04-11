@@ -241,8 +241,14 @@ io.on('connection', async (socket) => {
   }
 
   // ── LOCAL MODE: bash shell ─────────────────────────────────────────────
-  const activeUser = (socket.handshake.query?.activeUser as string | undefined)?.trim() || '';
-  const asSubUser = activeUser && activeUser !== 'root';
+  const rawUser = (socket.handshake.query?.activeUser as string | undefined)?.trim() || '';
+  // Only switch user if the Linux account actually exists — prevents infinite
+  // reconnect loops when an app-login username is mistakenly passed here.
+  const linuxUserExists = (rawUser && rawUser !== 'root')
+    ? (() => { try { return require('fs').readFileSync('/etc/passwd', 'utf8').split('\n').some((l: string) => l.startsWith(rawUser + ':')); } catch { return false; } })()
+    : false;
+  const activeUser = linuxUserExists ? rawUser : '';
+  const asSubUser = !!activeUser;
   const userHome = asSubUser ? `/home/${activeUser}` : (process.env.HOME || '/root');
 
   let shellProc: ReturnType<typeof spawn> | null = null;
