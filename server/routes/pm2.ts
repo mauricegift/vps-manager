@@ -94,6 +94,26 @@ router.get('/', async (req, res) => {
 // e.g. "npm start" → script="npm", args="start"
 const COMMAND_INTERPS = new Set(['npm', 'bun', 'node', 'python3', 'python', 'npx', 'pnpm', 'yarn', 'deno']);
 
+// ── Read a pm2 ecosystem.config.js/cjs and return its apps array ─────────────
+async function readEcosystemApps(filePath: string): Promise<Array<{ name?: string; script?: string; cwd?: string; env?: Record<string, any> }>> {
+  const tmpJs = `/tmp/eco-reader-${Date.now()}.js`;
+  try {
+    const code = `try{const c=require(${JSON.stringify(filePath)});const a=Array.isArray(c)?c:(c.apps||[]);process.stdout.write(JSON.stringify(a.map(function(x){return{name:x.name,script:x.script,cwd:x.cwd,env:Object.assign({},x.env||{},x.env_production||{})}})))}catch(e){process.stdout.write('[]')}`;
+    fs.writeFileSync(tmpJs, code);
+    const { stdout } = await execAsync(`node ${tmpJs}`, { timeout: 5000, env: BASE_ENV });
+    return JSON.parse(stdout.trim()) || [];
+  } catch { return []; }
+  finally { try { fs.unlinkSync(tmpJs); } catch {} }
+}
+
+// GET /pm2/ecosystem?path=<absolute-path>  — read apps from an ecosystem config
+router.get('/ecosystem', async (req, res) => {
+  const filePath = (req.query.path as string | undefined)?.trim();
+  if (!filePath) return res.status(400).json({ success: false, error: 'path query param required' });
+  const apps = await readEcosystemApps(filePath);
+  return res.json({ success: true, data: apps });
+});
+
 // ── Detect if an npm/yarn/pnpm/bun start script internally calls pm2 start ───
 // Returns the real entry file path so we can start it directly, using the
 // user's entered name instead of whatever --name is hardcoded in package.json.
@@ -142,6 +162,32 @@ router.post('/start', async (req, res) => {
       };
       for (const [k, v] of Object.entries(procEnv)) setVar(k, v);
       fs.writeFileSync(dotenvPath, dotLines.join('\n').replace(/\n+$/, '') + '\n', 'utf-8');
+    }
+
+    // ── Detect if script is a pm2 ecosystem config file ──────────────────────
+    const isEcosystemConfig = /ecosystem\.config\.c?js$/i.test(script.trim());
+    // Resolve the ecosystem file path (may be relative to cwd)
+    const ecosystemFilePath = isEcosystemConfig
+      ? (path.isAbsolute(script.trim()) ? script.trim() : path.join(cwd || process.cwd(), script.trim()))
+      : null;
+
+    if (isEcosystemConfig && ecosystemFilePath) {
+      // ── Ecosystem mode: pass the config file directly to pm2 ───────────────
+      // pm2 reads all names, scripts, env, ports from the file natively.
+      if (installDeps && cwd) {
+        const pm = pkgManager === 'bun' ? 'bun' : 'npm';
+        const installCmd = pm === 'bun'
+          ? `(command -v bun >/dev/null 2>&1 || npm install -g bun) && cd "${cwd}" && bun install 2>&1`
+          : `${NVM_PREFIX}cd "${cwd}" && npm install 2>&1`;
+        if (user) { await runAsUser(installCmd, user).catch(() => {}); }
+        else { await execAsync(installCmd, { timeout: 300000, env: BASE_ENV }).catch(() => {}); }
+      }
+      await runPM2(`start ${JSON.stringify(ecosystemFilePath)}`, user);
+      await runPM2('save', user).catch(() => {});
+      if (!user) {
+        await execAsync(`${NVM_PREFIX}pm2 startup systemd -u root --hp /root 2>/dev/null || pm2 startup 2>/dev/null`, { timeout: 15000, env: BASE_ENV }).catch(() => {});
+      }
+      return res.json({ success: true });
     }
 
     // ── Detect script type ────────────────────────────────────────────────────
